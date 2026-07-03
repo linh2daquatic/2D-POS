@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quỹ tiền mặt — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:400px; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.type-toggle { display:flex; gap:6px; }
+.type-btn { flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
+.type-btn.active.income { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
+.type-btn.active.expense { border-color:var(--danger); color:var(--danger); background:#fef2f2; }
+.tx-amount.income { color: var(--teal-deep); font-weight:700; }
+.tx-amount.expense { color: var(--danger); font-weight:700; }
+.category-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.cat-chip { padding:5px 12px; border-radius:16px; font-size:12px; border:1px solid var(--border); cursor:pointer; color:var(--text-mute); }
+.cat-chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ALL_TX = [];
+let FORM_TYPE = "income";
+const CATEGORIES = {
+  income: ["Bán hàng", "Thu nợ khách", "Góp vốn", "Khác"],
+  expense: ["Nhập hàng", "Tiền điện nước", "Lương nhân viên", "Vận chuyển", "Sửa chữa", "Khác"]
+};
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  renderLayout({
+    activePage: "cash",
+    profile: CURRENT_PROFILE,
+    title: "Quỹ tiền mặt",
+    subtitle: "Ghi nhận thu chi tại shop"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <div class="stat-grid" id="statGrid"></div>
+    <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+      <div></div>
+      <div class="flex gap-8">
+        <button class="btn btn-secondary" id="addExpenseBtn">− Ghi chi</button>
+        <button class="btn btn-primary" id="addIncomeBtn">+ Ghi thu</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Lịch sử thu chi</h2></div>
+      <div class="panel-body" id="txListWrap">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="txModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="txModalTitle">Ghi nhận thu</h3><span class="modal-close" id="txModalClose">✕</span></div>
+        <div class="modal-body">
+          <form id="txForm">
+            <div class="field"><label>Loại</label>
+              <div class="type-toggle">
+                <div class="type-btn income active" id="typeIncomeBtn">Thu vào</div>
+                <div class="type-btn expense" id="typeExpenseBtn">Chi ra</div>
+              </div>
+            </div>
+            <div class="field">
+              <label>Danh mục</label>
+              <div class="category-chips" id="categoryChips"></div>
+            </div>
+            <div class="field"><label>Số tiền *</label><input id="tx_amount" type="number" step="any" required></div>
+            <div class="field"><label>Ghi chú</label><input id="tx_note" placeholder="VD: Chi tiền điện tháng 7"></div>
+            <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" id="txCancelBtn">Hủy</button>
+              <button type="submit" class="btn btn-primary" id="txSaveBtn">Lưu</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await loadTx();
+
+  document.getElementById("addIncomeBtn").addEventListener("click", () => openModal("income"));
+  document.getElementById("addExpenseBtn").addEventListener("click", () => openModal("expense"));
+  document.getElementById("txModalClose").addEventListener("click", closeModal);
+  document.getElementById("txCancelBtn").addEventListener("click", closeModal);
+  document.getElementById("typeIncomeBtn").addEventListener("click", () => setFormType("income"));
+  document.getElementById("typeExpenseBtn").addEventListener("click", () => setFormType("expense"));
+  document.getElementById("txForm").addEventListener("submit", saveTx);
+})();
+
+async function loadTx() {
+  const { data, error } = await sb.from("cash_transactions").select("*").order("created_at", { ascending: false }).limit(100);
+  if (error) { document.getElementById("txListWrap").innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
+  ALL_TX = data || [];
+  renderStats();
+  renderList();
+}
+
+function renderStats() {
+  const income = ALL_TX.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+  const expense = ALL_TX.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+  const balance = income - expense;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayTx = ALL_TX.filter(t => new Date(t.created_at) >= today);
+  const todayIncome = todayTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+  const todayExpense = todayTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+
+  document.getElementById("statGrid").innerHTML = `
+    <div class="stat-card accent">
+      <div class="label">Số dư quỹ hiện tại</div>
+      <div class="value">${formatVND(balance)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Thu hôm nay</div>
+      <div class="value" style="color:var(--teal-deep);">${formatVND(todayIncome)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Chi hôm nay</div>
+      <div class="value" style="color:var(--danger);">${formatVND(todayExpense)}</div>
+    </div>
+  `;
+}
+
+function renderList() {
+  const wrap = document.getElementById("txListWrap");
+  if (ALL_TX.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">💰</div>Chưa có giao dịch nào. Ghi nhận thu/chi đầu tiên.</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Ngày</th><th>Loại</th><th>Danh mục</th><th>Ghi chú</th><th>Số tiền</th>
+    </tr></thead><tbody>
+    ${ALL_TX.map(t => `<tr>
+      <td>${formatDate(t.created_at)}</td>
+      <td><span class="badge ${t.type === 'income' ? 'paid' : 'debt'}">${t.type === 'income' ? 'Thu' : 'Chi'}</span></td>
+      <td>${t.category || '—'}</td>
+      <td>${t.note || '—'}</td>
+      <td class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${formatVND(t.amount)}</td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function setFormType(type) {
+  FORM_TYPE = type;
+  document.getElementById("typeIncomeBtn").classList.toggle("active", type === "income");
+  document.getElementById("typeExpenseBtn").classList.toggle("active", type === "expense");
+  document.getElementById("txModalTitle").textContent = type === "income" ? "Ghi nhận thu" : "Ghi nhận chi";
+  renderCategoryChips();
+}
+
+function renderCategoryChips() {
+  const wrap = document.getElementById("categoryChips");
+  const cats = CATEGORIES[FORM_TYPE];
+  wrap.innerHTML = cats.map((c, i) => `<div class="cat-chip ${i === 0 ? 'active' : ''}" data-cat="${c}">${c}</div>`).join("");
+  wrap.querySelectorAll(".cat-chip").forEach(el => {
+    el.addEventListener("click", () => {
+      wrap.querySelectorAll(".cat-chip").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+    });
+  });
+}
+
+function openModal(type) {
+  setFormType(type);
+  document.getElementById("tx_amount").value = "";
+  document.getElementById("tx_note").value = "";
+  document.getElementById("txModal").classList.add("open");
+}
+function closeModal() { document.getElementById("txModal").classList.remove("open"); }
+
+async function saveTx(e) {
+  e.preventDefault();
+  const amount = Number(document.getElementById("tx_amount").value || 0);
+  if (amount <= 0) { alert("Vui lòng nhập số tiền hợp lệ."); return; }
+  const activeChip = document.querySelector(".cat-chip.active");
+  const category = activeChip ? activeChip.dataset.cat : null;
+  const note = document.getElementById("tx_note").value.trim() || null;
+
+  const saveBtn = document.getElementById("txSaveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const { error } = await sb.from("cash_transactions").insert({
+    type: FORM_TYPE, category, amount, note, created_by: CURRENT_PROFILE.id
+  });
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Lưu";
+
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  closeModal();
+  await loadTx();
+}
+</script>
+</body>
+</html>
