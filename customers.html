@@ -24,6 +24,11 @@
 .type-btn { flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
 .type-btn.active.retail { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
 .type-btn.active.wholesale { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+.sort-chips { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+.sort-chip { padding:6px 14px; border-radius:20px; font-size:12.5px; border:1px solid var(--border); cursor:pointer; background:#fff; color:var(--text-mute); }
+.sort-chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+.no-purchase { color:var(--text-mute); font-style:italic; }
+.vip-tag { font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -33,8 +38,10 @@
 <script>
 let CURRENT_PROFILE = null;
 let ALL_CUSTOMERS = [];
+let CUSTOMER_STATS = {}; // { customer_id: { orderCount, totalSpent, lastOrderDate } }
 let EDIT_ID = null;
 let FORM_TYPE = "retail";
+let SORT_MODE = "name";
 
 (async () => {
   const auth = await requireAuth();
@@ -52,6 +59,11 @@ let FORM_TYPE = "retail";
     <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
       <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
       <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
+    </div>
+    <div class="sort-chips" id="sortChips">
+      <div class="sort-chip active" data-sort="name">Tên A-Z</div>
+      <div class="sort-chip" data-sort="spend">Chi tiêu cao nhất</div>
+      <div class="sort-chip" data-sort="recent">Mua gần đây nhất</div>
     </div>
     <div class="panel">
       <div class="panel-body" id="tableWrap">
@@ -99,6 +111,15 @@ let FORM_TYPE = "retail";
   document.getElementById("custForm").addEventListener("submit", saveCustomer);
   document.getElementById("typeRetailBtn").addEventListener("click", () => setFormType("retail"));
   document.getElementById("typeWholesaleBtn").addEventListener("click", () => setFormType("wholesale"));
+
+  document.querySelectorAll("#sortChips .sort-chip").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll("#sortChips .sort-chip").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+      SORT_MODE = el.dataset.sort;
+      renderTable(document.getElementById("searchInput").value);
+    });
+  });
 })();
 
 function setFormType(t) {
@@ -111,13 +132,47 @@ async function loadCustomers() {
   const { data, error } = await sb.from("customers").select("*").order("name");
   if (error) { console.error(error); return; }
   ALL_CUSTOMERS = data || [];
+
+  const { data: orders } = await sb
+    .from("orders")
+    .select("customer_id, total_amount, created_at")
+    .eq("status", "completed")
+    .not("customer_id", "is", null);
+
+  CUSTOMER_STATS = {};
+  (orders || []).forEach(o => {
+    if (!CUSTOMER_STATS[o.customer_id]) {
+      CUSTOMER_STATS[o.customer_id] = { orderCount: 0, totalSpent: 0, lastOrderDate: null };
+    }
+    const s = CUSTOMER_STATS[o.customer_id];
+    s.orderCount += 1;
+    s.totalSpent += Number(o.total_amount);
+    if (!s.lastOrderDate || new Date(o.created_at) > new Date(s.lastOrderDate)) {
+      s.lastOrderDate = o.created_at;
+    }
+  });
+
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
 function renderTable(filter) {
   const wrap = document.getElementById("tableWrap");
   const f = (filter || "").trim().toLowerCase();
-  const list = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+  let list = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+
+  const statsOf = (id) => CUSTOMER_STATS[id] || { orderCount: 0, totalSpent: 0, lastOrderDate: null };
+
+  if (SORT_MODE === "spend") {
+    list = [...list].sort((a, b) => statsOf(b.id).totalSpent - statsOf(a.id).totalSpent);
+  } else if (SORT_MODE === "recent") {
+    list = [...list].sort((a, b) => {
+      const da = statsOf(a.id).lastOrderDate, db = statsOf(b.id).lastOrderDate;
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return new Date(db) - new Date(da);
+    });
+  }
 
   if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">👤</div>
@@ -126,18 +181,24 @@ function renderTable(filter) {
     return;
   }
 
+  const maxSpent = Math.max(...list.map(c => statsOf(c.id).totalSpent), 0);
+
   wrap.innerHTML = `<table><thead><tr>
-      <th>Tên khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Loại</th><th></th>
+      <th>Tên khách hàng</th><th>SĐT</th><th>Loại</th><th>Số đơn</th><th>Tổng chi tiêu</th><th>Mua gần nhất</th><th></th>
     </tr></thead><tbody>
-    ${list.map(c => `<tr>
-      <td>${c.name}</td>
-      <td>${c.phone || "—"}</td>
-      <td>${c.address || "—"}</td>
-      <td><span class="badge ${c.type}">${c.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
-      <td><div class="row-actions">
-        <span class="btn btn-secondary btn-mini" onclick="openModal('${c.id}')">Sửa</span>
-      </div></td>
-    </tr>`).join("")}
+    ${list.map(c => {
+      const s = statsOf(c.id);
+      const isVip = maxSpent > 0 && s.totalSpent === maxSpent && s.totalSpent > 0;
+      return `<tr>
+        <td>${c.name}${isVip ? '<span class="vip-tag">⭐ VIP</span>' : ''}</td>
+        <td>${c.phone || "—"}</td>
+        <td><span class="badge ${c.type}">${c.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+        <td>${s.orderCount}</td>
+        <td>${s.totalSpent > 0 ? formatVND(s.totalSpent) : '—'}</td>
+        <td>${s.lastOrderDate ? formatDate(s.lastOrderDate) : '<span class="no-purchase">Chưa mua</span>'}</td>
+        <td><span class="btn btn-secondary btn-mini" onclick="openModal('${c.id}')">Sửa</span></td>
+      </tr>`;
+    }).join("")}
   </tbody></table>`;
 }
 
