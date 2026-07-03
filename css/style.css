@@ -331,17 +331,25 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-m
 
 .pos-cart-mobile-bar {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 210;
-  background: var(--ink); color: #fff; padding: 12px 18px; align-items: center;
-  justify-content: space-between; cursor: pointer; transition: background .2s;
+  background: var(--ink); color: #fff; padding: 10px 14px 12px; transition: background .2s;
+  flex-direction: column; gap: 6px;
 }
 .pos-cart-mobile-bar.pulse { background: var(--teal-deep); }
+.cmb-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; -webkit-overflow-scrolling: touch; }
+.cmb-chips::-webkit-scrollbar { display: none; }
+.cmb-chip {
+  background: rgba(255,255,255,0.14); padding: 5px 10px; border-radius: 14px; font-size: 12px;
+  white-space: nowrap; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.cmb-chip .cmb-chip-x { opacity: 0.7; font-weight: 700; }
+.cmb-bottom-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
 .pos-cart-mobile-bar .cmb-info { font-size: 13.5px; }
 .pos-cart-mobile-bar .cmb-total { font-family: var(--font-display); font-weight: 700; font-size: 16px; }
 
 @media (max-width: 860px) {
   .pos-topbar { padding: 10px 14px; }
   .pos-topbar .type-toggle { width: 140px; }
-  .pos-products-pane { padding: 14px 14px 90px; }
+  .pos-products-pane { padding: 14px 14px 110px; }
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
   .pos-cart-pane {
     display: none; position: fixed; inset: auto 0 0 0; width: auto; height: 82vh;
