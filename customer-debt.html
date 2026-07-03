@@ -241,6 +241,15 @@ async function submitPayment() {
     remaining -= applyToOrder;
   }
 
+  // Tự động cộng phần tiền mặt thu được vào Quỹ tiền mặt
+  const totalCashCollected = cash - cashLeft;
+  if (totalCashCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", category: "Thu nợ khách", amount: totalCashCollected,
+      note: `Thu nợ tiền mặt từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
   saveBtn.disabled = false;
   saveBtn.textContent = "Ghi nhận";
   closePayModal();
