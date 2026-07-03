@@ -160,8 +160,11 @@ function posScreenHtml() {
     </div>
 
     <div class="pos-cart-mobile-bar" id="cartMobileBar">
-      <span class="cmb-info" id="cmbInfo">Giỏ hàng trống</span>
-      <span class="cmb-total" id="cmbTotal">Xem giỏ →</span>
+      <div class="cmb-chips" id="cmbChips"></div>
+      <div class="cmb-bottom-row" id="cmbBottomRow">
+        <span class="cmb-info" id="cmbInfo">Giỏ hàng trống</span>
+        <span class="cmb-total" id="cmbTotal">Xem giỏ →</span>
+      </div>
     </div>
     <div class="add-toast" id="addToast"></div>
   </div>
@@ -343,7 +346,7 @@ function bindEvents() {
     updateSummary();
   });
 
-  document.getElementById("cartMobileBar").addEventListener("click", () => {
+  document.getElementById("cmbBottomRow").addEventListener("click", () => {
     document.getElementById("posCartPane").classList.add("open");
     document.getElementById("closeCartMobile").style.display = "inline";
   });
@@ -597,6 +600,30 @@ function updateSummary() {
   const itemCount = CART.reduce((s, i) => s + i.quantity, 0);
   document.getElementById("cmbInfo").textContent = itemCount === 0 ? "Giỏ hàng trống" : `${itemCount} sản phẩm`;
   document.getElementById("cmbTotal").textContent = itemCount === 0 ? "Xem giỏ →" : formatVND(total) + " →";
+
+  renderMobileChips();
+}
+
+function renderMobileChips() {
+  const chipsWrap = document.getElementById("cmbChips");
+  if (CART.length === 0) {
+    chipsWrap.innerHTML = "";
+    return;
+  }
+  chipsWrap.innerHTML = CART.map(item => `
+    <div class="cmb-chip" data-id="${item.product_id}">
+      ${item.name} ×${item.quantity}
+      <span class="cmb-chip-x" data-remove="${item.product_id}">✕</span>
+    </div>
+  `).join("");
+  chipsWrap.querySelectorAll("[data-remove]").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      CART = CART.filter(i => i.product_id !== el.dataset.remove);
+      renderProductGrid(document.getElementById("productSearch").value);
+      renderCart();
+    });
+  });
 }
 
 let toastTimer = null;
