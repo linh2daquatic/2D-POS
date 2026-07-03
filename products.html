@@ -19,6 +19,11 @@
 .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .search-bar { max-width:320px; margin-bottom:16px; }
 .qty-low { color:var(--danger); font-weight:700; }
+.chip-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.chip { padding:6px 14px; border-radius:20px; font-size:13px; border:1px solid var(--border); cursor:pointer; background:#fff; color:var(--text-mute); }
+.chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+.row-actions { display:flex; gap:6px; }
+.btn-mini { padding:5px 10px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -44,10 +49,11 @@ let EDIT_ID = null;
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
-      <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc mã SKU...">
+    <div class="flex" style="justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc mã SKU..." style="margin-bottom:0;">
       ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
     </div>
+    <div class="chip-row" id="categoryChips"></div>
     <div class="panel">
       <div class="panel-body" id="productTableWrap">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
@@ -99,20 +105,40 @@ let EDIT_ID = null;
   document.getElementById("productForm").addEventListener("submit", saveProduct);
 })();
 
+let ACTIVE_CATEGORY = "";
+
 async function loadProducts() {
   const { data, error } = await sb.from("products").select("*").order("name", { ascending: true });
   if (error) { console.error(error); return; }
   ALL_PRODUCTS = data || [];
-  renderTable("");
+  renderCategoryChips();
+  renderTable(document.getElementById("searchInput")?.value || "");
+}
+
+function renderCategoryChips() {
+  const cats = [...new Set(ALL_PRODUCTS.map(p => p.category).filter(Boolean))];
+  const chipWrap = document.getElementById("categoryChips");
+  if (cats.length === 0) { chipWrap.innerHTML = ""; return; }
+  chipWrap.innerHTML = [`<div class="chip ${ACTIVE_CATEGORY === '' ? 'active' : ''}" data-cat="">Tất cả</div>`]
+    .concat(cats.map(c => `<div class="chip ${ACTIVE_CATEGORY === c ? 'active' : ''}" data-cat="${c}">${c}</div>`))
+    .join("");
+  chipWrap.querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      ACTIVE_CATEGORY = el.dataset.cat;
+      renderCategoryChips();
+      renderTable(document.getElementById("searchInput").value);
+    });
+  });
 }
 
 function renderTable(filter) {
   const wrap = document.getElementById("productTableWrap");
   const isOwner = CURRENT_PROFILE.role === "owner";
-  const f = filter.trim().toLowerCase();
-  const list = ALL_PRODUCTS.filter(p =>
+  const f = (filter || "").trim().toLowerCase();
+  let list = ALL_PRODUCTS.filter(p =>
     !f || p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f)
   );
+  if (ACTIVE_CATEGORY) list = list.filter(p => p.category === ACTIVE_CATEGORY);
 
   if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">📦</div>
@@ -124,7 +150,7 @@ function renderTable(filter) {
   wrap.innerHTML = `<table>
     <thead><tr>
       <th>Sản phẩm</th><th>SKU</th><th>Danh mục</th><th>Tồn kho</th>
-      <th>Giá lẻ</th><th>Giá buôn</th>${isOwner ? "<th></th>" : ""}
+      <th>Giá lẻ</th><th>Giá buôn</th><th></th>
     </tr></thead>
     <tbody>
       ${list.map(p => {
@@ -136,11 +162,48 @@ function renderTable(filter) {
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
-          ${isOwner ? `<td><span class="btn btn-secondary" style="padding:5px 10px;font-size:12px;" onclick="openModal('${p.id}')">Sửa</span></td>` : ""}
+          <td><div class="row-actions">
+            <span class="btn btn-secondary btn-mini" onclick="quickAdjust('${p.id}')" title="Nhập/Xuất kho nhanh">±Kho</span>
+            ${isOwner ? `<span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>` : ""}
+            ${isOwner ? `<span class="btn btn-danger btn-mini" onclick="deleteProduct('${p.id}','${p.name.replace(/'/g,"\\'")}')">Xóa</span>` : ""}
+          </div></td>
         </tr>`;
       }).join("")}
     </tbody>
   </table>`;
+}
+
+async function quickAdjust(id) {
+  const p = ALL_PRODUCTS.find(x => x.id === id);
+  const input = window.prompt(
+    `Điều chỉnh tồn kho "${p.name}"\nTồn kho hiện tại: ${p.quantity} ${p.unit || ''}\n\nNhập số lượng thay đổi (VD: 10 để nhập thêm 10, -3 để xuất bớt 3):`,
+    ""
+  );
+  if (input === null || input.trim() === "") return;
+  const delta = Number(input);
+  if (isNaN(delta) || delta === 0) { alert("Số lượng không hợp lệ."); return; }
+
+  const newQty = Number(p.quantity) + delta;
+  if (newQty < 0) { alert("Tồn kho không thể âm."); return; }
+
+  const { error: e1 } = await sb.from("products").update({ quantity: newQty }).eq("id", id);
+  if (e1) { alert("Lỗi: " + e1.message); return; }
+
+  await sb.from("inventory_log").insert({
+    product_id: id,
+    change_qty: delta,
+    reason: "adjustment",
+    created_by: CURRENT_PROFILE.id
+  });
+
+  await loadProducts();
+}
+
+async function deleteProduct(id, name) {
+  if (!window.confirm(`Xóa sản phẩm "${name}"? Hành động này không thể hoàn tác.`)) return;
+  const { error } = await sb.from("products").delete().eq("id", id);
+  if (error) { alert("Lỗi khi xóa: " + error.message + "\n(Có thể sản phẩm này đã có trong đơn hàng, không xóa được.)"); return; }
+  await loadProducts();
 }
 
 function openModal(id) {
