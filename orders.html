@@ -9,33 +9,30 @@
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:300; align-items:center; justify-content:center; padding:20px; }
 .modal-overlay.open { display:flex; }
-.modal-box { background:#fff; border-radius:14px; width:100%; max-width:640px; max-height:90vh; overflow-y:auto; }
-.modal-box.small { max-width:400px; }
-.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; background:#fff; z-index:2; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:400px; max-height:88vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
 .modal-header h3 { font-family:var(--font-display); font-size:18px; }
 .modal-body { padding:20px 22px; }
 .modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
-.row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.type-toggle { display:flex; gap:8px; margin-bottom:14px; }
-.type-btn { flex:1; padding:10px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13.5px; color:var(--text-mute); }
+.type-toggle { display:flex; gap:6px; }
+.type-btn { flex:1; padding:8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
 .type-btn.active.retail { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
 .type-btn.active.wholesale { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
-.autocomplete-wrap { position:relative; }
+.chip-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.chip { padding:6px 14px; border-radius:20px; font-size:13px; border:1px solid var(--border); cursor:pointer; background:#fff; color:var(--text-mute); white-space:nowrap; }
+.chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
 .autocomplete-list { position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; max-height:220px; overflow-y:auto; box-shadow:var(--shadow); z-index:10; margin-top:4px; display:none; }
 .autocomplete-list.open { display:block; }
 .autocomplete-item { padding:10px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--border); }
 .autocomplete-item:last-child { border-bottom:none; }
 .autocomplete-item:hover { background:#f8fafc; }
 .autocomplete-item .sub { font-size:11.5px; color:var(--text-mute); }
-.cart-table th, .cart-table td { padding:8px 10px; font-size:13px; }
-.cart-qty-input { width:70px; padding:6px 8px; }
-.cart-price-input { width:110px; padding:6px 8px; }
+.selected-customer-tag { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; font-size:13px; white-space:nowrap; }
 .remove-x { color:var(--danger); cursor:pointer; font-weight:700; }
-.summary-row { display:flex; justify-content:space-between; padding:6px 0; font-size:14px; }
-.summary-row.total { font-weight:700; font-size:17px; border-top:1px solid var(--border); margin-top:8px; padding-top:12px; }
-.selected-customer-tag { display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border:1px solid var(--border); border-radius:8px; background:#f8fafc; font-size:13.5px; }
+.summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.summary-row.total { font-weight:700; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
 </style>
 </head>
 <body>
@@ -49,6 +46,7 @@ let ALL_CUSTOMERS = [];
 let CART = [];
 let ORDER_TYPE = "retail";
 let SELECTED_CUSTOMER = null;
+let ACTIVE_CATEGORY = "";
 
 (async () => {
   const auth = await requireAuth();
@@ -65,7 +63,7 @@ let SELECTED_CUSTOMER = null;
   document.getElementById("pageContent").innerHTML = `
     <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
       <div></div>
-      <button class="btn btn-primary" id="newOrderBtn">+ Tạo đơn hàng</button>
+      <button class="btn btn-primary" id="newOrderBtn">🛒 Tạo đơn hàng</button>
     </div>
     <div class="panel">
       <div class="panel-header"><h2>Danh sách đơn hàng</h2></div>
@@ -73,72 +71,63 @@ let SELECTED_CUSTOMER = null;
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>
-
-    ${orderModalHtml()}
   `;
 
-  await Promise.all([loadProducts(), loadCustomers(), loadOrders()]);
-  bindOrderModalEvents();
+  document.body.insertAdjacentHTML("beforeend", posScreenHtml());
 
-  document.getElementById("newOrderBtn").addEventListener("click", openOrderModal);
+  await Promise.all([loadProducts(), loadCustomers(), loadOrders()]);
+  bindEvents();
+
+  document.getElementById("newOrderBtn").addEventListener("click", openPos);
 })();
 
-function orderModalHtml() {
+function posScreenHtml() {
   return `
-  <div class="modal-overlay" id="orderModal">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h3>Tạo đơn hàng mới</h3>
-        <span class="modal-close" id="closeOrderModal">✕</span>
+  <div class="pos-screen" id="posScreen">
+    <div class="pos-topbar">
+      <button class="btn btn-secondary" id="posBackBtn">← Danh sách</button>
+      <div class="type-toggle">
+        <div class="type-btn retail active" id="typeRetailBtn">Bán lẻ</div>
+        <div class="type-btn wholesale" id="typeWholesaleBtn">Bán buôn</div>
       </div>
-      <div class="modal-body">
-        <div class="type-toggle">
-          <div class="type-btn retail active" id="typeRetailBtn">Bán lẻ</div>
-          <div class="type-btn wholesale" id="typeWholesaleBtn">Bán buôn</div>
+      <div class="pos-customer-wrap" id="customerPickerWrap"></div>
+    </div>
+
+    <div class="pos-body">
+      <div class="pos-products-pane">
+        <div class="pos-toolbar">
+          <input class="pos-search" id="productSearch" placeholder="🔍 Tìm sản phẩm theo tên hoặc SKU...">
         </div>
+        <div class="chip-row" id="posCategoryChips"></div>
+        <div class="product-grid" id="productGrid"></div>
+      </div>
 
-        <div class="field">
-          <label>Khách hàng</label>
-          <div id="customerPickerWrap">
-            <div class="autocomplete-wrap">
-              <input id="customerSearch" placeholder="Tìm khách hàng hoặc để trống = Khách lẻ...">
-              <div class="autocomplete-list" id="customerList"></div>
-            </div>
-          </div>
+      <div class="pos-cart-pane" id="posCartPane">
+        <div class="pos-cart-header flex" style="justify-content:space-between;">
+          <h3>Giỏ hàng</h3>
+          <span class="modal-close" id="closeCartMobile" style="display:none;">✕</span>
         </div>
-
-        <div class="field">
-          <label>Thêm sản phẩm</label>
-          <div class="autocomplete-wrap">
-            <input id="productSearch" placeholder="Tìm sản phẩm theo tên hoặc SKU...">
-            <div class="autocomplete-list" id="productList"></div>
-          </div>
-        </div>
-
-        <table class="cart-table" style="margin-top:10px;">
-          <thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th><th></th></tr></thead>
-          <tbody id="cartBody"><tr><td colspan="5" class="text-mute" style="text-align:center; padding:16px;">Chưa có sản phẩm nào trong đơn</td></tr></tbody>
-        </table>
-
-        <div style="margin-top:16px;">
+        <div class="pos-cart-items" id="cartItems"></div>
+        <div class="pos-cart-footer">
           <div class="summary-row"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
-          <div class="field" style="margin-top:10px;">
+          <div class="field" style="margin-top:8px; margin-bottom:0;">
             <label>Khách đã thanh toán</label>
             <input id="paidAmount" type="number" step="any" value="0">
           </div>
           <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
-        </div>
-
-        <div class="flex gap-8" style="margin-top:18px; justify-content:flex-end;">
-          <button type="button" class="btn btn-secondary" id="cancelOrderBtn">Hủy</button>
-          <button type="button" class="btn btn-primary" id="submitOrderBtn">Tạo đơn hàng</button>
+          <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; justify-content:center; padding:12px; margin-top:12px;">Tạo đơn hàng</button>
         </div>
       </div>
+    </div>
+
+    <div class="pos-cart-mobile-bar" id="cartMobileBar">
+      <span class="cmb-info" id="cmbInfo">Giỏ hàng trống</span>
+      <span class="cmb-total" id="cmbTotal">Xem giỏ →</span>
     </div>
   </div>
 
   <div class="modal-overlay" id="quickCustomerModal">
-    <div class="modal-box small">
+    <div class="modal-box">
       <div class="modal-header"><h3>Thêm khách hàng nhanh</h3><span class="modal-close" id="closeQuickCustomer">✕</span></div>
       <div class="modal-body">
         <div class="field"><label>Tên khách hàng *</label><input id="qc_name" required></div>
@@ -193,41 +182,46 @@ async function loadOrders() {
   </tbody></table>`;
 }
 
-function openOrderModal() {
+function openPos() {
   CART = [];
   SELECTED_CUSTOMER = null;
   ORDER_TYPE = "retail";
+  ACTIVE_CATEGORY = "";
   document.getElementById("typeRetailBtn").classList.add("active");
   document.getElementById("typeWholesaleBtn").classList.remove("active");
-  document.getElementById("customerSearch").value = "";
   document.getElementById("productSearch").value = "";
   document.getElementById("paidAmount").value = 0;
   renderCustomerPicker();
+  renderCategoryChips();
+  renderProductGrid("");
   renderCart();
-  document.getElementById("orderModal").classList.add("open");
+  document.getElementById("posScreen").classList.add("open");
+  document.body.style.overflow = "hidden";
 }
 
-function bindOrderModalEvents() {
-  document.getElementById("closeOrderModal").addEventListener("click", () => document.getElementById("orderModal").classList.remove("open"));
-  document.getElementById("cancelOrderBtn").addEventListener("click", () => document.getElementById("orderModal").classList.remove("open"));
+function closePos() {
+  document.getElementById("posScreen").classList.remove("open");
+  document.body.style.overflow = "";
+}
 
+function bindEvents() {
+  document.getElementById("posBackBtn").addEventListener("click", closePos);
   document.getElementById("typeRetailBtn").addEventListener("click", () => setOrderType("retail"));
   document.getElementById("typeWholesaleBtn").addEventListener("click", () => setOrderType("wholesale"));
 
-  const custInput = document.getElementById("customerSearch");
-  custInput.addEventListener("input", () => renderCustomerList(custInput.value));
-  custInput.addEventListener("focus", () => renderCustomerList(custInput.value));
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest("#customerPickerWrap")) document.getElementById("customerList").classList.remove("open");
-    if (!e.target.closest(".autocomplete-wrap")) document.getElementById("productList")?.classList.remove("open");
-  });
-
   const prodInput = document.getElementById("productSearch");
-  prodInput.addEventListener("input", () => renderProductList(prodInput.value));
-  prodInput.addEventListener("focus", () => renderProductList(prodInput.value));
+  prodInput.addEventListener("input", () => renderProductGrid(prodInput.value));
 
   document.getElementById("paidAmount").addEventListener("input", updateSummary);
   document.getElementById("submitOrderBtn").addEventListener("click", submitOrder);
+
+  document.getElementById("cartMobileBar").addEventListener("click", () => {
+    document.getElementById("posCartPane").classList.add("open");
+    document.getElementById("closeCartMobile").style.display = "inline";
+  });
+  document.getElementById("closeCartMobile").addEventListener("click", () => {
+    document.getElementById("posCartPane").classList.remove("open");
+  });
 
   document.getElementById("closeQuickCustomer").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
   document.getElementById("qcCancelBtn").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
@@ -238,33 +232,37 @@ function setOrderType(type) {
   ORDER_TYPE = type;
   document.getElementById("typeRetailBtn").classList.toggle("active", type === "retail");
   document.getElementById("typeWholesaleBtn").classList.toggle("active", type === "wholesale");
-  // Cập nhật lại đơn giá mặc định cho các sản phẩm đã có trong giỏ
   CART.forEach(item => {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
     if (p) item.unit_price = type === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price);
   });
+  renderProductGrid(document.getElementById("productSearch").value);
   renderCart();
 }
 
+/* ---------- Khách hàng ---------- */
 function renderCustomerPicker() {
   const wrap = document.getElementById("customerPickerWrap");
   if (SELECTED_CUSTOMER) {
     wrap.innerHTML = `<div class="selected-customer-tag">
-      <span>👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''}</span>
-      <span class="remove-x" id="clearCustomerBtn">Bỏ chọn ✕</span>
+      👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''}
+      <span class="remove-x" id="clearCustomerBtn">✕</span>
     </div>`;
     document.getElementById("clearCustomerBtn").addEventListener("click", () => {
       SELECTED_CUSTOMER = null;
       renderCustomerPicker();
     });
   } else {
-    wrap.innerHTML = `<div class="autocomplete-wrap">
-      <input id="customerSearch" placeholder="Tìm khách hàng hoặc để trống = Khách lẻ...">
+    wrap.innerHTML = `<div style="position:relative;">
+      <input id="customerSearch" placeholder="Khách lẻ (bấm để tìm/thêm khách)...">
       <div class="autocomplete-list" id="customerList"></div>
     </div>`;
     const custInput = document.getElementById("customerSearch");
     custInput.addEventListener("input", () => renderCustomerList(custInput.value));
     custInput.addEventListener("focus", () => renderCustomerList(custInput.value));
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("#customerPickerWrap")) document.getElementById("customerList")?.classList.remove("open");
+    });
   }
 }
 
@@ -276,7 +274,7 @@ function renderCustomerList(filter) {
 
   list.innerHTML = matches.slice(0, 8).map(c =>
     `<div class="autocomplete-item" data-id="${c.id}">${c.name} <span class="sub">${c.phone || ''} · ${c.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></div>`
-  ).join("") + `<div class="autocomplete-item" style="color:var(--teal-deep); font-weight:600;" id="quickAddCustomerItem">+ Thêm khách hàng mới "${filter || ''}"</div>`;
+  ).join("") + `<div class="autocomplete-item" style="color:var(--teal-deep); font-weight:600;" id="quickAddCustomerItem">+ Thêm khách hàng mới ${filter ? '"' + filter + '"' : ''}</div>`;
 
   list.classList.add("open");
 
@@ -284,7 +282,6 @@ function renderCustomerList(filter) {
     el.addEventListener("click", () => {
       SELECTED_CUSTOMER = ALL_CUSTOMERS.find(c => c.id === el.dataset.id);
       renderCustomerPicker();
-      list.classList.remove("open");
     });
   });
   document.getElementById("quickAddCustomerItem").addEventListener("click", () => {
@@ -300,10 +297,7 @@ async function saveQuickCustomer() {
   if (!name) { alert("Vui lòng nhập tên khách hàng."); return; }
   const phone = document.getElementById("qc_phone").value.trim() || null;
 
-  const { data, error } = await sb.from("customers").insert({
-    name, phone, type: ORDER_TYPE
-  }).select().single();
-
+  const { data, error } = await sb.from("customers").insert({ name, phone, type: ORDER_TYPE }).select().single();
   if (error) { alert("Lỗi khi thêm khách hàng: " + error.message); return; }
 
   ALL_CUSTOMERS.push(data);
@@ -312,27 +306,48 @@ async function saveQuickCustomer() {
   document.getElementById("quickCustomerModal").classList.remove("open");
 }
 
-function renderProductList(filter) {
-  const list = document.getElementById("productList");
-  const f = (filter || "").trim().toLowerCase();
-  if (!f) { list.classList.remove("open"); return; }
-  const matches = ALL_PRODUCTS.filter(p => p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f));
-
-  if (matches.length === 0) {
-    list.innerHTML = `<div class="autocomplete-item text-mute">Không tìm thấy sản phẩm.</div>`;
-  } else {
-    list.innerHTML = matches.slice(0, 8).map(p =>
-      `<div class="autocomplete-item" data-id="${p.id}">${p.name} <span class="sub">Tồn: ${p.quantity} ${p.unit || ''} · ${formatVND(ORDER_TYPE === 'wholesale' ? p.wholesale_price : p.retail_price)}</span></div>`
-    ).join("");
-    list.querySelectorAll(".autocomplete-item[data-id]").forEach(el => {
-      el.addEventListener("click", () => {
-        addToCart(el.dataset.id);
-        document.getElementById("productSearch").value = "";
-        list.classList.remove("open");
-      });
+/* ---------- Lưới sản phẩm ---------- */
+function renderCategoryChips() {
+  const cats = [...new Set(ALL_PRODUCTS.map(p => p.category).filter(Boolean))];
+  const wrap = document.getElementById("posCategoryChips");
+  if (cats.length === 0) { wrap.innerHTML = ""; return; }
+  wrap.innerHTML = [`<div class="chip ${ACTIVE_CATEGORY === '' ? 'active' : ''}" data-cat="">Tất cả</div>`]
+    .concat(cats.map(c => `<div class="chip ${ACTIVE_CATEGORY === c ? 'active' : ''}" data-cat="${c}">${c}</div>`)).join("");
+  wrap.querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      ACTIVE_CATEGORY = el.dataset.cat;
+      renderCategoryChips();
+      renderProductGrid(document.getElementById("productSearch").value);
     });
+  });
+}
+
+function renderProductGrid(filter) {
+  const grid = document.getElementById("productGrid");
+  const f = (filter || "").trim().toLowerCase();
+  let list = ALL_PRODUCTS.filter(p => !f || p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f));
+  if (ACTIVE_CATEGORY) list = list.filter(p => p.category === ACTIVE_CATEGORY);
+
+  if (list.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="icon">📦</div>Không tìm thấy sản phẩm.</div>`;
+    return;
   }
-  list.classList.add("open");
+
+  grid.innerHTML = list.map(p => {
+    const inCart = CART.find(i => i.product_id === p.id);
+    const price = ORDER_TYPE === "wholesale" ? p.wholesale_price : p.retail_price;
+    const outOfStock = Number(p.quantity) <= 0;
+    return `<div class="product-card ${outOfStock ? 'out-of-stock' : ''}" data-id="${p.id}">
+      ${inCart ? `<div class="cart-badge">${inCart.quantity}</div>` : ""}
+      <div class="pname">${p.name}</div>
+      <div class="pprice">${formatVND(price)}</div>
+      <div class="pstock">${outOfStock ? 'Hết hàng' : 'Tồn: ' + p.quantity + ' ' + (p.unit || '')}</div>
+    </div>`;
+  }).join("");
+
+  grid.querySelectorAll(".product-card:not(.out-of-stock)").forEach(el => {
+    el.addEventListener("click", () => addToCart(el.dataset.id));
+  });
 }
 
 function addToCart(productId) {
@@ -340,48 +355,59 @@ function addToCart(productId) {
   if (!p) return;
   const existing = CART.find(i => i.product_id === productId);
   if (existing) {
+    if (existing.quantity >= Number(p.quantity)) { alert(`Chỉ còn ${p.quantity} ${p.unit || ''} trong kho.`); return; }
     existing.quantity += 1;
   } else {
     CART.push({
-      product_id: p.id,
-      name: p.name,
-      unit: p.unit,
-      max_qty: p.quantity,
-      quantity: 1,
-      unit_price: ORDER_TYPE === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price)
+      product_id: p.id, name: p.name, unit: p.unit, max_qty: Number(p.quantity),
+      quantity: 1, unit_price: ORDER_TYPE === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price)
     });
   }
+  renderProductGrid(document.getElementById("productSearch").value);
   renderCart();
 }
 
-function renderCart() {
-  const body = document.getElementById("cartBody");
-  if (CART.length === 0) {
-    body.innerHTML = `<tr><td colspan="5" class="text-mute" style="text-align:center; padding:16px;">Chưa có sản phẩm nào trong đơn</td></tr>`;
+function changeQty(productId, delta) {
+  const item = CART.find(i => i.product_id === productId);
+  if (!item) return;
+  const newQty = item.quantity + delta;
+  if (newQty <= 0) {
+    CART = CART.filter(i => i.product_id !== productId);
+  } else if (newQty > item.max_qty) {
+    alert(`Chỉ còn ${item.max_qty} ${item.unit || ''} trong kho.`);
+    return;
   } else {
-    body.innerHTML = CART.map((item, idx) => `
-      <tr>
-        <td>${item.name}</td>
-        <td><input type="number" class="cart-qty-input" min="1" value="${item.quantity}" data-idx="${idx}" data-field="quantity"></td>
-        <td><input type="number" class="cart-price-input" min="0" value="${item.unit_price}" data-idx="${idx}" data-field="unit_price"></td>
-        <td>${formatVND(item.quantity * item.unit_price)}</td>
-        <td><span class="remove-x" data-idx="${idx}">✕</span></td>
-      </tr>
-    `).join("");
+    item.quantity = newQty;
+  }
+  renderProductGrid(document.getElementById("productSearch").value);
+  renderCart();
+}
 
-    body.querySelectorAll("input[data-field]").forEach(el => {
-      el.addEventListener("input", () => {
-        const idx = Number(el.dataset.idx);
-        const field = el.dataset.field;
-        CART[idx][field] = Number(el.value || 0);
-        renderCart();
-      });
+/* ---------- Giỏ hàng ---------- */
+function renderCart() {
+  const wrap = document.getElementById("cartItems");
+  if (CART.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🛒</div>Chưa có sản phẩm nào<br>Bấm vào sản phẩm bên trái để thêm</div>`;
+  } else {
+    wrap.innerHTML = CART.map(item => `
+      <div class="cart-line">
+        <div class="cl-info">
+          <div class="cl-name">${item.name}</div>
+          <div class="cl-price">${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
+        </div>
+        <div class="cl-stepper">
+          <button data-id="${item.product_id}" data-d="-1">−</button>
+          <span>${item.quantity}</span>
+          <button data-id="${item.product_id}" data-d="1">+</button>
+        </div>
+        <span class="cl-remove" data-id="${item.product_id}">✕</span>
+      </div>
+    `).join("");
+    wrap.querySelectorAll(".cl-stepper button").forEach(btn => {
+      btn.addEventListener("click", () => changeQty(btn.dataset.id, Number(btn.dataset.d)));
     });
-    body.querySelectorAll(".remove-x").forEach(el => {
-      el.addEventListener("click", () => {
-        CART.splice(Number(el.dataset.idx), 1);
-        renderCart();
-      });
+    wrap.querySelectorAll(".cl-remove").forEach(btn => {
+      btn.addEventListener("click", () => { CART = CART.filter(i => i.product_id !== btn.dataset.id); renderProductGrid(document.getElementById("productSearch").value); renderCart(); });
     });
   }
   updateSummary();
@@ -393,16 +419,20 @@ function updateSummary() {
   const debt = Math.max(total - paid, 0);
   document.getElementById("sumTotal").textContent = formatVND(total);
   document.getElementById("sumDebt").textContent = formatVND(debt);
+
+  const itemCount = CART.reduce((s, i) => s + i.quantity, 0);
+  document.getElementById("cmbInfo").textContent = itemCount === 0 ? "Giỏ hàng trống" : `${itemCount} sản phẩm`;
+  document.getElementById("cmbTotal").textContent = itemCount === 0 ? "Xem giỏ →" : formatVND(total) + " →";
 }
 
+/* ---------- Tạo đơn ---------- */
 async function submitOrder() {
   if (CART.length === 0) { alert("Vui lòng thêm ít nhất 1 sản phẩm vào đơn hàng."); return; }
 
-  // Kiểm tra tồn kho đủ không
   for (const item of CART) {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
     if (p && item.quantity > Number(p.quantity)) {
-      alert(`Sản phẩm "${item.name}" chỉ còn ${p.quantity} ${p.unit || ''} trong kho, không đủ để bán ${item.quantity}.`);
+      alert(`Sản phẩm "${item.name}" chỉ còn ${p.quantity} ${p.unit || ''} trong kho.`);
       return;
     }
   }
@@ -432,12 +462,9 @@ async function submitOrder() {
     return;
   }
 
-  const itemRows = CART.map(i => ({
-    order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price
-  }));
+  const itemRows = CART.map(i => ({ order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price }));
   await sb.from("order_items").insert(itemRows);
 
-  // Trừ kho + ghi log
   for (const item of CART) {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
     const newQty = Number(p.quantity) - item.quantity;
@@ -448,7 +475,6 @@ async function submitOrder() {
     });
   }
 
-  // Ghi nhận thanh toán ban đầu (nếu có)
   if (paid > 0 && SELECTED_CUSTOMER) {
     await sb.from("customer_payments").insert({
       customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: paid,
@@ -458,7 +484,7 @@ async function submitOrder() {
 
   submitBtn.disabled = false;
   submitBtn.textContent = "Tạo đơn hàng";
-  document.getElementById("orderModal").classList.remove("open");
+  closePos();
 
   await Promise.all([loadProducts(), loadOrders()]);
   alert(`Đã tạo đơn hàng ${orderCode} thành công!`);
