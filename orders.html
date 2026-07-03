@@ -79,6 +79,9 @@ let ACTIVE_CATEGORY = "";
   bindEvents();
 
   document.getElementById("newOrderBtn").addEventListener("click", openPos);
+
+  // Mở thẳng màn hình bán hàng ngay khi vào trang — đây là màn hình chính nhân viên dùng nhiều nhất
+  openPos();
 })();
 
 function posScreenHtml() {
