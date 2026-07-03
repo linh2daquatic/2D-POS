@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Khách hàng — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:88vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.search-bar { max-width:320px; margin-bottom:0; }
+.btn-mini { padding:5px 10px; font-size:12px; }
+.row-actions { display:flex; gap:6px; }
+.type-toggle { display:flex; gap:6px; }
+.type-btn { flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
+.type-btn.active.retail { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
+.type-btn.active.wholesale { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ALL_CUSTOMERS = [];
+let EDIT_ID = null;
+let FORM_TYPE = "retail";
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  renderLayout({
+    activePage: "customers",
+    profile: CURRENT_PROFILE,
+    title: "Khách hàng",
+    subtitle: "Danh sách khách hàng buôn/lẻ"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+      <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
+      <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
+    </div>
+    <div class="panel">
+      <div class="panel-body" id="tableWrap">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modalOverlay">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="modalTitle">Thêm khách hàng</h3>
+          <span class="modal-close" id="modalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <form id="custForm">
+            <div class="field"><label>Loại khách hàng</label>
+              <div class="type-toggle">
+                <div class="type-btn retail active" id="typeRetailBtn">Bán lẻ</div>
+                <div class="type-btn wholesale" id="typeWholesaleBtn">Bán buôn</div>
+              </div>
+            </div>
+            <div class="field"><label>Tên khách hàng *</label><input id="f_name" required></div>
+            <div class="row-2">
+              <div class="field"><label>Số điện thoại</label><input id="f_phone"></div>
+              <div class="field"><label>Hạn mức nợ (₫)</label><input id="f_debt_limit" type="number" step="any" value="0"></div>
+            </div>
+            <div class="field"><label>Địa chỉ</label><input id="f_address"></div>
+            <div class="field"><label>Ghi chú</label><textarea id="f_notes" rows="2"></textarea></div>
+            <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" id="cancelBtn">Hủy</button>
+              <button type="submit" class="btn btn-primary" id="saveBtn">Lưu khách hàng</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await loadCustomers();
+
+  document.getElementById("searchInput").addEventListener("input", (e) => renderTable(e.target.value));
+  document.getElementById("addBtn").addEventListener("click", () => openModal());
+  document.getElementById("modalClose").addEventListener("click", closeModal);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("custForm").addEventListener("submit", saveCustomer);
+  document.getElementById("typeRetailBtn").addEventListener("click", () => setFormType("retail"));
+  document.getElementById("typeWholesaleBtn").addEventListener("click", () => setFormType("wholesale"));
+})();
+
+function setFormType(t) {
+  FORM_TYPE = t;
+  document.getElementById("typeRetailBtn").classList.toggle("active", t === "retail");
+  document.getElementById("typeWholesaleBtn").classList.toggle("active", t === "wholesale");
+}
+
+async function loadCustomers() {
+  const { data, error } = await sb.from("customers").select("*").order("name");
+  if (error) { console.error(error); return; }
+  ALL_CUSTOMERS = data || [];
+  renderTable(document.getElementById("searchInput")?.value || "");
+}
+
+function renderTable(filter) {
+  const wrap = document.getElementById("tableWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">👤</div>
+      ${ALL_CUSTOMERS.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy khách hàng phù hợp.'}
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Tên khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Loại</th><th></th>
+    </tr></thead><tbody>
+    ${list.map(c => `<tr>
+      <td>${c.name}</td>
+      <td>${c.phone || "—"}</td>
+      <td>${c.address || "—"}</td>
+      <td><span class="badge ${c.type}">${c.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+      <td><div class="row-actions">
+        <span class="btn btn-secondary btn-mini" onclick="openModal('${c.id}')">Sửa</span>
+      </div></td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function openModal(id) {
+  EDIT_ID = id || null;
+  const c = id ? ALL_CUSTOMERS.find(x => x.id === id) : null;
+  document.getElementById("modalTitle").textContent = c ? "Sửa khách hàng" : "Thêm khách hàng";
+  setFormType(c?.type || "retail");
+  document.getElementById("f_name").value = c?.name || "";
+  document.getElementById("f_phone").value = c?.phone || "";
+  document.getElementById("f_debt_limit").value = c?.debt_limit ?? 0;
+  document.getElementById("f_address").value = c?.address || "";
+  document.getElementById("f_notes").value = c?.notes || "";
+  document.getElementById("modalOverlay").classList.add("open");
+}
+function closeModal() { document.getElementById("modalOverlay").classList.remove("open"); }
+
+async function saveCustomer(e) {
+  e.preventDefault();
+  const saveBtn = document.getElementById("saveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const payload = {
+    name: document.getElementById("f_name").value.trim(),
+    phone: document.getElementById("f_phone").value.trim() || null,
+    type: FORM_TYPE,
+    debt_limit: Number(document.getElementById("f_debt_limit").value || 0),
+    address: document.getElementById("f_address").value.trim() || null,
+    notes: document.getElementById("f_notes").value.trim() || null,
+  };
+
+  let error;
+  if (EDIT_ID) {
+    ({ error } = await sb.from("customers").update(payload).eq("id", EDIT_ID));
+  } else {
+    ({ error } = await sb.from("customers").insert(payload));
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Lưu khách hàng";
+
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  closeModal();
+  await loadCustomers();
+}
+</script>
+</body>
+</html>
