@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đăng nhập — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="dot"></span><h1>2D Aquatic</h1>
+      <p>Hệ thống quản lý bán hàng nội bộ</p>
+    </div>
+
+    <div class="login-error" id="loginError"></div>
+
+    <form id="loginForm">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="email" required autocomplete="username" placeholder="ban@2daquatic.com">
+      </div>
+      <div class="field">
+        <label>Mật khẩu</label>
+        <input type="password" id="password" required autocomplete="current-password" placeholder="••••••••">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:11px;" id="submitBtn">
+        Đăng nhập
+      </button>
+    </form>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script>
+// Nếu đã đăng nhập rồi thì vào thẳng dashboard
+(async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) window.location.href = "index.html";
+})();
+
+const form = document.getElementById("loginForm");
+const errorBox = document.getElementById("loginError");
+const submitBtn = document.getElementById("submitBtn");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  errorBox.style.display = "none";
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<span class="loading-spin"></span> Đang đăng nhập...';
+
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    errorBox.textContent = error.message.includes("Invalid")
+      ? "Sai email hoặc mật khẩu."
+      : "Lỗi đăng nhập: " + error.message;
+    errorBox.style.display = "block";
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Đăng nhập";
+    return;
+  }
+
+  window.location.href = "index.html";
+});
+</script>
+</body>
+</html>

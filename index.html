@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  const { profile } = auth;
+  const isOwner = profile.role === "owner";
+
+  renderLayout({
+    activePage: "dashboard",
+    profile,
+    title: "Dashboard",
+    subtitle: "Tổng quan hoạt động kinh doanh hôm nay"
+  });
+
+  const content = document.getElementById("pageContent");
+  content.innerHTML = `<div class="stat-grid" id="statGrid"></div>
+    <div class="panel">
+      <div class="panel-header"><h2>Sản phẩm sắp hết hàng</h2></div>
+      <div class="panel-body" id="lowStockBody">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Đơn hàng gần đây</h2></div>
+      <div class="panel-body" id="recentOrdersBody">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>`;
+
+  loadDashboard(isOwner);
+})();
+
+async function loadDashboard(isOwner) {
+  const statGrid = document.getElementById("statGrid");
+  const todayStart = new Date();
+  todayStart.setHours(0,0,0,0);
+
+  // Doanh thu + đơn hàng hôm nay
+  const { data: todayOrders } = await supabase
+    .from("orders")
+    .select("total_amount, paid_amount, status, created_at")
+    .gte("created_at", todayStart.toISOString())
+    .eq("status", "completed");
+
+  const revenueToday = (todayOrders || []).reduce((s, o) => s + Number(o.total_amount || 0), 0);
+  const ordersToday = (todayOrders || []).length;
+
+  // Tổng công nợ khách hàng (toàn bộ, chưa lọc theo ngày)
+  const { data: allOrders } = await supabase
+    .from("orders")
+    .select("total_amount, paid_amount")
+    .eq("status", "completed");
+  const totalCustomerDebt = (allOrders || []).reduce((s, o) => s + (Number(o.total_amount||0) - Number(o.paid_amount||0)), 0);
+
+  // Sản phẩm sắp hết hàng
+  const { data: products } = await supabase
+    .from("products")
+    .select("id, name, quantity, low_stock_threshold, unit")
+    .order("quantity", { ascending: true });
+  const lowStock = (products || []).filter(p => Number(p.quantity) <= Number(p.low_stock_threshold));
+
+  let cards = `
+    <div class="stat-card accent">
+      <div class="label">Doanh thu hôm nay</div>
+      <div class="value">${formatVND(revenueToday)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Đơn hàng hôm nay</div>
+      <div class="value">${ordersToday}</div>
+    </div>
+    <div class="stat-card ${totalCustomerDebt > 0 ? 'warn' : ''}">
+      <div class="label">Công nợ khách hàng</div>
+      <div class="value">${formatVND(totalCustomerDebt)}</div>
+    </div>
+    <div class="stat-card ${lowStock.length > 0 ? 'danger-card' : ''}">
+      <div class="label">Sản phẩm sắp hết</div>
+      <div class="value">${lowStock.length}</div>
+    </div>`;
+
+  if (isOwner) {
+    const { data: pos } = await supabase.from("purchase_orders").select("total_amount, paid_amount").eq("status","completed");
+    const supplierDebt = (pos || []).reduce((s,o) => s + (Number(o.total_amount||0)-Number(o.paid_amount||0)), 0);
+
+    const { data: cashTx } = await supabase.from("cash_transactions").select("type, amount");
+    const cashBalance = (cashTx || []).reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
+
+    cards += `
+      <div class="stat-card ${supplierDebt > 0 ? 'warn' : ''}">
+        <div class="label">Công nợ nhà cung cấp</div>
+        <div class="value">${formatVND(supplierDebt)}</div>
+      </div>
+      <div class="stat-card accent">
+        <div class="label">Quỹ tiền mặt</div>
+        <div class="value">${formatVND(cashBalance)}</div>
+      </div>`;
+  }
+
+  statGrid.innerHTML = cards;
+
+  // Bảng tồn kho thấp
+  const lowStockBody = document.getElementById("lowStockBody");
+  if (lowStock.length === 0) {
+    lowStockBody.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Chưa có sản phẩm nào sắp hết hàng.</div>`;
+  } else {
+    lowStockBody.innerHTML = `<table><thead><tr><th>Sản phẩm</th><th>Tồn kho</th><th>Ngưỡng cảnh báo</th></tr></thead><tbody>
+      ${lowStock.map(p => `<tr><td>${p.name}</td><td>${p.quantity} ${p.unit||''}</td><td>${p.low_stock_threshold}</td></tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  // Đơn hàng gần đây
+  const { data: recent } = await supabase
+    .from("orders")
+    .select("order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  const recentBody = document.getElementById("recentOrdersBody");
+  if (!recent || recent.length === 0) {
+    recentBody.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Chưa có đơn hàng nào. <br>Hãy tạo đơn hàng đầu tiên ở mục "Đơn hàng".</div>`;
+  } else {
+    recentBody.innerHTML = `<table><thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th></tr></thead><tbody>
+      ${recent.map(o => {
+        const debt = Number(o.total_amount) - Number(o.paid_amount);
+        return `<tr>
+          <td>${o.order_code}</td>
+          <td>${o.customers?.name || "Khách lẻ"}</td>
+          <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+          <td>${formatVND(o.total_amount)}</td>
+          <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>`;
+  }
+}
+</script>
+</body>
+</html>
