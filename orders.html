@@ -12,6 +12,7 @@
 .modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:300; align-items:center; justify-content:center; padding:20px; }
 .modal-overlay.open { display:flex; }
 .modal-box { background:#fff; border-radius:14px; width:100%; max-width:400px; max-height:88vh; overflow-y:auto; }
+.modal-box.wide { max-width:560px; }
 .modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
 .modal-header h3 { font-family:var(--font-display); font-size:18px; }
 .modal-body { padding:20px 22px; }
@@ -83,6 +84,16 @@ let PAY_METHOD = "cash"; // dùng khi PAY_MODE = 'quick'
       <div class="panel-header"><h2>Danh sách đơn hàng</h2></div>
       <div class="panel-body" id="orderListWrap">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="orderDetailModal">
+      <div class="modal-box wide">
+        <div class="modal-header">
+          <h3 id="orderDetailTitle">Chi tiết đơn hàng</h3>
+          <span class="modal-close" id="orderDetailClose">✕</span>
+        </div>
+        <div class="modal-body" id="orderDetailBody"></div>
       </div>
     </div>
   `;
@@ -199,7 +210,7 @@ async function loadOrders() {
     </tr></thead><tbody>
     ${data.map(o => {
       const debt = Number(o.total_amount) - Number(o.paid_amount);
-      return `<tr>
+      return `<tr style="cursor:pointer;" data-order-id="${o.id}" class="order-row">
         <td>${o.order_code}</td>
         <td>${formatDate(o.created_at)}</td>
         <td>${o.customers?.name || "Khách lẻ"}</td>
@@ -210,6 +221,66 @@ async function loadOrders() {
       </tr>`;
     }).join("")}
   </tbody></table>`;
+
+  wrap.querySelectorAll(".order-row").forEach(row => {
+    row.addEventListener("click", () => showOrderDetail(row.dataset.orderId));
+  });
+}
+
+async function showOrderDetail(orderId) {
+  const modal = document.getElementById("orderDetailModal");
+  const body = document.getElementById("orderDetailBody");
+  document.getElementById("orderDetailTitle").textContent = "Chi tiết đơn hàng";
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: order, error: orderErr } = await sb
+    .from("orders")
+    .select("order_code, type, total_amount, paid_amount, created_at, customers(name, phone, address)")
+    .eq("id", orderId)
+    .single();
+
+  const { data: items } = await sb
+    .from("order_items")
+    .select("quantity, unit_price, subtotal, products(name, unit)")
+    .eq("order_id", orderId);
+
+  const { data: payments } = await sb
+    .from("customer_payments")
+    .select("amount, method")
+    .eq("order_id", orderId);
+
+  if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
+
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const debt = Number(order.total_amount) - Number(order.paid_amount);
+
+  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  body.innerHTML = `
+    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
+    ${order.customers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${order.customers.phone}</span></div>` : ""}
+    ${order.customers?.address ? `<div class="summary-row"><span>Địa chỉ</span><span>${order.customers.address}</span></div>` : ""}
+    <div class="summary-row"><span>Ngày</span><span>${formatDate(order.created_at)}</span></div>
+    <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
+
+    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <tbody>
+      ${(items || []).map(i => `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.quantity} ${i.products?.unit || ''}</td>
+        <td>${formatVND(i.unit_price)}</td>
+        <td>${formatVND(i.subtotal)}</td>
+      </tr>`).join("")}
+    </tbody></table>
+
+    <div style="margin-top:14px;">
+      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
+      ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
+      ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
+      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+    </div>
+  `;
 }
 
 function openPos() {
@@ -283,6 +354,8 @@ function bindEvents() {
   document.getElementById("closeQuickCustomer").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
   document.getElementById("qcCancelBtn").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
   document.getElementById("qcSaveBtn").addEventListener("click", saveQuickCustomer);
+
+  document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
 }
 
 function setOrderType(type) {
@@ -599,19 +672,26 @@ async function submitOrder() {
     });
   }
 
-  if (SELECTED_CUSTOMER) {
-    if (cash > 0) {
-      await sb.from("customer_payments").insert({
-        customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: cash,
-        method: "cash", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
-      });
-    }
-    if (transfer > 0) {
-      await sb.from("customer_payments").insert({
-        customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: transfer,
-        method: "transfer", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
-      });
-    }
+  // Ghi nhận lịch sử thanh toán (kể cả khách lẻ, không bắt buộc phải chọn khách hàng)
+  if (cash > 0) {
+    await sb.from("customer_payments").insert({
+      customer_id: SELECTED_CUSTOMER?.id || null, order_id: order.id, amount: cash,
+      method: "cash", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (transfer > 0) {
+    await sb.from("customer_payments").insert({
+      customer_id: SELECTED_CUSTOMER?.id || null, order_id: order.id, amount: transfer,
+      method: "transfer", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  // Tự động cộng tiền mặt thu được vào Quỹ tiền mặt (chuyển khoản không tính vào quỹ tiền mặt vật lý)
+  if (cash > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", category: "Bán hàng", amount: cash,
+      note: `Thu tiền mặt đơn ${orderCode}`, created_by: CURRENT_PROFILE.id
+    });
   }
 
   submitBtn.disabled = false;
