@@ -33,6 +33,18 @@
 .remove-x { color:var(--danger); cursor:pointer; font-weight:700; }
 .summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
 .summary-row.total { font-weight:700; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+.pay-quick-row { display:flex; gap:8px; margin-top:8px; }
+.pay-quick-btn { flex:1; padding:11px 8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
+.pay-quick-btn.active.cash { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
+.pay-quick-btn.active.transfer { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+.pay-custom-link { text-align:center; font-size:12px; color:var(--text-mute); text-decoration:underline; cursor:pointer; margin-top:8px; }
+.add-toast {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: var(--ink); color: #fff; padding: 10px 18px; border-radius:30px; font-size:13.5px;
+  font-weight:600; z-index:400; opacity:0; pointer-events:none; transition: opacity .18s, transform .18s;
+  display:flex; align-items:center; gap:8px; box-shadow:0 8px 24px rgba(0,0,0,0.25); white-space:nowrap;
+}
+.add-toast.show { opacity:1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -47,6 +59,8 @@ let CART = [];
 let ORDER_TYPE = "retail";
 let SELECTED_CUSTOMER = null;
 let ACTIVE_CATEGORY = "";
+let PAY_MODE = "quick"; // 'quick' = thanh toán đủ theo 1 phương thức | 'custom' = tự nhập
+let PAY_METHOD = "cash"; // dùng khi PAY_MODE = 'quick'
 
 (async () => {
   const auth = await requireAuth();
@@ -113,10 +127,21 @@ function posScreenHtml() {
         <div class="pos-cart-items" id="cartItems"></div>
         <div class="pos-cart-footer">
           <div class="summary-row"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
-          <div class="row-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
-            <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="payCash" type="number" step="any" value="0"></div>
-            <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="payTransfer" type="number" step="any" value="0"></div>
+
+          <div class="pay-quick-row" id="payQuickRow">
+            <div class="pay-quick-btn cash active" id="quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+            <div class="pay-quick-btn transfer" id="quickTransferBtn">🏦 Chuyển khoản<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
           </div>
+          <div class="pay-custom-link" id="toggleCustomPay">Khách trả một phần / chia 2 hình thức →</div>
+
+          <div id="customPayFields" style="display:none;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+              <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="payCash" type="number" step="any" value="0"></div>
+              <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="payTransfer" type="number" step="any" value="0"></div>
+            </div>
+            <div class="pay-custom-link" id="toggleQuickPay">← Quay lại thanh toán đủ</div>
+          </div>
+
           <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
           <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; justify-content:center; padding:12px; margin-top:12px;">Tạo đơn hàng</button>
         </div>
@@ -127,6 +152,7 @@ function posScreenHtml() {
       <span class="cmb-info" id="cmbInfo">Giỏ hàng trống</span>
       <span class="cmb-total" id="cmbTotal">Xem giỏ →</span>
     </div>
+    <div class="add-toast" id="addToast"></div>
   </div>
 
   <div class="modal-overlay" id="quickCustomerModal">
@@ -196,6 +222,12 @@ function openPos() {
   document.getElementById("productSearch").value = "";
   document.getElementById("payCash").value = 0;
   document.getElementById("payTransfer").value = 0;
+  PAY_MODE = "quick";
+  PAY_METHOD = "cash";
+  document.getElementById("payQuickRow").style.display = "flex";
+  document.getElementById("customPayFields").style.display = "none";
+  document.getElementById("quickCashBtn").classList.add("active");
+  document.getElementById("quickTransferBtn").classList.remove("active");
   renderCustomerPicker();
   renderCategoryChips();
   renderProductGrid("");
@@ -220,6 +252,25 @@ function bindEvents() {
   document.getElementById("payCash").addEventListener("input", updateSummary);
   document.getElementById("payTransfer").addEventListener("input", updateSummary);
   document.getElementById("submitOrderBtn").addEventListener("click", submitOrder);
+
+  document.getElementById("quickCashBtn").addEventListener("click", () => setPayMethod("cash"));
+  document.getElementById("quickTransferBtn").addEventListener("click", () => setPayMethod("transfer"));
+  document.getElementById("toggleCustomPay").addEventListener("click", () => {
+    PAY_MODE = "custom";
+    document.getElementById("payQuickRow").style.display = "none";
+    document.getElementById("toggleCustomPay").style.display = "none";
+    document.getElementById("customPayFields").style.display = "block";
+    document.getElementById("payCash").value = 0;
+    document.getElementById("payTransfer").value = 0;
+    updateSummary();
+  });
+  document.getElementById("toggleQuickPay").addEventListener("click", () => {
+    PAY_MODE = "quick";
+    document.getElementById("payQuickRow").style.display = "flex";
+    document.getElementById("toggleCustomPay").style.display = "block";
+    document.getElementById("customPayFields").style.display = "none";
+    updateSummary();
+  });
 
   document.getElementById("cartMobileBar").addEventListener("click", () => {
     document.getElementById("posCartPane").classList.add("open");
@@ -390,11 +441,13 @@ function addToCart(productId) {
   if (existing) {
     if (existing.quantity >= Number(p.quantity)) { alert(`Chỉ còn ${p.quantity} ${p.unit || ''} trong kho.`); return; }
     existing.quantity += 1;
+    showAddToast(p.name, existing.quantity);
   } else {
     CART.push({
       product_id: p.id, name: p.name, unit: p.unit, max_qty: Number(p.quantity),
       quantity: 1, unit_price: ORDER_TYPE === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price)
     });
+    showAddToast(p.name, 1);
   }
   renderProductGrid(document.getElementById("productSearch").value);
   renderCart();
@@ -446,10 +499,23 @@ function renderCart() {
   updateSummary();
 }
 
+function setPayMethod(method) {
+  PAY_METHOD = method;
+  document.getElementById("quickCashBtn").classList.toggle("active", method === "cash");
+  document.getElementById("quickTransferBtn").classList.toggle("active", method === "transfer");
+  updateSummary();
+}
+
 function updateSummary() {
   const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
-  const cash = Number(document.getElementById("payCash").value || 0);
-  const transfer = Number(document.getElementById("payTransfer").value || 0);
+  let cash, transfer;
+  if (PAY_MODE === "quick") {
+    cash = PAY_METHOD === "cash" ? total : 0;
+    transfer = PAY_METHOD === "transfer" ? total : 0;
+  } else {
+    cash = Number(document.getElementById("payCash").value || 0);
+    transfer = Number(document.getElementById("payTransfer").value || 0);
+  }
   const paid = cash + transfer;
   const debt = Math.max(total - paid, 0);
   document.getElementById("sumTotal").textContent = formatVND(total);
@@ -458,6 +524,21 @@ function updateSummary() {
   const itemCount = CART.reduce((s, i) => s + i.quantity, 0);
   document.getElementById("cmbInfo").textContent = itemCount === 0 ? "Giỏ hàng trống" : `${itemCount} sản phẩm`;
   document.getElementById("cmbTotal").textContent = itemCount === 0 ? "Xem giỏ →" : formatVND(total) + " →";
+}
+
+let toastTimer = null;
+let pulseTimer = null;
+function showAddToast(name, qty) {
+  const toast = document.getElementById("addToast");
+  toast.textContent = `✓ Đã thêm ${name}${qty > 1 ? ' ×' + qty : ''}`;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 1100);
+
+  const bar = document.getElementById("cartMobileBar");
+  bar.classList.add("pulse");
+  clearTimeout(pulseTimer);
+  pulseTimer = setTimeout(() => bar.classList.remove("pulse"), 400);
 }
 
 /* ---------- Tạo đơn ---------- */
@@ -477,8 +558,14 @@ async function submitOrder() {
   submitBtn.textContent = "Đang tạo đơn...";
 
   const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
-  const cash = Number(document.getElementById("payCash").value || 0);
-  const transfer = Number(document.getElementById("payTransfer").value || 0);
+  let cash, transfer;
+  if (PAY_MODE === "quick") {
+    cash = PAY_METHOD === "cash" ? total : 0;
+    transfer = PAY_METHOD === "transfer" ? total : 0;
+  } else {
+    cash = Number(document.getElementById("payCash").value || 0);
+    transfer = Number(document.getElementById("payTransfer").value || 0);
+  }
   const paid = cash + transfer;
   const orderCode = "DH" + Date.now().toString().slice(-8);
 
