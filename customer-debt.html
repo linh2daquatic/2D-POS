@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Công nợ khách hàng — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:420px; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.search-bar { max-width:320px; margin-bottom:16px; }
+.debt-card { border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+.debt-card-head { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:#fff; flex-wrap:wrap; gap:10px; }
+.debt-card-head:hover { background:#f8fafc; }
+.debt-card-name { font-weight:600; font-size:14.5px; }
+.debt-card-sub { font-size:12px; color:var(--text-mute); margin-top:2px; }
+.debt-card-amount { font-family:var(--font-display); font-weight:700; font-size:17px; color:var(--danger); }
+.debt-card-body { display:none; border-top:1px solid var(--border); padding:12px 16px; background:#fbfcfd; }
+.debt-card-body.open { display:block; }
+.debt-order-row { display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px dashed var(--border); }
+.debt-order-row:last-child { border-bottom:none; }
+.pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let DEBT_LIST = [];
+let PAY_CUSTOMER = null;
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  renderLayout({
+    activePage: "customer-debt",
+    profile: CURRENT_PROFILE,
+    title: "Công nợ khách hàng",
+    subtitle: "Theo dõi công nợ và ghi nhận thanh toán"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <div class="stat-grid" id="statGrid"></div>
+    <input class="search-bar" id="searchInput" placeholder="🔍 Tìm khách hàng...">
+    <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
+
+    <div class="modal-overlay" id="payModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="payModalTitle">Ghi nhận thanh toán</h3>
+          <span class="modal-close" id="payModalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <div class="summary-row total" style="margin-bottom:14px;">
+            <span>Đang nợ</span><span id="payCurrentDebt">0₫</span>
+          </div>
+          <div class="pay-method-row">
+            <div class="field"><label>Tiền mặt</label><input id="pay_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Chuyển khoản</label><input id="pay_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="pay_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total"><span>Còn nợ sau khi trả</span><span id="payRemaining">0₫</span></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="payCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="paySaveBtn">Ghi nhận</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await loadDebts();
+
+  document.getElementById("searchInput").addEventListener("input", (e) => renderList(e.target.value));
+  document.getElementById("payModalClose").addEventListener("click", closePayModal);
+  document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
+  document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
+  document.getElementById("pay_transfer").addEventListener("input", updatePaySummary);
+  document.getElementById("paySaveBtn").addEventListener("click", submitPayment);
+})();
+
+async function loadDebts() {
+  const { data: customers } = await sb.from("customers").select("*");
+  const { data: orders } = await sb.from("orders")
+    .select("id, order_code, type, total_amount, paid_amount, created_at, customer_id")
+    .eq("status", "completed")
+    .not("customer_id", "is", null)
+    .order("created_at", { ascending: true });
+
+  const byCustomer = {};
+  (orders || []).forEach(o => {
+    const debt = Number(o.total_amount) - Number(o.paid_amount);
+    if (debt <= 0) return;
+    if (!byCustomer[o.customer_id]) byCustomer[o.customer_id] = [];
+    byCustomer[o.customer_id].push({ ...o, debt });
+  });
+
+  DEBT_LIST = Object.keys(byCustomer).map(custId => {
+    const customer = (customers || []).find(c => c.id === custId);
+    const ordersForCustomer = byCustomer[custId];
+    const totalDebt = ordersForCustomer.reduce((s, o) => s + o.debt, 0);
+    return { customer, orders: ordersForCustomer, totalDebt };
+  }).filter(x => x.customer).sort((a, b) => b.totalDebt - a.totalDebt);
+
+  renderStats();
+  renderList("");
+}
+
+function renderStats() {
+  const total = DEBT_LIST.reduce((s, x) => s + x.totalDebt, 0);
+  document.getElementById("statGrid").innerHTML = `
+    <div class="stat-card danger-card">
+      <div class="label">Tổng công nợ khách hàng</div>
+      <div class="value">${formatVND(total)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Số khách đang nợ</div>
+      <div class="value">${DEBT_LIST.length}</div>
+    </div>
+  `;
+}
+
+function renderList(filter) {
+  const wrap = document.getElementById("debtListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = DEBT_LIST.filter(x => !f || x.customer.name.toLowerCase().includes(f) || (x.customer.phone || "").includes(f));
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>
+      ${DEBT_LIST.length === 0 ? 'Không có khách hàng nào đang nợ. Tuyệt vời!' : 'Không tìm thấy khách hàng phù hợp.'}
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = list.map((x, idx) => `
+    <div class="debt-card">
+      <div class="debt-card-head" data-idx="${idx}">
+        <div>
+          <div class="debt-card-name">${x.customer.name}</div>
+          <div class="debt-card-sub">${x.customer.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa thanh toán hết</div>
+        </div>
+        <div class="flex gap-12">
+          <div class="debt-card-amount">${formatVND(x.totalDebt)}</div>
+          <button class="btn btn-primary btn-mini" style="padding:7px 12px;" onclick="event.stopPropagation(); openPayModal('${x.customer.id}')">Ghi nhận trả nợ</button>
+        </div>
+      </div>
+      <div class="debt-card-body" id="debtBody-${idx}">
+        ${x.orders.map(o => `
+          <div class="debt-order-row">
+            <span>${o.order_code} · ${formatDate(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
+            <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".debt-card-head").forEach(el => {
+    el.addEventListener("click", () => {
+      document.getElementById(`debtBody-${el.dataset.idx}`).classList.toggle("open");
+    });
+  });
+}
+
+function openPayModal(customerId) {
+  PAY_CUSTOMER = DEBT_LIST.find(x => x.customer.id === customerId);
+  if (!PAY_CUSTOMER) return;
+  document.getElementById("payModalTitle").textContent = "Ghi nhận thanh toán — " + PAY_CUSTOMER.customer.name;
+  document.getElementById("payCurrentDebt").textContent = formatVND(PAY_CUSTOMER.totalDebt);
+  document.getElementById("pay_cash").value = 0;
+  document.getElementById("pay_transfer").value = 0;
+  document.getElementById("pay_note").value = "";
+  updatePaySummary();
+  document.getElementById("payModal").classList.add("open");
+}
+function closePayModal() { document.getElementById("payModal").classList.remove("open"); }
+
+function updatePaySummary() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  const remaining = Math.max(PAY_CUSTOMER.totalDebt - cash - transfer, 0);
+  document.getElementById("payRemaining").textContent = formatVND(remaining);
+}
+
+async function submitPayment() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  let remaining = cash + transfer;
+
+  if (remaining <= 0) { alert("Vui lòng nhập số tiền thanh toán."); return; }
+
+  const saveBtn = document.getElementById("paySaveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const note = document.getElementById("pay_note").value.trim();
+
+  let cashLeft = cash, transferLeft = transfer;
+  for (const o of PAY_CUSTOMER.orders) {
+    if (remaining <= 0) break;
+    const applyToOrder = Math.min(o.debt, remaining);
+    if (applyToOrder <= 0) continue;
+
+    const newPaid = Number(o.paid_amount) + applyToOrder;
+    await sb.from("orders").update({ paid_amount: newPaid }).eq("id", o.id);
+
+    let applyCash = Math.min(cashLeft, applyToOrder);
+    let applyTransfer = applyToOrder - applyCash;
+    cashLeft -= applyCash;
+    transferLeft -= applyTransfer;
+
+    if (applyCash > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyCash,
+        method: "cash", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+    if (applyTransfer > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyTransfer,
+        method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+
+    remaining -= applyToOrder;
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Ghi nhận";
+  closePayModal();
+  await loadDebts();
+  alert("Đã ghi nhận thanh toán thành công!");
+}
+</script>
+</body>
+</html>
