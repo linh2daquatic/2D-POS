@@ -4,7 +4,7 @@
 const SUPABASE_URL = "https://uihcjotjfpxpwzdxyjow.supabase.co";
 const SUPABASE_KEY = "sb_publishable_VoY4j3Y7eKGMQ4glxT-_OA_DtV3T06h";
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ------------------------------------------------------------
 // Bắt buộc phải đăng nhập mới xem được trang.
@@ -13,12 +13,12 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // về login.html nếu chưa đăng nhập.
 // ------------------------------------------------------------
 async function requireAuth() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await sb.auth.getSession();
   if (!session) {
     window.location.href = "login.html";
     return null;
   }
-  const { data: profile, error } = await supabase
+  const { data: profile, error } = await sb
     .from("profiles")
     .select("*")
     .eq("id", session.user.id)
@@ -26,7 +26,7 @@ async function requireAuth() {
 
   if (error || !profile) {
     console.error("Không lấy được thông tin tài khoản:", error);
-    await supabase.auth.signOut();
+    await sb.auth.signOut();
     window.location.href = "login.html";
     return null;
   }
@@ -36,7 +36,7 @@ async function requireAuth() {
 
 // Đăng xuất
 async function doLogout() {
-  await supabase.auth.signOut();
+  await sb.auth.signOut();
   window.location.href = "login.html";
 }
 
