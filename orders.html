@@ -113,9 +113,9 @@ function posScreenHtml() {
         <div class="pos-cart-items" id="cartItems"></div>
         <div class="pos-cart-footer">
           <div class="summary-row"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
-          <div class="field" style="margin-top:8px; margin-bottom:0;">
-            <label>Khách đã thanh toán</label>
-            <input id="paidAmount" type="number" step="any" value="0">
+          <div class="row-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+            <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="payCash" type="number" step="any" value="0"></div>
+            <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="payTransfer" type="number" step="any" value="0"></div>
           </div>
           <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
           <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; justify-content:center; padding:12px; margin-top:12px;">Tạo đơn hàng</button>
@@ -135,6 +135,7 @@ function posScreenHtml() {
       <div class="modal-body">
         <div class="field"><label>Tên khách hàng *</label><input id="qc_name" required></div>
         <div class="field"><label>Số điện thoại</label><input id="qc_phone"></div>
+        <div class="field"><label>Địa chỉ</label><input id="qc_address"></div>
         <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
           <button type="button" class="btn btn-secondary" id="qcCancelBtn">Hủy</button>
           <button type="button" class="btn btn-primary" id="qcSaveBtn">Lưu & chọn</button>
@@ -193,7 +194,8 @@ function openPos() {
   document.getElementById("typeRetailBtn").classList.add("active");
   document.getElementById("typeWholesaleBtn").classList.remove("active");
   document.getElementById("productSearch").value = "";
-  document.getElementById("paidAmount").value = 0;
+  document.getElementById("payCash").value = 0;
+  document.getElementById("payTransfer").value = 0;
   renderCustomerPicker();
   renderCategoryChips();
   renderProductGrid("");
@@ -215,7 +217,8 @@ function bindEvents() {
   const prodInput = document.getElementById("productSearch");
   prodInput.addEventListener("input", () => renderProductGrid(prodInput.value));
 
-  document.getElementById("paidAmount").addEventListener("input", updateSummary);
+  document.getElementById("payCash").addEventListener("input", updateSummary);
+  document.getElementById("payTransfer").addEventListener("input", updateSummary);
   document.getElementById("submitOrderBtn").addEventListener("click", submitOrder);
 
   document.getElementById("cartMobileBar").addEventListener("click", () => {
@@ -248,7 +251,7 @@ function renderCustomerPicker() {
   const wrap = document.getElementById("customerPickerWrap");
   if (SELECTED_CUSTOMER) {
     wrap.innerHTML = `<div class="selected-customer-tag">
-      👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''}
+      👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''} ${SELECTED_CUSTOMER.address ? '· 📍 ' + SELECTED_CUSTOMER.address : ''}
       <span class="remove-x" id="clearCustomerBtn">✕</span>
     </div>`;
     document.getElementById("clearCustomerBtn").addEventListener("click", () => {
@@ -257,12 +260,38 @@ function renderCustomerPicker() {
     });
   } else {
     wrap.innerHTML = `<div style="position:relative;">
-      <input id="customerSearch" placeholder="Khách lẻ (bấm để tìm/thêm khách)...">
+      <input id="customerSearch" placeholder="Gõ SĐT rồi nhấn Enter, hoặc tìm theo tên...">
       <div class="autocomplete-list" id="customerList"></div>
     </div>`;
     const custInput = document.getElementById("customerSearch");
     custInput.addEventListener("input", () => renderCustomerList(custInput.value));
     custInput.addEventListener("focus", () => renderCustomerList(custInput.value));
+    custInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const val = custInput.value.trim();
+      if (!val) return;
+      // Ưu tiên khớp chính xác theo số điện thoại
+      const exactPhone = ALL_CUSTOMERS.find(c => c.phone && c.phone.replace(/\s/g, "") === val.replace(/\s/g, ""));
+      if (exactPhone) {
+        SELECTED_CUSTOMER = exactPhone;
+        renderCustomerPicker();
+        return;
+      }
+      // Nếu không khớp chính xác, chọn kết quả gợi ý đầu tiên (nếu chỉ có 1 kết quả)
+      const f = val.toLowerCase();
+      const matches = ALL_CUSTOMERS.filter(c => c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+      if (matches.length === 1) {
+        SELECTED_CUSTOMER = matches[0];
+        renderCustomerPicker();
+      } else {
+        // Không tìm thấy khách phù hợp -> gợi ý thêm khách mới với SĐT vừa gõ
+        document.getElementById("qc_name").value = "";
+        document.getElementById("qc_phone").value = /^[0-9+\s]+$/.test(val) ? val : "";
+        document.getElementById("qc_address").value = "";
+        document.getElementById("quickCustomerModal").classList.add("open");
+      }
+    });
     document.addEventListener("click", (e) => {
       if (!e.target.closest("#customerPickerWrap")) document.getElementById("customerList")?.classList.remove("open");
     });
@@ -276,7 +305,7 @@ function renderCustomerList(filter) {
   const matches = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
 
   list.innerHTML = matches.slice(0, 8).map(c =>
-    `<div class="autocomplete-item" data-id="${c.id}">${c.name} <span class="sub">${c.phone || ''} · ${c.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></div>`
+    `<div class="autocomplete-item" data-id="${c.id}">${c.name} <span class="sub">${c.phone || ''} · ${c.type === 'wholesale' ? 'Buôn' : 'Lẻ'}${c.address ? ' · ' + c.address : ''}</span></div>`
   ).join("") + `<div class="autocomplete-item" style="color:var(--teal-deep); font-weight:600;" id="quickAddCustomerItem">+ Thêm khách hàng mới ${filter ? '"' + filter + '"' : ''}</div>`;
 
   list.classList.add("open");
@@ -299,8 +328,9 @@ async function saveQuickCustomer() {
   const name = document.getElementById("qc_name").value.trim();
   if (!name) { alert("Vui lòng nhập tên khách hàng."); return; }
   const phone = document.getElementById("qc_phone").value.trim() || null;
+  const address = document.getElementById("qc_address").value.trim() || null;
 
-  const { data, error } = await sb.from("customers").insert({ name, phone, type: ORDER_TYPE }).select().single();
+  const { data, error } = await sb.from("customers").insert({ name, phone, address, type: ORDER_TYPE }).select().single();
   if (error) { alert("Lỗi khi thêm khách hàng: " + error.message); return; }
 
   ALL_CUSTOMERS.push(data);
@@ -418,7 +448,9 @@ function renderCart() {
 
 function updateSummary() {
   const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
-  const paid = Number(document.getElementById("paidAmount").value || 0);
+  const cash = Number(document.getElementById("payCash").value || 0);
+  const transfer = Number(document.getElementById("payTransfer").value || 0);
+  const paid = cash + transfer;
   const debt = Math.max(total - paid, 0);
   document.getElementById("sumTotal").textContent = formatVND(total);
   document.getElementById("sumDebt").textContent = formatVND(debt);
@@ -445,7 +477,9 @@ async function submitOrder() {
   submitBtn.textContent = "Đang tạo đơn...";
 
   const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
-  const paid = Number(document.getElementById("paidAmount").value || 0);
+  const cash = Number(document.getElementById("payCash").value || 0);
+  const transfer = Number(document.getElementById("payTransfer").value || 0);
+  const paid = cash + transfer;
   const orderCode = "DH" + Date.now().toString().slice(-8);
 
   const { data: order, error: orderErr } = await sb.from("orders").insert({
@@ -478,11 +512,19 @@ async function submitOrder() {
     });
   }
 
-  if (paid > 0 && SELECTED_CUSTOMER) {
-    await sb.from("customer_payments").insert({
-      customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: paid,
-      method: "cash", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
-    });
+  if (SELECTED_CUSTOMER) {
+    if (cash > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: cash,
+        method: "cash", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
+      });
+    }
+    if (transfer > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: SELECTED_CUSTOMER.id, order_id: order.id, amount: transfer,
+        method: "transfer", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
+      });
+    }
   }
 
   submitBtn.disabled = false;
