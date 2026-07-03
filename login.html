@@ -40,7 +40,7 @@
 <script>
 // Nếu đã đăng nhập rồi thì vào thẳng dashboard
 (async () => {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await sb.auth.getSession();
   if (session) window.location.href = "index.html";
 })();
 
@@ -57,7 +57,7 @@ form.addEventListener("submit", async (e) => {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await sb.auth.signInWithPassword({ email, password });
 
   if (error) {
     errorBox.textContent = error.message.includes("Invalid")
