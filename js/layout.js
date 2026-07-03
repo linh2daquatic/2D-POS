@@ -4,10 +4,10 @@
 // ============================================================
 
 const NAV_ITEMS = [
-  { key: "dashboard", label: "Dashboard", href: "index.html", icon: "◱", ownerOnly: false },
-  { key: "orders", label: "Đơn hàng", href: "orders.html", icon: "🧾", ownerOnly: false },
-  { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
+  { key: "orders", label: "Bán hàng", href: "orders.html", icon: "🛒", ownerOnly: false },
   { key: "products", label: "Kho hàng", href: "products.html", icon: "📦", ownerOnly: false },
+  { key: "dashboard", label: "Dashboard", href: "index.html", icon: "◱", ownerOnly: false },
+  { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
   { key: "customer-debt", label: "Công nợ khách hàng", href: "customer-debt.html", icon: "📗", ownerOnly: false },
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
   { key: "supplier-debt", label: "Công nợ NCC", href: "supplier-debt.html", icon: "📕", ownerOnly: true },
