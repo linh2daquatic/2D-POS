@@ -30,6 +30,12 @@
   const content = document.getElementById("pageContent");
   content.innerHTML = `<div class="stat-grid" id="statGrid"></div>
     <div class="panel">
+      <div class="panel-header"><h2>Doanh thu 7 ngày gần nhất</h2></div>
+      <div class="panel-body" id="chartBody">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+    <div class="panel">
       <div class="panel-header"><h2>Sản phẩm sắp hết hàng</h2></div>
       <div class="panel-body" id="lowStockBody">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
@@ -51,7 +57,7 @@ async function loadDashboard(isOwner) {
   todayStart.setHours(0,0,0,0);
 
   // Doanh thu + đơn hàng hôm nay
-  const { data: todayOrders } = await supabase
+  const { data: todayOrders } = await sb
     .from("orders")
     .select("total_amount, paid_amount, status, created_at")
     .gte("created_at", todayStart.toISOString())
@@ -61,14 +67,42 @@ async function loadDashboard(isOwner) {
   const ordersToday = (todayOrders || []).length;
 
   // Tổng công nợ khách hàng (toàn bộ, chưa lọc theo ngày)
-  const { data: allOrders } = await supabase
+  const { data: allOrders } = await sb
     .from("orders")
     .select("total_amount, paid_amount")
     .eq("status", "completed");
   const totalCustomerDebt = (allOrders || []).reduce((s, o) => s + (Number(o.total_amount||0) - Number(o.paid_amount||0)), 0);
 
+  // Doanh thu tháng này
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+  const { data: monthOrders } = await sb
+    .from("orders")
+    .select("total_amount, created_at")
+    .eq("status", "completed")
+    .gte("created_at", monthStart.toISOString());
+  const revenueMonth = (monthOrders || []).reduce((s, o) => s + Number(o.total_amount || 0), 0);
+
+  // Dữ liệu biểu đồ 7 ngày gần nhất
+  const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6); sevenDaysAgo.setHours(0,0,0,0);
+  const { data: weekOrders } = await sb
+    .from("orders")
+    .select("total_amount, created_at")
+    .eq("status", "completed")
+    .gte("created_at", sevenDaysAgo.toISOString());
+
+  const dayBuckets = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0,0,0,0);
+    dayBuckets.push({ date: d, label: d.toLocaleDateString("vi-VN", { weekday: "short" }), total: 0 });
+  }
+  (weekOrders || []).forEach(o => {
+    const od = new Date(o.created_at); od.setHours(0,0,0,0);
+    const bucket = dayBuckets.find(b => b.date.getTime() === od.getTime());
+    if (bucket) bucket.total += Number(o.total_amount || 0);
+  });
+
   // Sản phẩm sắp hết hàng
-  const { data: products } = await supabase
+  const { data: products } = await sb
     .from("products")
     .select("id, name, quantity, low_stock_threshold, unit")
     .order("quantity", { ascending: true });
@@ -78,6 +112,10 @@ async function loadDashboard(isOwner) {
     <div class="stat-card accent">
       <div class="label">Doanh thu hôm nay</div>
       <div class="value">${formatVND(revenueToday)}</div>
+    </div>
+    <div class="stat-card accent">
+      <div class="label">Doanh thu tháng này</div>
+      <div class="value">${formatVND(revenueMonth)}</div>
     </div>
     <div class="stat-card">
       <div class="label">Đơn hàng hôm nay</div>
@@ -99,6 +137,20 @@ async function loadDashboard(isOwner) {
     const { data: cashTx } = await sb.from("cash_transactions").select("type, amount");
     const cashBalance = (cashTx || []).reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
 
+    // Lãi gộp tháng này = doanh thu - giá vốn (dựa trên giá vốn hiện tại của sản phẩm)
+    const { data: monthItems } = await sb
+      .from("order_items")
+      .select("quantity, unit_price, orders!inner(created_at,status), products(cost_price)")
+      .eq("orders.status", "completed")
+      .gte("orders.created_at", monthStart.toISOString());
+
+    let monthCost = 0, monthItemRevenue = 0;
+    (monthItems || []).forEach(i => {
+      monthItemRevenue += Number(i.quantity) * Number(i.unit_price);
+      monthCost += Number(i.quantity) * Number(i.products?.cost_price || 0);
+    });
+    const profitMonth = monthItemRevenue - monthCost;
+
     cards += `
       <div class="stat-card ${supplierDebt > 0 ? 'warn' : ''}">
         <div class="label">Công nợ nhà cung cấp</div>
@@ -107,10 +159,29 @@ async function loadDashboard(isOwner) {
       <div class="stat-card accent">
         <div class="label">Quỹ tiền mặt</div>
         <div class="value">${formatVND(cashBalance)}</div>
+      </div>
+      <div class="stat-card ${profitMonth >= 0 ? 'accent' : 'danger-card'}">
+        <div class="label">Lãi gộp tháng này</div>
+        <div class="value">${formatVND(profitMonth)}</div>
+        <div class="delta text-mute" style="font-size:11px;">*Ước tính theo giá vốn hiện tại</div>
       </div>`;
   }
 
   statGrid.innerHTML = cards;
+
+  // Biểu đồ doanh thu 7 ngày
+  const chartBody = document.getElementById("chartBody");
+  const maxDay = Math.max(...dayBuckets.map(b => b.total), 1);
+  chartBody.innerHTML = `<div style="display:flex; align-items:flex-end; gap:10px; height:160px; padding-top:10px;">
+    ${dayBuckets.map(b => {
+      const heightPct = Math.max((b.total / maxDay) * 100, b.total > 0 ? 4 : 0);
+      return `<div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;">
+        <div style="font-size:11px; color:var(--text-mute); margin-bottom:4px;">${b.total > 0 ? formatVND(b.total).replace('₫','') : ''}</div>
+        <div style="width:100%; max-width:36px; height:${heightPct}%; background:${b.total > 0 ? 'var(--teal-deep)' : 'var(--border)'}; border-radius:5px 5px 0 0; min-height:2px;"></div>
+        <div style="font-size:11.5px; color:var(--text-mute); margin-top:6px; text-transform:capitalize;">${b.label}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
 
   // Bảng tồn kho thấp
   const lowStockBody = document.getElementById("lowStockBody");
@@ -123,7 +194,7 @@ async function loadDashboard(isOwner) {
   }
 
   // Đơn hàng gần đây
-  const { data: recent } = await supabase
+  const { data: recent } = await sb
     .from("orders")
     .select("order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
     .order("created_at", { ascending: false })
