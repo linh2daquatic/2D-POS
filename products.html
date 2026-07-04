@@ -312,7 +312,7 @@ function renderMaxspectValue() {
   const grid = document.getElementById("maxspectValueGrid");
   if (!grid) return;
 
-  const isMaxspect = (p) => (p.brand || "").toLowerCase().includes("maxspect");
+  const isMaxspect = (p) => (p.name || "").toLowerCase().includes("maxspect") || (p.brand || "").toLowerCase().includes("maxspect");
   const maxspectList = ALL_PRODUCTS.filter(isMaxspect);
   const otherList = ALL_PRODUCTS.filter(p => !isMaxspect(p));
 
