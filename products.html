@@ -109,7 +109,11 @@ let RC_ACTIVE_CATEGORY = "";
         <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc mã SKU..." style="margin-bottom:0;">
         ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
       </div>
+      ${isOwner ? `
+      <div class="stat-grid" id="inventoryValueGrid" style="margin-bottom:16px;"></div>
+      ` : ""}
       <div class="chip-row" id="categoryChips"></div>
+      <div class="chip-row" id="brandChips"></div>
       <div class="panel">
         <div class="panel-body" id="productTableWrap">
           <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
@@ -190,6 +194,7 @@ let RC_ACTIVE_CATEGORY = "";
               <div class="field"><label>Mã SKU</label><input id="f_sku" placeholder="VD: CA-NEMO-01"></div>
               <div class="field"><label>Danh mục</label><input id="f_category" placeholder="Cá / San hô / Thiết bị"></div>
             </div>
+            <div class="field"><label>Hãng / Thương hiệu</label><input id="f_brand" placeholder="VD: Maxspect, Atman... (không bắt buộc)"></div>
             <div class="row-2">
               <div class="field"><label>Đơn vị</label><input id="f_unit" value="cái"></div>
               <div class="field"><label>Tồn kho *</label><input id="f_quantity" type="number" step="any" value="0" required></div>
@@ -240,12 +245,14 @@ function switchTab(tab) {
 }
 
 let ACTIVE_CATEGORY = "";
+let ACTIVE_BRAND = "";
 
 async function loadProducts() {
   const { data, error } = await sb.from("products").select("*").order("name", { ascending: true });
   if (error) { console.error(error); return; }
   ALL_PRODUCTS = data || [];
   renderCategoryChips();
+  renderBrandChips();
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
@@ -253,7 +260,7 @@ function renderCategoryChips() {
   const cats = [...new Set(ALL_PRODUCTS.map(p => p.category).filter(Boolean))];
   const chipWrap = document.getElementById("categoryChips");
   if (cats.length === 0) { chipWrap.innerHTML = ""; return; }
-  chipWrap.innerHTML = [`<div class="chip ${ACTIVE_CATEGORY === '' ? 'active' : ''}" data-cat="">Tất cả</div>`]
+  chipWrap.innerHTML = [`<div class="chip ${ACTIVE_CATEGORY === '' ? 'active' : ''}" data-cat="">Tất cả danh mục</div>`]
     .concat(cats.map(c => `<div class="chip ${ACTIVE_CATEGORY === c ? 'active' : ''}" data-cat="${c}">${c}</div>`))
     .join("");
   chipWrap.querySelectorAll(".chip").forEach(el => {
@@ -265,6 +272,49 @@ function renderCategoryChips() {
   });
 }
 
+function renderBrandChips() {
+  const brands = [...new Set(ALL_PRODUCTS.map(p => p.brand).filter(Boolean))];
+  const chipWrap = document.getElementById("brandChips");
+  if (!chipWrap) return;
+  if (brands.length === 0) { chipWrap.innerHTML = ""; return; }
+  chipWrap.innerHTML = [`<div class="chip ${ACTIVE_BRAND === '' ? 'active' : ''}" data-brand="">Tất cả hãng</div>`]
+    .concat(brands.map(b => `<div class="chip ${ACTIVE_BRAND === b ? 'active' : ''}" data-brand="${b}">🏷️ ${b}</div>`))
+    .join("");
+  chipWrap.querySelectorAll(".chip").forEach(el => {
+    el.addEventListener("click", () => {
+      ACTIVE_BRAND = el.dataset.brand;
+      renderBrandChips();
+      renderTable(document.getElementById("searchInput").value);
+    });
+  });
+}
+
+function renderInventoryValue(filteredList) {
+  const grid = document.getElementById("inventoryValueGrid");
+  if (!grid) return;
+
+  const totalCostValue = filteredList.reduce((s, p) => s + (Number(p.quantity) * Number(p.cost_price || 0)), 0);
+  const totalRetailValue = filteredList.reduce((s, p) => s + (Number(p.quantity) * Number(p.retail_price || 0)), 0);
+  const totalItems = filteredList.reduce((s, p) => s + Number(p.quantity), 0);
+
+  const filterLabel = [ACTIVE_CATEGORY, ACTIVE_BRAND].filter(Boolean).join(" · ") || "Toàn bộ kho";
+
+  grid.innerHTML = `
+    <div class="stat-card accent">
+      <div class="label">Giá trị tồn kho (giá vốn) — ${filterLabel}</div>
+      <div class="value">${formatVND(totalCostValue)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Giá trị nếu bán hết (giá lẻ)</div>
+      <div class="value">${formatVND(totalRetailValue)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Tổng số lượng tồn</div>
+      <div class="value">${totalItems}</div>
+    </div>
+  `;
+}
+
 function renderTable(filter) {
   const wrap = document.getElementById("productTableWrap");
   const isOwner = CURRENT_PROFILE.role === "owner";
@@ -273,6 +323,9 @@ function renderTable(filter) {
     !f || p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f)
   );
   if (ACTIVE_CATEGORY) list = list.filter(p => p.category === ACTIVE_CATEGORY);
+  if (ACTIVE_BRAND) list = list.filter(p => p.brand === ACTIVE_BRAND);
+
+  if (isOwner) renderInventoryValue(list);
 
   if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">📦</div>
@@ -292,7 +345,7 @@ function renderTable(filter) {
         return `<tr>
           <td>${p.name}</td>
           <td>${p.sku || "—"}</td>
-          <td>${p.category || "—"}</td>
+          <td>${p.category || "—"}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
@@ -347,6 +400,7 @@ function openModal(id) {
   document.getElementById("f_name").value = p?.name || "";
   document.getElementById("f_sku").value = p?.sku || "";
   document.getElementById("f_category").value = p?.category || "";
+  document.getElementById("f_brand").value = p?.brand || "";
   document.getElementById("f_unit").value = p?.unit || "cái";
   document.getElementById("f_quantity").value = p?.quantity ?? 0;
   document.getElementById("f_threshold").value = p?.low_stock_threshold ?? 5;
@@ -367,6 +421,7 @@ async function saveProduct(e) {
     name: document.getElementById("f_name").value.trim(),
     sku: document.getElementById("f_sku").value.trim() || null,
     category: document.getElementById("f_category").value.trim() || null,
+    brand: document.getElementById("f_brand").value.trim() || null,
     unit: document.getElementById("f_unit").value.trim() || "cái",
     quantity: Number(document.getElementById("f_quantity").value || 0),
     low_stock_threshold: Number(document.getElementById("f_threshold").value || 5),
