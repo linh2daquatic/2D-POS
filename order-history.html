@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lịch sử đơn — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.search-bar { max-width:320px; margin-bottom:16px; }
+.summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+.order-row-clickable { cursor:pointer; }
+.order-row-clickable:hover { background:#f8fafc; }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ALL_ORDERS = [];
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  renderLayout({
+    activePage: "order-history",
+    profile: CURRENT_PROFILE,
+    title: "Lịch sử đơn",
+    subtitle: "Toàn bộ đơn hàng đã bán"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo mã đơn hoặc tên khách...">
+    <div class="panel">
+      <div class="panel-body" id="orderListWrap">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="orderDetailModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="orderDetailTitle">Chi tiết đơn hàng</h3>
+          <span class="modal-close" id="orderDetailClose">✕</span>
+        </div>
+        <div class="modal-body" id="orderDetailBody"></div>
+      </div>
+    </div>
+  `;
+
+  await loadOrders();
+
+  document.getElementById("searchInput").addEventListener("input", (e) => renderList(e.target.value));
+  document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
+})();
+
+async function loadOrders() {
+  const { data, error } = await sb
+    .from("orders")
+    .select("id, order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    document.getElementById("orderListWrap").innerHTML = `<div class="empty-state">Lỗi tải đơn hàng: ${error.message}</div>`;
+    return;
+  }
+  ALL_ORDERS = data || [];
+  renderList("");
+}
+
+function renderList(filter) {
+  const wrap = document.getElementById("orderListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = ALL_ORDERS.filter(o =>
+    !f || o.order_code.toLowerCase().includes(f) || (o.customers?.name || "khách lẻ").toLowerCase().includes(f)
+  );
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>${ALL_ORDERS.length === 0 ? 'Chưa có đơn hàng nào.' : 'Không tìm thấy đơn hàng phù hợp.'}</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Mã đơn</th><th>Ngày</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>Đã trả</th><th>Trạng thái</th>
+    </tr></thead><tbody>
+    ${list.map(o => {
+      const debt = Number(o.total_amount) - Number(o.paid_amount);
+      return `<tr class="order-row-clickable" data-order-id="${o.id}">
+        <td>${o.order_code}</td>
+        <td>${formatDate(o.created_at)}</td>
+        <td>${o.customers?.name || "Khách lẻ"}</td>
+        <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+        <td>${formatVND(o.total_amount)}</td>
+        <td>${formatVND(o.paid_amount)}</td>
+        <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+      </tr>`;
+    }).join("")}
+  </tbody></table>`;
+
+  wrap.querySelectorAll(".order-row-clickable").forEach(row => {
+    row.addEventListener("click", () => showOrderDetail(row.dataset.orderId));
+  });
+}
+
+async function showOrderDetail(orderId) {
+  const modal = document.getElementById("orderDetailModal");
+  const body = document.getElementById("orderDetailBody");
+  document.getElementById("orderDetailTitle").textContent = "Chi tiết đơn hàng";
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: order, error: orderErr } = await sb
+    .from("orders")
+    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
+    .eq("id", orderId)
+    .single();
+
+  const { data: items } = await sb
+    .from("order_items")
+    .select("quantity, unit_price, subtotal, products(name, unit)")
+    .eq("order_id", orderId);
+
+  const { data: payments } = await sb
+    .from("customer_payments")
+    .select("amount, method")
+    .eq("order_id", orderId);
+
+  if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
+
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const debt = Number(order.total_amount) - Number(order.paid_amount);
+
+  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  body.innerHTML = `
+    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
+    ${order.customers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${order.customers.phone}</span></div>` : ""}
+    ${order.customers?.address ? `<div class="summary-row"><span>Địa chỉ</span><span>${order.customers.address}</span></div>` : ""}
+    <div class="summary-row"><span>Ngày</span><span>${formatDate(order.created_at)}</span></div>
+    <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
+
+    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <tbody>
+      ${(items || []).map(i => `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.quantity} ${i.products?.unit || ''}</td>
+        <td>${formatVND(i.unit_price)}</td>
+        <td>${formatVND(i.subtotal)}</td>
+      </tr>`).join("")}
+    </tbody></table>
+
+    <div style="margin-top:14px;">
+      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
+      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
+      ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
+      ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
+      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+    </div>
+  `;
+}
+</script>
+</body>
+</html>
