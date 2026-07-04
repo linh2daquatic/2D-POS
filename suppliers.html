@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhà cung cấp — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:440px; max-height:88vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.search-bar { max-width:320px; margin-bottom:16px; }
+.tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
+.pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+.debt-card { border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+.debt-card-head { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:#fff; flex-wrap:wrap; gap:10px; }
+.debt-card-head:hover { background:#f8fafc; }
+.debt-card-name { font-weight:600; font-size:14.5px; }
+.debt-card-sub { font-size:12px; color:var(--text-mute); margin-top:2px; }
+.debt-card-amount { font-family:var(--font-display); font-weight:700; font-size:17px; color:var(--danger); }
+.debt-card-body { display:none; border-top:1px solid var(--border); padding:12px 16px; background:#fbfcfd; }
+.debt-card-body.open { display:block; }
+.debt-order-row { display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px dashed var(--border); }
+.debt-order-row:last-child { border-bottom:none; }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ALL_SUPPLIERS = [];
+let ALL_PO = [];
+let DEBT_LIST = [];
+let EDIT_SUPPLIER_ID = null;
+let PAY_SUPPLIER = null;
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  if (CURRENT_PROFILE.role !== "owner") {
+    renderLayout({ activePage: "suppliers", profile: CURRENT_PROFILE, title: "Nhà cung cấp" });
+    document.getElementById("pageContent").innerHTML = `<div class="empty-state"><div class="icon">🔒</div>Chỉ Chủ cửa hàng mới xem được mục này.</div>`;
+    return;
+  }
+
+  renderLayout({
+    activePage: "suppliers",
+    profile: CURRENT_PROFILE,
+    title: "Nhà cung cấp",
+    subtitle: "Quản lý nhà cung cấp và công nợ"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <div class="tabs-row">
+      <div class="tab-btn active" data-tab="suppliers">Nhà cung cấp</div>
+      <div class="tab-btn" data-tab="debt">Công nợ NCC</div>
+    </div>
+
+    <div id="suppliersTab">
+      <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+        <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc SĐT..." style="margin-bottom:0;">
+        <button class="btn btn-primary" id="addSupplierBtn">+ Thêm NCC</button>
+      </div>
+      <div class="panel"><div class="panel-body" id="supplierListWrap">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div></div>
+    </div>
+
+    <div id="debtTab" style="display:none;">
+      <div class="stat-grid" id="debtStatGrid"></div>
+      <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+        <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm NCC..." style="margin-bottom:0;">
+        <button class="btn btn-primary" id="addPOBtn">+ Ghi nhận nhập hàng</button>
+      </div>
+      <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
+    </div>
+
+    <div class="modal-overlay" id="supplierModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="supplierModalTitle">Thêm nhà cung cấp</h3><span class="modal-close" id="supplierModalClose">✕</span></div>
+        <div class="modal-body">
+          <form id="supplierForm">
+            <div class="field"><label>Tên nhà cung cấp *</label><input id="s_name" required></div>
+            <div class="field"><label>Số điện thoại</label><input id="s_phone"></div>
+            <div class="field"><label>Địa chỉ</label><input id="s_address"></div>
+            <div class="field"><label>Ghi chú</label><textarea id="s_notes" rows="2"></textarea></div>
+            <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" id="supplierCancelBtn">Hủy</button>
+              <button type="submit" class="btn btn-primary" id="supplierSaveBtn">Lưu</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="poModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Ghi nhận nhập hàng</h3><span class="modal-close" id="poModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Nhà cung cấp *</label>
+            <select id="po_supplier"></select>
+          </div>
+          <div class="field"><label>Tổng tiền nhập *</label><input id="po_total" type="number" step="any" required></div>
+          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Đã thanh toán</label>
+          <div class="pay-method-row">
+            <div class="field"><label>Tiền mặt</label><input id="po_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Chuyển khoản</label><input id="po_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="po_note" placeholder="Không bắt buộc"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="poCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="poSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="payModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="payModalTitle">Ghi nhận trả nợ NCC</h3><span class="modal-close" id="payModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="summary-row total" style="margin-bottom:14px;"><span>Đang nợ</span><span id="payCurrentDebt">0₫</span></div>
+          <div class="pay-method-row">
+            <div class="field"><label>Tiền mặt</label><input id="pay_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Chuyển khoản</label><input id="pay_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="pay_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total"><span>Còn nợ sau khi trả</span><span id="payRemaining">0₫</span></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="payCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="paySaveBtn">Ghi nhận</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await Promise.all([loadSuppliers(), loadDebts()]);
+  bindEvents();
+})();
+
+function bindEvents() {
+  document.querySelectorAll(".tab-btn").forEach(el => el.addEventListener("click", () => switchTab(el.dataset.tab)));
+
+  document.getElementById("searchInput").addEventListener("input", (e) => renderSupplierList(e.target.value));
+  document.getElementById("addSupplierBtn").addEventListener("click", () => openSupplierModal());
+  document.getElementById("supplierModalClose").addEventListener("click", closeSupplierModal);
+  document.getElementById("supplierCancelBtn").addEventListener("click", closeSupplierModal);
+  document.getElementById("supplierForm").addEventListener("submit", saveSupplier);
+
+  document.getElementById("debtSearchInput").addEventListener("input", (e) => renderDebtList(e.target.value));
+  document.getElementById("addPOBtn").addEventListener("click", openPOModal);
+  document.getElementById("poModalClose").addEventListener("click", closePOModal);
+  document.getElementById("poCancelBtn").addEventListener("click", closePOModal);
+  document.getElementById("poSaveBtn").addEventListener("click", savePO);
+
+  document.getElementById("payModalClose").addEventListener("click", closePayModal);
+  document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
+  document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
+  document.getElementById("pay_transfer").addEventListener("input", updatePaySummary);
+  document.getElementById("paySaveBtn").addEventListener("click", submitPayment);
+}
+
+function switchTab(tab) {
+  document.querySelectorAll(".tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+  document.getElementById("suppliersTab").style.display = tab === "suppliers" ? "block" : "none";
+  document.getElementById("debtTab").style.display = tab === "debt" ? "block" : "none";
+}
+
+/* ---------- Nhà cung cấp ---------- */
+async function loadSuppliers() {
+  const { data, error } = await sb.from("suppliers").select("*").order("name");
+  if (error) { console.error(error); return; }
+  ALL_SUPPLIERS = data || [];
+  renderSupplierList("");
+  const sel = document.getElementById("po_supplier");
+  if (sel) sel.innerHTML = ALL_SUPPLIERS.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+}
+
+function renderSupplierList(filter) {
+  const wrap = document.getElementById("supplierListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = ALL_SUPPLIERS.filter(s => !f || s.name.toLowerCase().includes(f) || (s.phone || "").includes(f));
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🚚</div>${ALL_SUPPLIERS.length === 0 ? 'Chưa có nhà cung cấp nào.' : 'Không tìm thấy.'}</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table><thead><tr><th>Tên</th><th>SĐT</th><th>Địa chỉ</th><th></th></tr></thead><tbody>
+    ${list.map(s => `<tr>
+      <td>${s.name}</td><td>${s.phone || '—'}</td><td>${s.address || '—'}</td>
+      <td><span class="btn btn-secondary btn-mini" onclick="openSupplierModal('${s.id}')">Sửa</span></td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function openSupplierModal(id) {
+  EDIT_SUPPLIER_ID = id || null;
+  const s = id ? ALL_SUPPLIERS.find(x => x.id === id) : null;
+  document.getElementById("supplierModalTitle").textContent = s ? "Sửa nhà cung cấp" : "Thêm nhà cung cấp";
+  document.getElementById("s_name").value = s?.name || "";
+  document.getElementById("s_phone").value = s?.phone || "";
+  document.getElementById("s_address").value = s?.address || "";
+  document.getElementById("s_notes").value = s?.notes || "";
+  document.getElementById("supplierModal").classList.add("open");
+}
+function closeSupplierModal() { document.getElementById("supplierModal").classList.remove("open"); }
+
+async function saveSupplier(e) {
+  e.preventDefault();
+  const payload = {
+    name: document.getElementById("s_name").value.trim(),
+    phone: document.getElementById("s_phone").value.trim() || null,
+    address: document.getElementById("s_address").value.trim() || null,
+    notes: document.getElementById("s_notes").value.trim() || null,
+  };
+  const btn = document.getElementById("supplierSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  let error;
+  if (EDIT_SUPPLIER_ID) ({ error } = await sb.from("suppliers").update(payload).eq("id", EDIT_SUPPLIER_ID));
+  else ({ error } = await sb.from("suppliers").insert(payload));
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+  closeSupplierModal();
+  await loadSuppliers();
+}
+
+/* ---------- Công nợ NCC ---------- */
+async function loadDebts() {
+  const { data: pos, error } = await sb
+    .from("purchase_orders")
+    .select("id, po_code, supplier_id, total_amount, paid_amount, created_at")
+    .eq("status", "completed")
+    .order("created_at", { ascending: true });
+
+  if (error) { document.getElementById("debtListWrap").innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
+  ALL_PO = pos || [];
+
+  const byCustomer = {};
+  ALL_PO.forEach(o => {
+    const debt = Number(o.total_amount) - Number(o.paid_amount);
+    if (debt <= 0) return;
+    if (!byCustomer[o.supplier_id]) byCustomer[o.supplier_id] = [];
+    byCustomer[o.supplier_id].push({ ...o, debt });
+  });
+
+  DEBT_LIST = Object.keys(byCustomer).map(sid => {
+    const supplier = ALL_SUPPLIERS.find(s => s.id === sid);
+    const orders = byCustomer[sid];
+    const totalDebt = orders.reduce((s, o) => s + o.debt, 0);
+    return { supplier, orders, totalDebt };
+  }).filter(x => x.supplier).sort((a, b) => b.totalDebt - a.totalDebt);
+
+  renderDebtStats();
+  renderDebtList("");
+}
+
+function renderDebtStats() {
+  const total = DEBT_LIST.reduce((s, x) => s + x.totalDebt, 0);
+  document.getElementById("debtStatGrid").innerHTML = `
+    <div class="stat-card danger-card"><div class="label">Tổng công nợ NCC</div><div class="value">${formatVND(total)}</div></div>
+    <div class="stat-card"><div class="label">Số NCC đang nợ</div><div class="value">${DEBT_LIST.length}</div></div>
+  `;
+}
+
+function renderDebtList(filter) {
+  const wrap = document.getElementById("debtListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = DEBT_LIST.filter(x => !f || x.supplier.name.toLowerCase().includes(f));
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>${DEBT_LIST.length === 0 ? 'Không có nhà cung cấp nào đang nợ.' : 'Không tìm thấy.'}</div>`;
+    return;
+  }
+
+  wrap.innerHTML = list.map((x, idx) => `
+    <div class="debt-card">
+      <div class="debt-card-head" data-idx="${idx}">
+        <div>
+          <div class="debt-card-name">${x.supplier.name}</div>
+          <div class="debt-card-sub">${x.supplier.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa trả hết</div>
+        </div>
+        <div class="flex gap-12">
+          <div class="debt-card-amount">${formatVND(x.totalDebt)}</div>
+          <button class="btn btn-primary btn-mini" style="padding:7px 12px;" onclick="event.stopPropagation(); openPayModal('${x.supplier.id}')">Ghi nhận trả nợ</button>
+        </div>
+      </div>
+      <div class="debt-card-body" id="debtBody-${idx}">
+        ${x.orders.map(o => `<div class="debt-order-row">
+          <span>${o.po_code} · ${formatDate(o.created_at)}</span>
+          <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
+        </div>`).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".debt-card-head").forEach(el => {
+    el.addEventListener("click", () => document.getElementById(`debtBody-${el.dataset.idx}`).classList.toggle("open"));
+  });
+}
+
+/* ---------- Ghi nhận nhập hàng ---------- */
+function openPOModal() {
+  if (ALL_SUPPLIERS.length === 0) { alert("Vui lòng thêm nhà cung cấp trước."); return; }
+  document.getElementById("po_total").value = "";
+  document.getElementById("po_cash").value = 0;
+  document.getElementById("po_transfer").value = 0;
+  document.getElementById("po_note").value = "";
+  document.getElementById("poModal").classList.add("open");
+}
+function closePOModal() { document.getElementById("poModal").classList.remove("open"); }
+
+async function savePO() {
+  const supplierId = document.getElementById("po_supplier").value;
+  const total = Number(document.getElementById("po_total").value || 0);
+  if (total <= 0) { alert("Vui lòng nhập tổng tiền hợp lệ."); return; }
+  const cash = Number(document.getElementById("po_cash").value || 0);
+  const transfer = Number(document.getElementById("po_transfer").value || 0);
+  const paid = cash + transfer;
+  const note = document.getElementById("po_note").value.trim() || null;
+  const poCode = "NH" + Date.now().toString().slice(-8);
+
+  const btn = document.getElementById("poSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const { data: po, error } = await sb.from("purchase_orders").insert({
+    po_code: poCode, supplier_id: supplierId, status: "completed",
+    total_amount: total, paid_amount: paid, created_by: CURRENT_PROFILE.id
+  }).select().single();
+
+  if (error) { alert("Lỗi: " + error.message); btn.disabled = false; btn.textContent = "Lưu"; return; }
+
+  if (cash > 0) {
+    await sb.from("supplier_payments").insert({ supplier_id: supplierId, purchase_order_id: po.id, amount: cash, method: "cash", note, created_by: CURRENT_PROFILE.id });
+    await sb.from("cash_transactions").insert({ type: "expense", method: "cash", category: "Nhập hàng", amount: cash, note: `Trả NCC đơn ${poCode}`, created_by: CURRENT_PROFILE.id });
+  }
+  if (transfer > 0) {
+    await sb.from("supplier_payments").insert({ supplier_id: supplierId, purchase_order_id: po.id, amount: transfer, method: "transfer", note, created_by: CURRENT_PROFILE.id });
+  }
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  closePOModal();
+  await loadDebts();
+  alert(`Đã ghi nhận nhập hàng ${poCode}.`);
+}
+
+/* ---------- Trả nợ NCC ---------- */
+function openPayModal(supplierId) {
+  PAY_SUPPLIER = DEBT_LIST.find(x => x.supplier.id === supplierId);
+  if (!PAY_SUPPLIER) return;
+  document.getElementById("payModalTitle").textContent = "Ghi nhận trả nợ — " + PAY_SUPPLIER.supplier.name;
+  document.getElementById("payCurrentDebt").textContent = formatVND(PAY_SUPPLIER.totalDebt);
+  document.getElementById("pay_cash").value = 0;
+  document.getElementById("pay_transfer").value = 0;
+  document.getElementById("pay_note").value = "";
+  updatePaySummary();
+  document.getElementById("payModal").classList.add("open");
+}
+function closePayModal() { document.getElementById("payModal").classList.remove("open"); }
+
+function updatePaySummary() {
+  if (!PAY_SUPPLIER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  const remaining = Math.max(PAY_SUPPLIER.totalDebt - cash - transfer, 0);
+  document.getElementById("payRemaining").textContent = formatVND(remaining);
+}
+
+async function submitPayment() {
+  if (!PAY_SUPPLIER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  let remaining = cash + transfer;
+  if (remaining <= 0) { alert("Vui lòng nhập số tiền thanh toán."); return; }
+
+  const btn = document.getElementById("paySaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+  const note = document.getElementById("pay_note").value.trim();
+
+  let cashLeft = cash;
+  let totalCashApplied = 0;
+  for (const o of PAY_SUPPLIER.orders) {
+    if (remaining <= 0) break;
+    const applyToOrder = Math.min(o.debt, remaining);
+    if (applyToOrder <= 0) continue;
+
+    await sb.from("purchase_orders").update({ paid_amount: Number(o.paid_amount) + applyToOrder }).eq("id", o.id);
+
+    let applyCash = Math.min(cashLeft, applyToOrder);
+    let applyTransfer = applyToOrder - applyCash;
+    cashLeft -= applyCash;
+    totalCashApplied += applyCash;
+
+    if (applyCash > 0) await sb.from("supplier_payments").insert({ supplier_id: PAY_SUPPLIER.supplier.id, purchase_order_id: o.id, amount: applyCash, method: "cash", note: note || null, created_by: CURRENT_PROFILE.id });
+    if (applyTransfer > 0) await sb.from("supplier_payments").insert({ supplier_id: PAY_SUPPLIER.supplier.id, purchase_order_id: o.id, amount: applyTransfer, method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id });
+
+    remaining -= applyToOrder;
+  }
+
+  if (totalCashApplied > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "expense", method: "cash", category: "Trả nợ NCC", amount: totalCashApplied,
+      note: `Trả nợ tiền mặt cho ${PAY_SUPPLIER.supplier.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  btn.disabled = false; btn.textContent = "Ghi nhận";
+  closePayModal();
+  await loadDebts();
+  alert("Đã ghi nhận trả nợ thành công!");
+}
+</script>
+</body>
+</html>
