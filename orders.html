@@ -20,6 +20,22 @@
 .type-btn { flex:1; padding:10px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13.5px; color:var(--text-mute); background:#fff; }
 .type-btn.active.retail { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
 .type-btn.active.wholesale { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+
+/* Desktop: 2 cột ngang — sản phẩm bên trái, đơn hàng/khách hàng bên phải.
+   Mobile: tự động xuống 1 cột dọc (xem media query bên dưới). */
+.pos-layout {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 20px;
+  align-items: start;
+}
+.pos-col-right { position: sticky; top: 135px; }
+
+@media (max-width: 1000px) {
+  .pos-layout { grid-template-columns: 1fr; }
+  .pos-col-right { position: static; }
+}
+
 .chip-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; overflow-x:auto; padding-bottom:2px; }
 .chip { padding:8px 16px; border-radius:20px; font-size:13px; border:1px solid var(--border); cursor:pointer; background:#fff; color:var(--text-mute); white-space:nowrap; flex-shrink:0; }
 .chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
@@ -114,66 +130,70 @@ let DISCOUNT_TYPE = "percent";
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div class="type-toggle">
-      <div class="type-btn retail active" id="typeRetailBtn">Bán lẻ</div>
-      <div class="type-btn wholesale" id="typeWholesaleBtn">Bán buôn</div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h2>Chọn sản phẩm</h2></div>
-      <div class="panel-body">
-        <input class="search-bar" id="productSearch" placeholder="🔍 Tìm sản phẩm theo tên hoặc SKU..." style="max-width:100%; margin-bottom:14px;">
-        <div class="chip-row" id="categoryChips"></div>
-        <div class="product-grid" id="productGrid"></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header flex" style="justify-content:space-between;">
-        <h2>Đơn hàng</h2>
-        <span class="btn btn-secondary btn-mini" id="clearCartBtn">Xóa tất cả</span>
-      </div>
-      <div class="panel-body">
-        <div id="cartItems"></div>
-
-        <div class="summary-row"><span>Tạm tính</span><span id="sumSubtotal">0₫</span></div>
-
-        <div class="discount-row">
-          <div class="discount-type-toggle">
-            <div class="discount-type-btn active" id="discPercentBtn">%</div>
-            <div class="discount-type-btn" id="discAmountBtn">₫</div>
+    <div class="pos-layout">
+      <div class="pos-col-left">
+        <div class="panel">
+          <div class="panel-header flex" style="justify-content:space-between;">
+            <h2>Chọn sản phẩm</h2>
+            <span class="badge" id="priceTypeBadge" style="background:#ecfdf5; color:var(--teal-deep);">Giá bán lẻ</span>
           </div>
-          <input id="discountValue" type="number" step="any" value="0" placeholder="Giảm giá">
+          <div class="panel-body">
+            <input class="search-bar" id="productSearch" placeholder="🔍 Tìm sản phẩm theo tên hoặc SKU..." style="max-width:100%; margin-bottom:14px;">
+            <div class="chip-row" id="categoryChips"></div>
+            <div class="product-grid" id="productGrid"></div>
+          </div>
         </div>
-        <div class="summary-row" id="discountRow" style="display:none;"><span>Giảm giá</span><span id="sumDiscount">-0₫</span></div>
+      </div>
 
-        <div class="summary-row total"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
-
-        <div style="margin-top:14px;">
-          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thanh toán</label>
-          <div class="pay-quick-row" id="payQuickRow">
-            <div class="pay-quick-btn cash active" id="quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
-            <div class="pay-quick-btn transfer" id="quickTransferBtn">🏦 Chuyển khoản<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+      <div class="pos-col-right">
+        <div class="panel">
+          <div class="panel-header flex" style="justify-content:space-between;">
+            <h2>Đơn hàng</h2>
+            <span class="btn btn-secondary btn-mini" id="clearCartBtn">Xóa tất cả</span>
           </div>
-          <span class="pay-custom-link" id="toggleCustomPay">Khách trả một phần / chia 2 hình thức →</span>
+          <div class="panel-body">
+            <div id="cartItems"></div>
 
-          <div id="customPayFields" style="display:none; max-width:420px;">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
-              <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="payCash" type="number" step="any" value="0"></div>
-              <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="payTransfer" type="number" step="any" value="0"></div>
+            <div class="summary-row"><span>Tạm tính</span><span id="sumSubtotal">0₫</span></div>
+
+            <div class="discount-row">
+              <div class="discount-type-toggle">
+                <div class="discount-type-btn active" id="discPercentBtn">%</div>
+                <div class="discount-type-btn" id="discAmountBtn">₫</div>
+              </div>
+              <input id="discountValue" type="number" step="any" value="0" placeholder="Giảm giá">
             </div>
-            <span class="pay-custom-link" id="toggleQuickPay">← Quay lại thanh toán đủ</span>
+            <div class="summary-row" id="discountRow" style="display:none;"><span>Giảm giá</span><span id="sumDiscount">-0₫</span></div>
+
+            <div class="summary-row total"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
+
+            <div style="margin-top:14px;">
+              <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thanh toán</label>
+              <div class="pay-quick-row" id="payQuickRow">
+                <div class="pay-quick-btn cash active" id="quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+                <div class="pay-quick-btn transfer" id="quickTransferBtn">🏦 Chuyển khoản<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+              </div>
+              <span class="pay-custom-link" id="toggleCustomPay">Khách trả một phần / chia 2 hình thức →</span>
+
+              <div id="customPayFields" style="display:none; max-width:420px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+                  <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="payCash" type="number" step="any" value="0"></div>
+                  <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="payTransfer" type="number" step="any" value="0"></div>
+                </div>
+                <span class="pay-custom-link" id="toggleQuickPay">← Quay lại thanh toán đủ</span>
+              </div>
+            </div>
+
+            <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
+            <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; max-width:420px; justify-content:center; padding:13px; margin-top:14px;">Tạo đơn hàng</button>
           </div>
         </div>
 
-        <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
-        <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; max-width:420px; justify-content:center; padding:13px; margin-top:14px;">Tạo đơn hàng</button>
+        <div class="panel">
+          <div class="panel-header"><h2>Thông tin khách hàng</h2></div>
+          <div class="panel-body" id="customerPickerWrap"></div>
+        </div>
       </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h2>Thông tin khách hàng</h2></div>
-      <div class="panel-body" id="customerPickerWrap"></div>
     </div>
 
     <div class="modal-overlay" id="quickCustomerModal">
@@ -217,8 +237,6 @@ function resetOrderState() {
   PAY_METHOD = "cash";
   DISCOUNT_TYPE = "percent";
 
-  document.getElementById("typeRetailBtn").classList.add("active");
-  document.getElementById("typeWholesaleBtn").classList.remove("active");
   document.getElementById("productSearch").value = "";
   document.getElementById("discountValue").value = 0;
   document.getElementById("discPercentBtn").classList.add("active");
@@ -236,9 +254,6 @@ function resetOrderState() {
 }
 
 function bindEvents() {
-  document.getElementById("typeRetailBtn").addEventListener("click", () => setOrderType("retail"));
-  document.getElementById("typeWholesaleBtn").addEventListener("click", () => setOrderType("wholesale"));
-
   const prodInput = document.getElementById("productSearch");
   prodInput.addEventListener("input", () => renderProductGrid(prodInput.value));
 
@@ -280,8 +295,12 @@ function bindEvents() {
 
 function setOrderType(type) {
   ORDER_TYPE = type;
-  document.getElementById("typeRetailBtn").classList.toggle("active", type === "retail");
-  document.getElementById("typeWholesaleBtn").classList.toggle("active", type === "wholesale");
+  const badge = document.getElementById("priceTypeBadge");
+  if (badge) {
+    badge.textContent = type === "wholesale" ? "Giá bán buôn" : "Giá bán lẻ";
+    badge.style.background = type === "wholesale" ? "#eef2ff" : "#ecfdf5";
+    badge.style.color = type === "wholesale" ? "#4338ca" : "var(--teal-deep)";
+  }
   CART.forEach(item => {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
     if (p) item.unit_price = type === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price);
@@ -321,6 +340,7 @@ function renderCustomerPicker() {
     </div>`;
     document.getElementById("clearCustomerBtn").addEventListener("click", () => {
       SELECTED_CUSTOMER = null;
+      setOrderType("retail");
       renderCustomerPicker();
     });
   } else {
@@ -337,11 +357,12 @@ function renderCustomerPicker() {
       const val = custInput.value.trim();
       if (!val) return;
       const exactPhone = ALL_CUSTOMERS.find(c => c.phone && c.phone.replace(/\s/g, "") === val.replace(/\s/g, ""));
-      if (exactPhone) { SELECTED_CUSTOMER = exactPhone; renderCustomerPicker(); return; }
+      if (exactPhone) { SELECTED_CUSTOMER = exactPhone; setOrderType(exactPhone.type); renderCustomerPicker(); return; }
       const f = val.toLowerCase();
       const matches = ALL_CUSTOMERS.filter(c => c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
       if (matches.length === 1) {
         SELECTED_CUSTOMER = matches[0];
+        setOrderType(matches[0].type);
         renderCustomerPicker();
       } else {
         document.getElementById("qc_name").value = "";
@@ -371,6 +392,7 @@ function renderCustomerList(filter) {
   list.querySelectorAll(".autocomplete-item[data-id]").forEach(el => {
     el.addEventListener("click", () => {
       SELECTED_CUSTOMER = ALL_CUSTOMERS.find(c => c.id === el.dataset.id);
+      setOrderType(SELECTED_CUSTOMER.type);
       renderCustomerPicker();
     });
   });
@@ -394,6 +416,7 @@ async function saveQuickCustomer() {
 
   ALL_CUSTOMERS.push(data);
   SELECTED_CUSTOMER = data;
+  setOrderType(data.type);
   renderCustomerPicker();
   document.getElementById("quickCustomerModal").classList.remove("open");
 }
