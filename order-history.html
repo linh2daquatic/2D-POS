@@ -117,7 +117,8 @@ function renderList(filter) {
     ${list.map(o => {
       const debt = Number(o.total_amount) - Number(o.paid_amount);
       const bd = PAYMENT_BREAKDOWN[o.id] || { cash: 0, transfer: 0 };
-      return `<tr class="order-row-clickable" data-order-id="${o.id}">
+      const isCancelled = o.status === "cancelled";
+      return `<tr class="order-row-clickable" data-order-id="${o.id}" style="${isCancelled ? 'opacity:0.5;' : ''}">
         <td>${o.order_code}</td>
         <td>${formatDateTime(o.created_at)}</td>
         <td>${o.customers?.name || "Khách lẻ"}</td>
@@ -125,7 +126,7 @@ function renderList(filter) {
         <td>${formatVND(o.total_amount)}</td>
         <td>${bd.cash > 0 ? formatVND(bd.cash) : '—'}</td>
         <td>${bd.transfer > 0 ? formatVND(bd.transfer) : '—'}</td>
-        <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+        <td>${isCancelled ? '<span class="badge debt" style="background:#f1f5f9; color:var(--text-mute);">Đã hủy</span>' : `<span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span>`}</td>
       </tr>`;
     }).join("")}
   </tbody></table>`;
@@ -144,7 +145,7 @@ async function showOrderDetail(orderId) {
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
+    .select("order_code, type, status, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -163,9 +164,12 @@ async function showOrderDetail(orderId) {
   const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
   const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
   const debt = Number(order.total_amount) - Number(order.paid_amount);
+  const isCancelled = order.status === "cancelled";
+  const isOwner = CURRENT_PROFILE.role === "owner";
 
-  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  document.getElementById("orderDetailTitle").textContent = order.order_code + (isCancelled ? " (Đã hủy)" : "");
   body.innerHTML = `
+    ${isCancelled ? `<div class="empty-state" style="padding:14px; margin-bottom:14px; background:#fef2f2; border-radius:8px;"><div style="color:var(--danger); font-weight:600;">⚠️ Đơn hàng này đã bị hủy — không tính vào doanh thu, kho và quỹ.</div></div>` : ""}
     <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
     ${order.customers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${order.customers.phone}</span></div>` : ""}
     ${order.customers?.address ? `<div class="summary-row"><span>Địa chỉ</span><span>${order.customers.address}</span></div>` : ""}
@@ -187,9 +191,62 @@ async function showOrderDetail(orderId) {
       <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
-      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+      <div class="summary-row total"><span>${isCancelled ? 'Trạng thái' : (debt > 0 ? 'Còn nợ' : 'Trạng thái')}</span><span>${isCancelled ? 'Đã hủy' : (debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ')}</span></div>
     </div>
+
+    ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;" onclick="cancelOrder('${orderId}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
   `;
+}
+
+async function cancelOrder(orderId, orderCode) {
+  if (!window.confirm(
+    `Hủy đơn hàng ${orderCode}?\n\nHành động này sẽ:\n` +
+    `- Hoàn lại số lượng sản phẩm về kho\n` +
+    `- Hoàn tác tiền mặt/chuyển khoản đã ghi nhận từ đơn này\n` +
+    `- Loại đơn này khỏi doanh thu, doanh số nhân viên và công nợ\n\n` +
+    `Không thể hoàn tác lại thao tác này. Tiếp tục?`
+  )) return;
+
+  const btn = document.getElementById("cancelOrderBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Đang hủy..."; }
+
+  // 1. Hoàn lại tồn kho cho từng sản phẩm trong đơn
+  const { data: items } = await sb.from("order_items").select("product_id, quantity").eq("order_id", orderId);
+  for (const item of items || []) {
+    const { data: product } = await sb.from("products").select("quantity").eq("id", item.product_id).single();
+    if (product) {
+      await sb.from("products").update({ quantity: Number(product.quantity) + Number(item.quantity) }).eq("id", item.product_id);
+    }
+    await sb.from("inventory_log").insert({
+      product_id: item.product_id, change_qty: Number(item.quantity), reason: "cancel",
+      reference_id: orderId, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  // 2. Hoàn tác các khoản tiền mặt/chuyển khoản đã ghi nhận từ đơn này (ghi bút toán đảo ngược, không xóa lịch sử cũ)
+  const { data: payments } = await sb.from("customer_payments").select("amount, method").eq("order_id", orderId);
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+
+  if (cashPaid > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "expense", method: "cash", category: "Hủy đơn hàng", amount: cashPaid,
+      note: `Hoàn tác tiền mặt đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (transferPaid > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "expense", method: "transfer", category: "Hủy đơn hàng", amount: transferPaid,
+      note: `Hoàn tác chuyển khoản đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  // 3. Đánh dấu đơn là đã hủy — tự động loại khỏi mọi thống kê doanh thu/công nợ (vì các truy vấn đều lọc status='completed')
+  await sb.from("orders").update({ status: "cancelled" }).eq("id", orderId);
+
+  await loadOrders();
+  showOrderDetail(orderId);
+  alert(`Đã hủy đơn hàng ${orderCode}. Tồn kho và quỹ tiền đã được hoàn tác.`);
 }
 </script>
 </body>
