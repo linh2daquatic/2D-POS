@@ -261,12 +261,19 @@ async function submitPayment() {
     remaining -= applyToOrder;
   }
 
-  // Tự động cộng phần tiền mặt thu được vào Quỹ tiền mặt
+  // Tự động cộng phần tiền mặt/chuyển khoản thu được vào lịch sử thu chi
   const totalCashCollected = cash - cashLeft;
+  const totalTransferCollected = transfer - transferLeft;
   if (totalCashCollected > 0) {
     await sb.from("cash_transactions").insert({
-      type: "income", category: "Thu nợ khách", amount: totalCashCollected,
+      type: "income", method: "cash", category: "Thu nợ khách", amount: totalCashCollected,
       note: `Thu nợ tiền mặt từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (totalTransferCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "transfer", category: "Thu nợ khách", amount: totalTransferCollected,
+      note: `Thu nợ chuyển khoản từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
     });
   }
 
