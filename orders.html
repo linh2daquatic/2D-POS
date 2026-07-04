@@ -656,6 +656,10 @@ async function submitOrder() {
       customer_id: SELECTED_CUSTOMER?.id || null, order_id: order.id, amount: transfer,
       method: "transfer", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
     });
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "transfer", category: "Bán hàng", amount: transfer,
+      note: `Thu chuyển khoản đơn ${orderCode}`, created_by: CURRENT_PROFILE.id
+    });
   }
 
   submitBtn.disabled = false;
