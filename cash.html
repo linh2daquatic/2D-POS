@@ -200,6 +200,11 @@ function cashBalance() {
     .reduce((s, t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
 }
 
+function transferBalance() {
+  return ALL_TX.filter(t => t.method === "transfer")
+    .reduce((s, t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
+}
+
 function renderStats() {
   const balance = cashBalance();
 
@@ -214,6 +219,10 @@ function renderStats() {
     <div class="stat-card accent">
       <div class="label">💵 Số dư quỹ tiền mặt</div>
       <div class="value">${formatVND(balance)}</div>
+    </div>
+    <div class="stat-card accent">
+      <div class="label">🏦 Số dư chuyển khoản (ngân hàng)</div>
+      <div class="value">${formatVND(transferBalance())}</div>
     </div>
     <div class="stat-card">
       <div class="label">Thu tiền mặt hôm nay</div>
