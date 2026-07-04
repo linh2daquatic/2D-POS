@@ -85,7 +85,7 @@ let PAY_SUPPLIER = null;
       <div class="stat-grid" id="debtStatGrid"></div>
       <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
         <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm NCC..." style="margin-bottom:0;">
-        <button class="btn btn-primary" id="addPOBtn">+ Ghi nhận nhập hàng</button>
+        <a href="products.html" class="btn btn-primary">+ Nhập hàng mới →</a>
       </div>
       <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
     </div>
@@ -104,28 +104,6 @@ let PAY_SUPPLIER = null;
               <button type="submit" class="btn btn-primary" id="supplierSaveBtn">Lưu</button>
             </div>
           </form>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="poModal">
-      <div class="modal-box">
-        <div class="modal-header"><h3>Ghi nhận nhập hàng</h3><span class="modal-close" id="poModalClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Nhà cung cấp *</label>
-            <select id="po_supplier"></select>
-          </div>
-          <div class="field"><label>Tổng tiền nhập *</label><input id="po_total" type="number" step="any" required></div>
-          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Đã thanh toán</label>
-          <div class="pay-method-row">
-            <div class="field"><label>Tiền mặt</label><input id="po_cash" type="number" step="any" value="0"></div>
-            <div class="field"><label>Chuyển khoản</label><input id="po_transfer" type="number" step="any" value="0"></div>
-          </div>
-          <div class="field"><label>Ghi chú</label><input id="po_note" placeholder="Không bắt buộc"></div>
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="poCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="poSaveBtn">Lưu</button>
-          </div>
         </div>
       </div>
     </div>
@@ -164,10 +142,6 @@ function bindEvents() {
   document.getElementById("supplierForm").addEventListener("submit", saveSupplier);
 
   document.getElementById("debtSearchInput").addEventListener("input", (e) => renderDebtList(e.target.value));
-  document.getElementById("addPOBtn").addEventListener("click", openPOModal);
-  document.getElementById("poModalClose").addEventListener("click", closePOModal);
-  document.getElementById("poCancelBtn").addEventListener("click", closePOModal);
-  document.getElementById("poSaveBtn").addEventListener("click", savePO);
 
   document.getElementById("payModalClose").addEventListener("click", closePayModal);
   document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
@@ -188,8 +162,6 @@ async function loadSuppliers() {
   if (error) { console.error(error); return; }
   ALL_SUPPLIERS = data || [];
   renderSupplierList("");
-  const sel = document.getElementById("po_supplier");
-  if (sel) sel.innerHTML = ALL_SUPPLIERS.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
 }
 
 function renderSupplierList(filter) {
@@ -314,51 +286,6 @@ function renderDebtList(filter) {
   wrap.querySelectorAll(".debt-card-head").forEach(el => {
     el.addEventListener("click", () => document.getElementById(`debtBody-${el.dataset.idx}`).classList.toggle("open"));
   });
-}
-
-/* ---------- Ghi nhận nhập hàng ---------- */
-function openPOModal() {
-  if (ALL_SUPPLIERS.length === 0) { alert("Vui lòng thêm nhà cung cấp trước."); return; }
-  document.getElementById("po_total").value = "";
-  document.getElementById("po_cash").value = 0;
-  document.getElementById("po_transfer").value = 0;
-  document.getElementById("po_note").value = "";
-  document.getElementById("poModal").classList.add("open");
-}
-function closePOModal() { document.getElementById("poModal").classList.remove("open"); }
-
-async function savePO() {
-  const supplierId = document.getElementById("po_supplier").value;
-  const total = Number(document.getElementById("po_total").value || 0);
-  if (total <= 0) { alert("Vui lòng nhập tổng tiền hợp lệ."); return; }
-  const cash = Number(document.getElementById("po_cash").value || 0);
-  const transfer = Number(document.getElementById("po_transfer").value || 0);
-  const paid = cash + transfer;
-  const note = document.getElementById("po_note").value.trim() || null;
-  const poCode = "NH" + Date.now().toString().slice(-8);
-
-  const btn = document.getElementById("poSaveBtn");
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-
-  const { data: po, error } = await sb.from("purchase_orders").insert({
-    po_code: poCode, supplier_id: supplierId, status: "completed",
-    total_amount: total, paid_amount: paid, created_by: CURRENT_PROFILE.id
-  }).select().single();
-
-  if (error) { alert("Lỗi: " + error.message); btn.disabled = false; btn.textContent = "Lưu"; return; }
-
-  if (cash > 0) {
-    await sb.from("supplier_payments").insert({ supplier_id: supplierId, purchase_order_id: po.id, amount: cash, method: "cash", note, created_by: CURRENT_PROFILE.id });
-    await sb.from("cash_transactions").insert({ type: "expense", method: "cash", category: "Nhập hàng", amount: cash, note: `Trả NCC đơn ${poCode}`, created_by: CURRENT_PROFILE.id });
-  }
-  if (transfer > 0) {
-    await sb.from("supplier_payments").insert({ supplier_id: supplierId, purchase_order_id: po.id, amount: transfer, method: "transfer", note, created_by: CURRENT_PROFILE.id });
-  }
-
-  btn.disabled = false; btn.textContent = "Lưu";
-  closePOModal();
-  await loadDebts();
-  alert(`Đã ghi nhận nhập hàng ${poCode}.`);
 }
 
 /* ---------- Trả nợ NCC ---------- */
