@@ -175,7 +175,7 @@ function renderList(filter) {
       <div class="debt-card-body" id="debtBody-${idx}">
         ${x.orders.map(o => `
           <div class="debt-order-row order-row-clickable" data-order-id="${o.id}" style="border-radius:6px; padding:7px 6px;">
-            <span>${o.order_code} · ${formatDate(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
+            <span>${o.order_code} · ${formatDateTime(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
             <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
           </div>
         `).join("")}
@@ -309,7 +309,7 @@ async function showOrderDetail(orderId) {
   document.getElementById("orderDetailTitle").textContent = order.order_code;
   body.innerHTML = `
     <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
-    <div class="summary-row"><span>Ngày</span><span>${formatDate(order.created_at)}</span></div>
+    <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
     <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
 
     <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
