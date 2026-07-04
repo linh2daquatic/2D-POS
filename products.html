@@ -110,6 +110,12 @@ let RC_ACTIVE_CATEGORY = "";
         ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
       </div>
       ${isOwner ? `
+      <div class="panel" style="margin-bottom:16px; border-left:3px solid var(--teal);">
+        <div class="panel-header"><h2>🏷️ Theo dõi riêng — MAXSPECT</h2></div>
+        <div class="panel-body">
+          <div class="stat-grid" id="maxspectValueGrid"></div>
+        </div>
+      </div>
       <div class="stat-grid" id="inventoryValueGrid" style="margin-bottom:16px;"></div>
       ` : ""}
       <div class="chip-row" id="categoryChips"></div>
@@ -192,9 +198,11 @@ let RC_ACTIVE_CATEGORY = "";
             <div class="field"><label>Tên sản phẩm *</label><input id="f_name" required></div>
             <div class="row-2">
               <div class="field"><label>Mã SKU</label><input id="f_sku" placeholder="VD: CA-NEMO-01"></div>
-              <div class="field"><label>Danh mục</label><input id="f_category" placeholder="Cá / San hô / Thiết bị"></div>
+              <div class="field"><label>Danh mục</label><input id="f_category" list="categoryDatalist" placeholder="Bấm để chọn từ danh mục đã có, hoặc gõ mới" autocomplete="off"></div>
             </div>
-            <div class="field"><label>Hãng / Thương hiệu</label><input id="f_brand" placeholder="VD: Maxspect, Atman... (không bắt buộc)"></div>
+            <div class="field"><label>Hãng / Thương hiệu</label><input id="f_brand" list="brandDatalist" placeholder="Bấm để chọn hãng đã có, hoặc gõ mới (không bắt buộc)" autocomplete="off"></div>
+            <datalist id="categoryDatalist"></datalist>
+            <datalist id="brandDatalist"></datalist>
             <div class="row-2">
               <div class="field"><label>Đơn vị</label><input id="f_unit" value="cái"></div>
               <div class="field"><label>Tồn kho *</label><input id="f_quantity" type="number" step="any" value="0" required></div>
@@ -253,6 +261,8 @@ async function loadProducts() {
   ALL_PRODUCTS = data || [];
   renderCategoryChips();
   renderBrandChips();
+  renderCategoryBrandDatalists();
+  if (CURRENT_PROFILE.role === "owner") renderMaxspectValue();
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
@@ -287,6 +297,45 @@ function renderBrandChips() {
       renderTable(document.getElementById("searchInput").value);
     });
   });
+}
+
+function renderCategoryBrandDatalists() {
+  const cats = [...new Set(ALL_PRODUCTS.map(p => p.category).filter(Boolean))].sort();
+  const brands = [...new Set(ALL_PRODUCTS.map(p => p.brand).filter(Boolean))].sort();
+  const catList = document.getElementById("categoryDatalist");
+  const brandList = document.getElementById("brandDatalist");
+  if (catList) catList.innerHTML = cats.map(c => `<option value="${c}">`).join("");
+  if (brandList) brandList.innerHTML = brands.map(b => `<option value="${b}">`).join("");
+}
+
+function renderMaxspectValue() {
+  const grid = document.getElementById("maxspectValueGrid");
+  if (!grid) return;
+
+  const isMaxspect = (p) => (p.brand || "").toLowerCase().includes("maxspect");
+  const maxspectList = ALL_PRODUCTS.filter(isMaxspect);
+  const otherList = ALL_PRODUCTS.filter(p => !isMaxspect(p));
+
+  const maxspectValue = maxspectList.reduce((s, p) => s + (Number(p.quantity) * Number(p.cost_price || 0)), 0);
+  const otherValue = otherList.reduce((s, p) => s + (Number(p.quantity) * Number(p.cost_price || 0)), 0);
+  const totalValue = maxspectValue + otherValue;
+
+  grid.innerHTML = `
+    <div class="stat-card accent">
+      <div class="label">Giá trị hàng Maxspect</div>
+      <div class="value">${formatVND(maxspectValue)}</div>
+      <div class="delta text-mute" style="font-size:11px;">${maxspectList.length} sản phẩm</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Giá trị hàng còn lại</div>
+      <div class="value">${formatVND(otherValue)}</div>
+      <div class="delta text-mute" style="font-size:11px;">${otherList.length} sản phẩm</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Tổng giá trị toàn kho</div>
+      <div class="value">${formatVND(totalValue)}</div>
+    </div>
+  `;
 }
 
 function renderInventoryValue(filteredList) {
