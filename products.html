@@ -657,6 +657,7 @@ async function submitReceive() {
   }
   if (transfer > 0) {
     await sb.from("supplier_payments").insert({ supplier_id: RC_SUPPLIER.id, purchase_order_id: po.id, amount: transfer, method: "transfer", note: "Thanh toán lúc nhập hàng", created_by: CURRENT_PROFILE.id });
+    await sb.from("cash_transactions").insert({ type: "expense", method: "transfer", category: "Nhập hàng", amount: transfer, note: `Chuyển khoản NCC đơn ${poCode}`, created_by: CURRENT_PROFILE.id });
   }
 
   btn.disabled = false;
