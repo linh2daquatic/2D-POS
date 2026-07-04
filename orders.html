@@ -665,6 +665,15 @@ async function submitOrder() {
   submitBtn.disabled = false;
   submitBtn.textContent = "Tạo đơn hàng";
 
+  if (CURRENT_PROFILE.role !== "owner") {
+    pushNotification(
+      "new_order",
+      "🛒 Đơn hàng mới",
+      `${CURRENT_PROFILE.full_name || "Nhân viên"} vừa tạo đơn ${orderCode} - ${formatVND(total)}`,
+      "order-history.html"
+    );
+  }
+
   await loadProducts();
   resetOrderState();
   alert(`Đã tạo đơn hàng ${orderCode} thành công!`);
