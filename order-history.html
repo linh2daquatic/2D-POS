@@ -19,6 +19,7 @@
 .search-bar { max-width:320px; margin-bottom:16px; }
 .summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
 .summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+.pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .order-row-clickable { cursor:pointer; }
 .order-row-clickable:hover { background:#f8fafc; }
 </style>
@@ -61,12 +62,56 @@ let PAYMENT_BREAKDOWN = {};
         <div class="modal-body" id="orderDetailBody"></div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="cancelOrderModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Xác nhận hủy đơn hàng</h3>
+          <span class="modal-close" id="cancelOrderModalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:13.5px; color:var(--text-mute); margin-bottom:14px;">
+            Đơn <strong id="cancelOrderCode"></strong> đã thu <strong id="cancelOriginalTotal"></strong>.
+            Chọn cách hoàn tiền cho khách (mặc định theo đúng phương thức đã thu, có thể sửa nếu hoàn khác cách — VD: thu tiền mặt nhưng hoàn qua chuyển khoản).
+          </p>
+          <div class="pay-method-row">
+            <div class="field"><label>Hoàn tiền mặt</label><input id="refund_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Hoàn chuyển khoản</label><input id="refund_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="summary-row" id="refundMismatchWarning" style="display:none; color:var(--danger); font-weight:600;">
+            <span>⚠️ Tổng hoàn chưa khớp số tiền đã thu</span>
+          </div>
+          <p style="font-size:12px; color:var(--text-mute); margin-top:10px;">
+            Ngoài việc hoàn tiền, hủy đơn sẽ tự hoàn lại tồn kho và loại đơn khỏi doanh thu/công nợ. Không thể hoàn tác.
+          </p>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="cancelOrderModalCancelBtn">Không hủy</button>
+            <button type="button" class="btn btn-danger" id="cancelOrderConfirmBtn">Xác nhận hủy đơn</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   await loadOrders();
 
   document.getElementById("searchInput").addEventListener("input", (e) => renderList(e.target.value));
   document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
+
+  document.getElementById("cancelOrderModalClose").addEventListener("click", () => document.getElementById("cancelOrderModal").classList.remove("open"));
+  document.getElementById("cancelOrderModalCancelBtn").addEventListener("click", () => document.getElementById("cancelOrderModal").classList.remove("open"));
+  document.getElementById("refund_cash").addEventListener("input", checkRefundMismatch);
+  document.getElementById("refund_transfer").addEventListener("input", checkRefundMismatch);
+  document.getElementById("cancelOrderConfirmBtn").addEventListener("click", async () => {
+    if (!CANCEL_CONTEXT) return;
+    const rc = Number(document.getElementById("refund_cash").value || 0);
+    const rt = Number(document.getElementById("refund_transfer").value || 0);
+    if (rc < 0 || rt < 0) { alert("Số tiền hoàn không thể âm."); return; }
+    const btn = document.getElementById("cancelOrderConfirmBtn");
+    btn.disabled = true; btn.textContent = "Đang hủy...";
+    await performCancelOrder(CANCEL_CONTEXT.orderId, CANCEL_CONTEXT.orderCode, rc, rt);
+    btn.disabled = false; btn.textContent = "Xác nhận hủy đơn";
+  });
 })();
 
 async function loadOrders() {
@@ -198,18 +243,40 @@ async function showOrderDetail(orderId) {
   `;
 }
 
+let CANCEL_CONTEXT = null;
+
 async function cancelOrder(orderId, orderCode) {
-  if (!window.confirm(
-    `Hủy đơn hàng ${orderCode}?\n\nHành động này sẽ:\n` +
-    `- Hoàn lại số lượng sản phẩm về kho\n` +
-    `- Hoàn tác tiền mặt/chuyển khoản đã ghi nhận từ đơn này\n` +
-    `- Loại đơn này khỏi doanh thu, doanh số nhân viên và công nợ\n\n` +
-    `Không thể hoàn tác lại thao tác này. Tiếp tục?`
-  )) return;
+  const { data: payments } = await sb.from("customer_payments").select("amount, method").eq("order_id", orderId);
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const totalPaid = cashPaid + transferPaid;
 
-  const btn = document.getElementById("cancelOrderBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Đang hủy..."; }
+  CANCEL_CONTEXT = { orderId, orderCode, totalPaid };
 
+  if (totalPaid <= 0) {
+    // Đơn chưa thu tiền gì (toàn bộ là nợ) — không cần chọn hoàn tiền, hủy thẳng luôn
+    if (!window.confirm(`Hủy đơn hàng ${orderCode}?\n\nĐơn này chưa thu tiền nên không cần hoàn tiền. Tồn kho sẽ được hoàn lại và đơn sẽ bị loại khỏi công nợ.\n\nKhông thể hoàn tác. Tiếp tục?`)) return;
+    await performCancelOrder(orderId, orderCode, 0, 0);
+    return;
+  }
+
+  document.getElementById("cancelOrderCode").textContent = orderCode;
+  document.getElementById("cancelOriginalTotal").textContent = formatVND(totalPaid);
+  document.getElementById("refund_cash").value = cashPaid;
+  document.getElementById("refund_transfer").value = transferPaid;
+  document.getElementById("refundMismatchWarning").style.display = "none";
+  document.getElementById("cancelOrderModal").classList.add("open");
+}
+
+function checkRefundMismatch() {
+  if (!CANCEL_CONTEXT) return;
+  const rc = Number(document.getElementById("refund_cash").value || 0);
+  const rt = Number(document.getElementById("refund_transfer").value || 0);
+  const mismatch = Math.abs((rc + rt) - CANCEL_CONTEXT.totalPaid) > 0.01;
+  document.getElementById("refundMismatchWarning").style.display = mismatch ? "flex" : "none";
+}
+
+async function performCancelOrder(orderId, orderCode, refundCash, refundTransfer) {
   // 1. Hoàn lại tồn kho cho từng sản phẩm trong đơn
   const { data: items } = await sb.from("order_items").select("product_id, quantity").eq("order_id", orderId);
   for (const item of items || []) {
@@ -223,21 +290,17 @@ async function cancelOrder(orderId, orderCode) {
     });
   }
 
-  // 2. Hoàn tác các khoản tiền mặt/chuyển khoản đã ghi nhận từ đơn này (ghi bút toán đảo ngược, không xóa lịch sử cũ)
-  const { data: payments } = await sb.from("customer_payments").select("amount, method").eq("order_id", orderId);
-  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
-  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
-
-  if (cashPaid > 0) {
+  // 2. Ghi bút toán hoàn tiền theo đúng phương thức người dùng chọn (có thể khác phương thức đã thu ban đầu)
+  if (refundCash > 0) {
     await sb.from("cash_transactions").insert({
-      type: "expense", method: "cash", category: "Hủy đơn hàng", amount: cashPaid,
-      note: `Hoàn tác tiền mặt đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
+      type: "expense", method: "cash", category: "Hủy đơn hàng", amount: refundCash,
+      note: `Hoàn tiền mặt đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
     });
   }
-  if (transferPaid > 0) {
+  if (refundTransfer > 0) {
     await sb.from("cash_transactions").insert({
-      type: "expense", method: "transfer", category: "Hủy đơn hàng", amount: transferPaid,
-      note: `Hoàn tác chuyển khoản đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
+      type: "expense", method: "transfer", category: "Hủy đơn hàng", amount: refundTransfer,
+      note: `Hoàn chuyển khoản đơn ${orderCode} (đã hủy)`, created_by: CURRENT_PROFILE.id
     });
   }
 
@@ -245,8 +308,9 @@ async function cancelOrder(orderId, orderCode) {
   await sb.from("orders").update({ status: "cancelled" }).eq("id", orderId);
 
   await loadOrders();
+  document.getElementById("cancelOrderModal").classList.remove("open");
   showOrderDetail(orderId);
-  alert(`Đã hủy đơn hàng ${orderCode}. Tồn kho và quỹ tiền đã được hoàn tác.`);
+  alert(`Đã hủy đơn hàng ${orderCode}. Tồn kho và quỹ tiền đã được cập nhật.`);
 }
 </script>
 </body>
