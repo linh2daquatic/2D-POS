@@ -39,6 +39,11 @@
 .pay-quick-btn.active.cash { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
 .pay-quick-btn.active.transfer { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
 .pay-custom-link { text-align:center; font-size:12px; color:var(--text-mute); text-decoration:underline; cursor:pointer; margin-top:8px; }
+.discount-row { display:flex; gap:8px; margin-top:6px; }
+.discount-type-toggle { display:flex; border:1.5px solid var(--border); border-radius:8px; overflow:hidden; flex-shrink:0; }
+.discount-type-btn { padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer; color:var(--text-mute); background:#fff; }
+.discount-type-btn.active { background:var(--ink); color:#fff; }
+#discountValue { flex:1; }
 .add-toast {
   position: fixed; top: 18px; left: 50%; transform: translateX(-50%) translateY(-20px);
   background: var(--ink); color: #fff; padding: 10px 18px; border-radius:30px; font-size:13.5px;
@@ -62,6 +67,7 @@ let SELECTED_CUSTOMER = null;
 let ACTIVE_CATEGORY = "";
 let PAY_MODE = "quick"; // 'quick' = thanh toán đủ theo 1 phương thức | 'custom' = tự nhập
 let PAY_METHOD = "cash"; // dùng khi PAY_MODE = 'quick'
+let DISCOUNT_TYPE = "percent"; // 'percent' | 'amount'
 
 (async () => {
   const auth = await requireAuth();
@@ -158,7 +164,18 @@ function posScreenHtml() {
         </div>
         <div class="pos-cart-items" id="cartItems"></div>
         <div class="pos-cart-footer">
-          <div class="summary-row"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
+          <div class="summary-row"><span>Tạm tính</span><span id="sumSubtotal">0₫</span></div>
+
+          <div class="discount-row">
+            <div class="discount-type-toggle">
+              <div class="discount-type-btn active" id="discPercentBtn">%</div>
+              <div class="discount-type-btn" id="discAmountBtn">₫</div>
+            </div>
+            <input id="discountValue" type="number" step="any" value="0" placeholder="Giảm giá">
+          </div>
+          <div class="summary-row" id="discountRow" style="display:none;"><span>Giảm giá</span><span id="sumDiscount">-0₫</span></div>
+
+          <div class="summary-row total"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
 
           <div class="pay-quick-row" id="payQuickRow">
             <div class="pay-quick-btn cash active" id="quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
@@ -260,7 +277,7 @@ async function showOrderDetail(orderId) {
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, total_amount, paid_amount, created_at, customers(name, phone, address)")
+    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -299,6 +316,7 @@ async function showOrderDetail(orderId) {
     </tbody></table>
 
     <div style="margin-top:14px;">
+      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
       <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
@@ -319,6 +337,10 @@ function openPos() {
   document.getElementById("payTransfer").value = 0;
   PAY_MODE = "quick";
   PAY_METHOD = "cash";
+  DISCOUNT_TYPE = "percent";
+  document.getElementById("discountValue").value = 0;
+  document.getElementById("discPercentBtn").classList.add("active");
+  document.getElementById("discAmountBtn").classList.remove("active");
   document.getElementById("payQuickRow").style.display = "flex";
   document.getElementById("customPayFields").style.display = "none";
   document.getElementById("quickCashBtn").classList.add("active");
@@ -350,6 +372,9 @@ function bindEvents() {
 
   document.getElementById("quickCashBtn").addEventListener("click", () => setPayMethod("cash"));
   document.getElementById("quickTransferBtn").addEventListener("click", () => setPayMethod("transfer"));
+  document.getElementById("discPercentBtn").addEventListener("click", () => setDiscountType("percent"));
+  document.getElementById("discAmountBtn").addEventListener("click", () => setDiscountType("amount"));
+  document.getElementById("discountValue").addEventListener("input", updateSummary);
   document.getElementById("toggleCustomPay").addEventListener("click", () => {
     PAY_MODE = "custom";
     document.getElementById("payQuickRow").style.display = "none";
@@ -576,7 +601,7 @@ function renderCart() {
       <div class="cart-line">
         <div class="cl-info">
           <div class="cl-name">${item.name}</div>
-          <div class="cl-price">${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
+          <div class="cl-price cl-price-edit" data-id="${item.product_id}">✎ ${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
         </div>
         <div class="cl-stepper">
           <button data-id="${item.product_id}" data-d="-1">−</button>
@@ -592,8 +617,22 @@ function renderCart() {
     wrap.querySelectorAll(".cl-remove").forEach(btn => {
       btn.addEventListener("click", () => { CART = CART.filter(i => i.product_id !== btn.dataset.id); renderProductGrid(document.getElementById("productSearch").value); renderCart(); });
     });
+    wrap.querySelectorAll(".cl-price-edit").forEach(el => {
+      el.addEventListener("click", () => editItemPrice(el.dataset.id));
+    });
   }
   updateSummary();
+}
+
+function editItemPrice(productId) {
+  const item = CART.find(i => i.product_id === productId);
+  if (!item) return;
+  const input = window.prompt(`Sửa giá bán cho "${item.name}"\nGiá hiện tại: ${formatVND(item.unit_price)}\n\nNhập giá bán mới:`, item.unit_price);
+  if (input === null) return;
+  const newPrice = Number(input);
+  if (isNaN(newPrice) || newPrice < 0) { alert("Giá không hợp lệ."); return; }
+  item.unit_price = newPrice;
+  renderCart();
 }
 
 function setPayMethod(method) {
@@ -603,8 +642,25 @@ function setPayMethod(method) {
   updateSummary();
 }
 
+function setDiscountType(type) {
+  DISCOUNT_TYPE = type;
+  document.getElementById("discPercentBtn").classList.toggle("active", type === "percent");
+  document.getElementById("discAmountBtn").classList.toggle("active", type === "amount");
+  updateSummary();
+}
+
+function calcDiscount(subtotal) {
+  const val = Number(document.getElementById("discountValue").value || 0);
+  if (val <= 0) return 0;
+  let discount = DISCOUNT_TYPE === "percent" ? subtotal * (val / 100) : val;
+  return Math.min(discount, subtotal);
+}
+
 function updateSummary() {
-  const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
+  const subtotal = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
+  const discount = calcDiscount(subtotal);
+  const total = subtotal - discount;
+
   let cash, transfer;
   if (PAY_MODE === "quick") {
     cash = PAY_METHOD === "cash" ? total : 0;
@@ -615,6 +671,10 @@ function updateSummary() {
   }
   const paid = cash + transfer;
   const debt = Math.max(total - paid, 0);
+
+  document.getElementById("sumSubtotal").textContent = formatVND(subtotal);
+  document.getElementById("discountRow").style.display = discount > 0 ? "flex" : "none";
+  document.getElementById("sumDiscount").textContent = "-" + formatVND(discount);
   document.getElementById("sumTotal").textContent = formatVND(total);
   document.getElementById("sumDebt").textContent = formatVND(debt);
 
@@ -678,7 +738,10 @@ async function submitOrder() {
   submitBtn.disabled = true;
   submitBtn.textContent = "Đang tạo đơn...";
 
-  const total = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
+  const subtotal = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
+  const discountAmount = calcDiscount(subtotal);
+  const discountValue = Number(document.getElementById("discountValue").value || 0);
+  const total = subtotal - discountAmount;
   let cash, transfer;
   if (PAY_MODE === "quick") {
     cash = PAY_METHOD === "cash" ? total : 0;
@@ -697,6 +760,9 @@ async function submitOrder() {
     status: "completed",
     total_amount: total,
     paid_amount: paid,
+    discount_type: discountAmount > 0 ? DISCOUNT_TYPE : null,
+    discount_value: discountAmount > 0 ? discountValue : 0,
+    discount_amount: discountAmount,
     created_by: CURRENT_PROFILE.id
   }).select().single();
 
