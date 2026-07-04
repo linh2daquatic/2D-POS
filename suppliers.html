@@ -323,6 +323,7 @@ async function submitPayment() {
 
   let cashLeft = cash;
   let totalCashApplied = 0;
+  let totalTransferApplied = 0;
   for (const o of PAY_SUPPLIER.orders) {
     if (remaining <= 0) break;
     const applyToOrder = Math.min(o.debt, remaining);
@@ -334,6 +335,7 @@ async function submitPayment() {
     let applyTransfer = applyToOrder - applyCash;
     cashLeft -= applyCash;
     totalCashApplied += applyCash;
+    totalTransferApplied += applyTransfer;
 
     if (applyCash > 0) await sb.from("supplier_payments").insert({ supplier_id: PAY_SUPPLIER.supplier.id, purchase_order_id: o.id, amount: applyCash, method: "cash", note: note || null, created_by: CURRENT_PROFILE.id });
     if (applyTransfer > 0) await sb.from("supplier_payments").insert({ supplier_id: PAY_SUPPLIER.supplier.id, purchase_order_id: o.id, amount: applyTransfer, method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id });
@@ -345,6 +347,12 @@ async function submitPayment() {
     await sb.from("cash_transactions").insert({
       type: "expense", method: "cash", category: "Trả nợ NCC", amount: totalCashApplied,
       note: `Trả nợ tiền mặt cho ${PAY_SUPPLIER.supplier.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (totalTransferApplied > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "expense", method: "transfer", category: "Trả nợ NCC", amount: totalTransferApplied,
+      note: `Trả nợ chuyển khoản cho ${PAY_SUPPLIER.supplier.name}`, created_by: CURRENT_PROFILE.id
     });
   }
 
