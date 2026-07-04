@@ -24,6 +24,28 @@
 .chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
 .row-actions { display:flex; gap:6px; }
 .btn-mini { padding:5px 10px; font-size:12px; }
+.tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
+.autocomplete-wrap { position:relative; max-width:420px; }
+.autocomplete-list { position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; max-height:220px; overflow-y:auto; box-shadow:var(--shadow); z-index:10; margin-top:4px; display:none; }
+.autocomplete-list.open { display:block; }
+.autocomplete-item { padding:10px 12px; cursor:pointer; font-size:13.5px; border-bottom:1px solid var(--border); }
+.autocomplete-item:last-child { border-bottom:none; }
+.autocomplete-item:hover { background:#f8fafc; }
+.autocomplete-item .sub { font-size:11.5px; color:var(--text-mute); }
+.rc-line { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.rc-line:last-child { border-bottom:none; }
+.rc-line .rc-name { font-size:13.5px; font-weight:600; flex:1; min-width:120px; }
+.rc-line input { width:100px; }
+.rc-line .rc-remove { color:var(--danger); cursor:pointer; font-size:17px; padding:0 4px; }
+.pay-quick-row { display:flex; gap:8px; margin-top:8px; max-width:420px; }
+.pay-quick-btn { flex:1; padding:11px 8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
+.pay-quick-btn.active.cash { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
+.pay-quick-btn.active.transfer { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+.pay-custom-link { font-size:12px; color:var(--text-mute); text-decoration:underline; cursor:pointer; margin-top:8px; display:inline-block; }
+.summary-row { display:flex; justify-content:space-between; padding:6px 0; font-size:14px; max-width:420px; }
+.summary-row.total { font-weight:700; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:12px; }
 </style>
 </head>
 <body>
@@ -34,6 +56,11 @@
 let CURRENT_PROFILE = null;
 let ALL_PRODUCTS = [];
 let EDIT_ID = null;
+let ALL_SUPPLIERS_RC = [];
+let RC_SUPPLIER = null;
+let RC_CART = [];
+let RC_PAY_MODE = "quick";
+let RC_PAY_METHOD = "cash";
 
 (async () => {
   const auth = await requireAuth();
@@ -49,16 +76,68 @@ let EDIT_ID = null;
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div class="flex" style="justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
-      <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc mã SKU..." style="margin-bottom:0;">
-      ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
-    </div>
-    <div class="chip-row" id="categoryChips"></div>
-    <div class="panel">
-      <div class="panel-body" id="productTableWrap">
-        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+    ${isOwner ? `
+    <div class="tabs-row">
+      <div class="tab-btn active" data-tab="list">Danh sách sản phẩm</div>
+      <div class="tab-btn" data-tab="receive">Nhập hàng</div>
+    </div>` : ""}
+
+    <div id="listTab">
+      <div class="flex" style="justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+        <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc mã SKU..." style="margin-bottom:0;">
+        ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
+      </div>
+      <div class="chip-row" id="categoryChips"></div>
+      <div class="panel">
+        <div class="panel-body" id="productTableWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+        </div>
       </div>
     </div>
+
+    ${isOwner ? `
+    <div id="receiveTab" style="display:none;">
+      <div class="panel">
+        <div class="panel-header"><h2>Ghi nhận nhập hàng</h2></div>
+        <div class="panel-body">
+          <div class="field"><label>Nhà cung cấp *</label>
+            <div class="autocomplete-wrap">
+              <input id="rc_supplierSearch" placeholder="Tìm nhà cung cấp...">
+              <div class="autocomplete-list" id="rc_supplierList"></div>
+            </div>
+          </div>
+          <div class="field" style="margin-top:14px;"><label>Thêm sản phẩm</label>
+            <div class="autocomplete-wrap">
+              <input id="rc_productSearch" placeholder="Tìm sản phẩm theo tên hoặc SKU...">
+              <div class="autocomplete-list" id="rc_productList"></div>
+            </div>
+          </div>
+
+          <div id="rc_cartItems" style="margin-top:14px;"></div>
+
+          <div class="summary-row total"><span>Tổng tiền nhập</span><span id="rc_sumTotal">0₫</span></div>
+
+          <div style="margin-top:14px;">
+            <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Đã thanh toán</label>
+            <div class="pay-quick-row" id="rc_payQuickRow">
+              <div class="pay-quick-btn cash active" id="rc_quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+              <div class="pay-quick-btn transfer" id="rc_quickTransferBtn">🏦 Chuyển khoản<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
+            </div>
+            <span class="pay-custom-link" id="rc_toggleCustomPay">Trả một phần / chia 2 hình thức / ghi nợ →</span>
+            <div id="rc_customPayFields" style="display:none; max-width:420px;">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+                <div class="field" style="margin-bottom:0;"><label>Tiền mặt</label><input id="rc_payCash" type="number" step="any" value="0"></div>
+                <div class="field" style="margin-bottom:0;"><label>Chuyển khoản</label><input id="rc_payTransfer" type="number" step="any" value="0"></div>
+              </div>
+              <span class="pay-custom-link" id="rc_toggleQuickPay">← Quay lại thanh toán đủ</span>
+            </div>
+          </div>
+
+          <div class="summary-row total"><span>Còn nợ NCC</span><span id="rc_sumDebt">0₫</span></div>
+          <button class="btn btn-primary" id="rc_submitBtn" style="width:100%; max-width:420px; justify-content:center; padding:12px; margin-top:14px;">Ghi nhận nhập hàng</button>
+        </div>
+      </div>
+    </div>` : ""}
 
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal-box">
@@ -103,7 +182,22 @@ let EDIT_ID = null;
   document.getElementById("modalClose").addEventListener("click", closeModal);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("productForm").addEventListener("submit", saveProduct);
+
+  if (isOwner) {
+    document.querySelectorAll(".tab-btn").forEach(el => {
+      el.addEventListener("click", () => switchTab(el.dataset.tab));
+    });
+    await loadSuppliersForReceive();
+    bindReceiveEvents();
+    resetReceiveForm();
+  }
 })();
+
+function switchTab(tab) {
+  document.querySelectorAll(".tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+  document.getElementById("listTab").style.display = tab === "list" ? "block" : "none";
+  document.getElementById("receiveTab").style.display = tab === "receive" ? "block" : "none";
+}
 
 let ACTIVE_CATEGORY = "";
 
@@ -257,6 +351,249 @@ async function saveProduct(e) {
   }
   closeModal();
   await loadProducts();
+}
+
+/* ============================================================
+   TAB NHẬP HÀNG — chọn NCC, chọn sản phẩm, ghi nhận nhập kho
+   ============================================================ */
+async function loadSuppliersForReceive() {
+  const { data } = await sb.from("suppliers").select("*").order("name");
+  ALL_SUPPLIERS_RC = data || [];
+}
+
+function resetReceiveForm() {
+  RC_SUPPLIER = null;
+  RC_CART = [];
+  RC_PAY_MODE = "quick";
+  RC_PAY_METHOD = "cash";
+  renderSupplierPicker();
+  renderReceiveCart();
+  const quickRow = document.getElementById("rc_payQuickRow");
+  const customFields = document.getElementById("rc_customPayFields");
+  const toggleLink = document.getElementById("rc_toggleCustomPay");
+  if (quickRow) quickRow.style.display = "flex";
+  if (customFields) customFields.style.display = "none";
+  if (toggleLink) toggleLink.style.display = "inline-block";
+  document.getElementById("rc_quickCashBtn")?.classList.add("active");
+  document.getElementById("rc_quickTransferBtn")?.classList.remove("active");
+}
+
+function bindReceiveEvents() {
+  const prodInput = document.getElementById("rc_productSearch");
+  prodInput.addEventListener("input", () => renderRcProductList(prodInput.value));
+  prodInput.addEventListener("focus", () => renderRcProductList(prodInput.value));
+
+  document.getElementById("rc_quickCashBtn").addEventListener("click", () => setRcPayMethod("cash"));
+  document.getElementById("rc_quickTransferBtn").addEventListener("click", () => setRcPayMethod("transfer"));
+  document.getElementById("rc_toggleCustomPay").addEventListener("click", () => {
+    RC_PAY_MODE = "custom";
+    document.getElementById("rc_payQuickRow").style.display = "none";
+    document.getElementById("rc_toggleCustomPay").style.display = "none";
+    document.getElementById("rc_customPayFields").style.display = "block";
+    document.getElementById("rc_payCash").value = 0;
+    document.getElementById("rc_payTransfer").value = 0;
+    updateReceiveSummary();
+  });
+  document.getElementById("rc_toggleQuickPay").addEventListener("click", () => {
+    RC_PAY_MODE = "quick";
+    document.getElementById("rc_payQuickRow").style.display = "flex";
+    document.getElementById("rc_toggleCustomPay").style.display = "inline-block";
+    document.getElementById("rc_customPayFields").style.display = "none";
+    updateReceiveSummary();
+  });
+  document.getElementById("rc_payCash").addEventListener("input", updateReceiveSummary);
+  document.getElementById("rc_payTransfer").addEventListener("input", updateReceiveSummary);
+  document.getElementById("rc_submitBtn").addEventListener("click", submitReceive);
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#rc_supplierSearch") && !e.target.closest("#rc_supplierList")) {
+      document.getElementById("rc_supplierList")?.classList.remove("open");
+    }
+  });
+}
+
+function setRcPayMethod(method) {
+  RC_PAY_METHOD = method;
+  document.getElementById("rc_quickCashBtn").classList.toggle("active", method === "cash");
+  document.getElementById("rc_quickTransferBtn").classList.toggle("active", method === "transfer");
+  updateReceiveSummary();
+}
+
+/* ---------- Chọn nhà cung cấp ---------- */
+function renderSupplierPicker() {
+  const input = document.getElementById("rc_supplierSearch");
+  if (RC_SUPPLIER) {
+    input.value = RC_SUPPLIER.name;
+    input.disabled = true;
+    input.style.background = "#f8fafc";
+  } else {
+    input.value = "";
+    input.disabled = false;
+    input.style.background = "";
+    input.oninput = () => renderRcSupplierList(input.value);
+    input.onfocus = () => renderRcSupplierList(input.value);
+  }
+}
+
+function renderRcSupplierList(filter) {
+  const list = document.getElementById("rc_supplierList");
+  const f = (filter || "").trim().toLowerCase();
+  const matches = ALL_SUPPLIERS_RC.filter(s => !f || s.name.toLowerCase().includes(f));
+  if (matches.length === 0) {
+    list.innerHTML = `<div class="autocomplete-item text-mute">Chưa có nhà cung cấp. Vào mục Nhà cung cấp để thêm.</div>`;
+  } else {
+    list.innerHTML = matches.slice(0, 8).map(s => `<div class="autocomplete-item" data-id="${s.id}">${s.name} <span class="sub">${s.phone || ''}</span></div>`).join("");
+    list.querySelectorAll(".autocomplete-item[data-id]").forEach(el => {
+      el.addEventListener("click", () => {
+        RC_SUPPLIER = ALL_SUPPLIERS_RC.find(s => s.id === el.dataset.id);
+        renderSupplierPicker();
+        list.classList.remove("open");
+      });
+    });
+  }
+  list.classList.add("open");
+}
+
+/* ---------- Chọn sản phẩm ---------- */
+function renderRcProductList(filter) {
+  const list = document.getElementById("rc_productList");
+  const f = (filter || "").trim().toLowerCase();
+  if (!f) { list.classList.remove("open"); return; }
+  const matches = ALL_PRODUCTS.filter(p => p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f));
+
+  if (matches.length === 0) {
+    list.innerHTML = `<div class="autocomplete-item text-mute">Không tìm thấy sản phẩm.</div>`;
+  } else {
+    list.innerHTML = matches.slice(0, 8).map(p =>
+      `<div class="autocomplete-item" data-id="${p.id}">${p.name} <span class="sub">Tồn: ${p.quantity} ${p.unit || ''} · Giá vốn hiện tại: ${formatVND(p.cost_price)}</span></div>`
+    ).join("");
+    list.querySelectorAll(".autocomplete-item[data-id]").forEach(el => {
+      el.addEventListener("click", () => {
+        addToReceiveCart(el.dataset.id);
+        document.getElementById("rc_productSearch").value = "";
+        list.classList.remove("open");
+      });
+    });
+  }
+  list.classList.add("open");
+}
+
+function addToReceiveCart(productId) {
+  const p = ALL_PRODUCTS.find(x => x.id === productId);
+  if (!p) return;
+  const existing = RC_CART.find(i => i.product_id === productId);
+  if (existing) {
+    existing.quantity += 1;
+  } else {
+    RC_CART.push({ product_id: p.id, name: p.name, unit: p.unit, quantity: 1, unit_cost: Number(p.cost_price || 0) });
+  }
+  renderReceiveCart();
+}
+
+function renderReceiveCart() {
+  const wrap = document.getElementById("rc_cartItems");
+  if (!wrap) return;
+  if (RC_CART.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">📦</div>Chưa có sản phẩm nào. Tìm và thêm sản phẩm nhập ở trên.</div>`;
+  } else {
+    wrap.innerHTML = `<table><thead><tr><th>Sản phẩm</th><th>SL nhập</th><th>Đơn giá nhập</th><th>Thành tiền</th><th></th></tr></thead><tbody>
+      ${RC_CART.map((item, idx) => `<tr>
+        <td>${item.name}</td>
+        <td><input type="number" min="1" value="${item.quantity}" data-idx="${idx}" data-field="quantity"></td>
+        <td><input type="number" min="0" value="${item.unit_cost}" data-idx="${idx}" data-field="unit_cost"></td>
+        <td>${formatVND(item.quantity * item.unit_cost)}</td>
+        <td><span class="rc-remove" data-idx="${idx}">✕</span></td>
+      </tr>`).join("")}
+    </tbody></table>`;
+
+    wrap.querySelectorAll("input[data-field]").forEach(el => {
+      el.addEventListener("input", () => {
+        const idx = Number(el.dataset.idx);
+        RC_CART[idx][el.dataset.field] = Number(el.value || 0);
+        renderReceiveCart();
+      });
+    });
+    wrap.querySelectorAll(".rc-remove").forEach(el => {
+      el.addEventListener("click", () => { RC_CART.splice(Number(el.dataset.idx), 1); renderReceiveCart(); });
+    });
+  }
+  updateReceiveSummary();
+}
+
+function updateReceiveSummary() {
+  const total = RC_CART.reduce((s, i) => s + (i.quantity * i.unit_cost), 0);
+  let cash, transfer;
+  if (RC_PAY_MODE === "quick") {
+    cash = RC_PAY_METHOD === "cash" ? total : 0;
+    transfer = RC_PAY_METHOD === "transfer" ? total : 0;
+  } else {
+    cash = Number(document.getElementById("rc_payCash")?.value || 0);
+    transfer = Number(document.getElementById("rc_payTransfer")?.value || 0);
+  }
+  const paid = cash + transfer;
+  const debt = Math.max(total - paid, 0);
+  document.getElementById("rc_sumTotal").textContent = formatVND(total);
+  document.getElementById("rc_sumDebt").textContent = formatVND(debt);
+}
+
+async function submitReceive() {
+  if (!RC_SUPPLIER) { alert("Vui lòng chọn nhà cung cấp."); return; }
+  if (RC_CART.length === 0) { alert("Vui lòng thêm ít nhất 1 sản phẩm nhập."); return; }
+
+  const btn = document.getElementById("rc_submitBtn");
+  btn.disabled = true;
+  btn.textContent = "Đang lưu...";
+
+  const total = RC_CART.reduce((s, i) => s + (i.quantity * i.unit_cost), 0);
+  let cash, transfer;
+  if (RC_PAY_MODE === "quick") {
+    cash = RC_PAY_METHOD === "cash" ? total : 0;
+    transfer = RC_PAY_METHOD === "transfer" ? total : 0;
+  } else {
+    cash = Number(document.getElementById("rc_payCash").value || 0);
+    transfer = Number(document.getElementById("rc_payTransfer").value || 0);
+  }
+  const paid = cash + transfer;
+  const poCode = "NH" + Date.now().toString().slice(-8);
+
+  const { data: po, error } = await sb.from("purchase_orders").insert({
+    po_code: poCode, supplier_id: RC_SUPPLIER.id, status: "completed",
+    total_amount: total, paid_amount: paid, created_by: CURRENT_PROFILE.id
+  }).select().single();
+
+  if (error) {
+    alert("Lỗi khi tạo phiếu nhập: " + error.message);
+    btn.disabled = false; btn.textContent = "Ghi nhận nhập hàng";
+    return;
+  }
+
+  const itemRows = RC_CART.map(i => ({ purchase_order_id: po.id, product_id: i.product_id, quantity: i.quantity, unit_cost: i.unit_cost }));
+  await sb.from("purchase_order_items").insert(itemRows);
+
+  for (const item of RC_CART) {
+    const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
+    const newQty = Number(p.quantity) + item.quantity;
+    await sb.from("products").update({ quantity: newQty, cost_price: item.unit_cost }).eq("id", item.product_id);
+    await sb.from("inventory_log").insert({
+      product_id: item.product_id, change_qty: item.quantity, reason: "purchase",
+      reference_id: po.id, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  if (cash > 0) {
+    await sb.from("supplier_payments").insert({ supplier_id: RC_SUPPLIER.id, purchase_order_id: po.id, amount: cash, method: "cash", note: "Thanh toán lúc nhập hàng", created_by: CURRENT_PROFILE.id });
+    await sb.from("cash_transactions").insert({ type: "expense", method: "cash", category: "Nhập hàng", amount: cash, note: `Trả NCC đơn ${poCode}`, created_by: CURRENT_PROFILE.id });
+  }
+  if (transfer > 0) {
+    await sb.from("supplier_payments").insert({ supplier_id: RC_SUPPLIER.id, purchase_order_id: po.id, amount: transfer, method: "transfer", note: "Thanh toán lúc nhập hàng", created_by: CURRENT_PROFILE.id });
+  }
+
+  btn.disabled = false;
+  btn.textContent = "Ghi nhận nhập hàng";
+
+  await loadProducts();
+  resetReceiveForm();
+  alert(`Đã ghi nhận nhập hàng ${poCode} thành công! Tồn kho đã được cập nhật.`);
 }
 </script>
 </body>
