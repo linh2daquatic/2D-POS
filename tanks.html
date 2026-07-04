@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quản lý bể — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:440px; max-height:88vh; overflow-y:auto; }
+.modal-box.wide { max-width:640px; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.tank-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:14px; }
+.tank-card { border:1px solid var(--border); border-radius:12px; padding:18px; cursor:pointer; background:#fff; transition:border-color .12s, transform .08s; }
+.tank-card:hover { border-color:var(--teal); }
+.tank-card:active { transform:scale(0.98); }
+.tank-card .tname { font-family:var(--font-display); font-weight:600; font-size:17px; color:var(--ink); }
+.tank-card .tmeta { font-size:12.5px; color:var(--text-mute); margin-top:6px; }
+.param-row, .chem-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:13.5px; }
+.param-row:last-child, .chem-row:last-child { border-bottom:none; }
+.param-row .p-remove, .chem-row .c-remove { color:var(--danger); cursor:pointer; font-size:15px; }
+.chart-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px,1fr)); gap:16px; }
+.chart-card { border:1px solid var(--border); border-radius:10px; padding:14px; background:#fff; }
+.chart-card h4 { font-size:13.5px; font-weight:600; margin-bottom:8px; color:var(--ink); }
+.chart-card canvas { max-height:200px; }
+.reading-input-row { display:grid; grid-template-columns:1fr 100px; gap:10px; align-items:center; padding:6px 0; }
+.back-link { font-size:13.5px; color:var(--text-mute); cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-bottom:14px; }
+.back-link:hover { color:var(--ink); }
+</style>
+</head>
+<body>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ALL_TANKS = [];
+let ALL_CUSTOMERS_TK = [];
+let CURRENT_TANK = null;
+let CURRENT_PARAMS = [];
+let CURRENT_CHEMICALS = [];
+let CURRENT_READINGS = [];
+let CURRENT_DOSING = [];
+let CHART_INSTANCES = {};
+let EDIT_TANK_ID = null;
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  renderLayout({
+    activePage: "tanks",
+    profile: CURRENT_PROFILE,
+    title: "Quản lý bể",
+    subtitle: "Theo dõi chỉ số nước và châm hóa chất"
+  });
+
+  document.getElementById("pageContent").innerHTML = `
+    <div id="tankListView"></div>
+    <div id="tankDetailView" style="display:none;"></div>
+
+    <div class="modal-overlay" id="tankModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="tankModalTitle">Thêm bể</h3><span class="modal-close" id="tankModalClose">✕</span></div>
+        <div class="modal-body">
+          <form id="tankForm">
+            <div class="field"><label>Tên bể *</label><input id="tk_name" required placeholder="VD: Bể SPS anh Long, Bể trưng bày shop..."></div>
+            <div class="field"><label>Khách hàng (nếu là bể của khách)</label>
+              <select id="tk_customer"><option value="">— Bể của shop —</option></select>
+            </div>
+            <div class="field"><label>Ghi chú</label><textarea id="tk_notes" rows="2"></textarea></div>
+            <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+              <button type="button" class="btn btn-secondary" id="tankCancelBtn">Hủy</button>
+              <button type="submit" class="btn btn-primary" id="tankSaveBtn">Lưu</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="paramModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Thêm chỉ số theo dõi</h3><span class="modal-close" id="paramModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Tên chỉ số *</label><input id="pm_name" placeholder="VD: pH, KH, Canxi, Độ mặn, Nhiệt độ..." required></div>
+          <div class="field"><label>Đơn vị</label><input id="pm_unit" placeholder="VD: dKH, ppm, ppt, °C (không bắt buộc)"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="paramCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="paramSaveBtn">Thêm</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="chemModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Thêm hóa chất</h3><span class="modal-close" id="chemModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Tên hóa chất *</label><input id="cm_name" placeholder="VD: Canxi lỏng, KH Buffer, Amino acid..." required></div>
+          <div class="field"><label>Đơn vị</label><input id="cm_unit" placeholder="VD: ml, giọt, g (không bắt buộc)"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="chemCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="chemSaveBtn">Thêm</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="readingModal">
+      <div class="modal-box wide">
+        <div class="modal-header"><h3>Ghi nhận đo chỉ số</h3><span class="modal-close" id="readingModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Ngày đo</label><input id="rd_date" type="datetime-local"></div>
+          <div id="rd_paramInputs" style="margin-top:10px;"></div>
+          <div class="field" style="margin-top:10px;"><label>Ghi chú</label><input id="rd_note" placeholder="Không bắt buộc"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="readingCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="readingSaveBtn">Lưu kết quả đo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="dosingModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Ghi nhận châm hóa chất</h3><span class="modal-close" id="dosingModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Hóa chất *</label><select id="ds_chemical"></select></div>
+          <div class="field"><label>Liều lượng *</label><input id="ds_amount" type="number" step="any" required></div>
+          <div class="field"><label>Ngày châm</label><input id="ds_date" type="datetime-local"></div>
+          <div class="field"><label>Ghi chú</label><input id="ds_note" placeholder="Không bắt buộc"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="dosingCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="dosingSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await Promise.all([loadTanks(), loadCustomersForTank()]);
+  bindGlobalEvents();
+  renderTankListView();
+})();
+
+function nowLocalDatetime() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+/* ============================================================
+   DANH SÁCH BỂ
+   ============================================================ */
+async function loadTanks() {
+  const { data } = await sb.from("tanks").select("*, customers(name)").order("name");
+  ALL_TANKS = data || [];
+}
+async function loadCustomersForTank() {
+  const { data } = await sb.from("customers").select("id, name").order("name");
+  ALL_CUSTOMERS_TK = data || [];
+  const sel = document.getElementById("tk_customer");
+  if (sel) sel.innerHTML = `<option value="">— Bể của shop —</option>` + ALL_CUSTOMERS_TK.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+}
+
+function renderTankListView() {
+  document.getElementById("tankListView").style.display = "block";
+  document.getElementById("tankDetailView").style.display = "none";
+
+  const wrap = document.getElementById("tankListView");
+  wrap.innerHTML = `
+    <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+      <div></div>
+      <button class="btn btn-primary" id="addTankBtn">+ Thêm bể</button>
+    </div>
+    <div id="tankGridWrap"></div>
+  `;
+  document.getElementById("addTankBtn").addEventListener("click", () => openTankModal());
+  renderTankGrid();
+}
+
+function renderTankGrid() {
+  const wrap = document.getElementById("tankGridWrap");
+  if (ALL_TANKS.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🪸</div>Chưa có bể nào. Bấm "+ Thêm bể" để bắt đầu theo dõi.</div>`;
+    return;
+  }
+  wrap.innerHTML = `<div class="tank-grid">
+    ${ALL_TANKS.map(t => `
+      <div class="tank-card" data-id="${t.id}">
+        <div class="tname">🪸 ${t.name}</div>
+        <div class="tmeta">${t.customers?.name ? '👤 ' + t.customers.name : 'Bể của shop'}</div>
+        ${t.notes ? `<div class="tmeta">${t.notes}</div>` : ""}
+      </div>
+    `).join("")}
+  </div>`;
+  wrap.querySelectorAll(".tank-card").forEach(el => {
+    el.addEventListener("click", () => openTankDetail(el.dataset.id));
+  });
+}
+
+function openTankModal(id) {
+  EDIT_TANK_ID = id || null;
+  const t = id ? ALL_TANKS.find(x => x.id === id) : null;
+  document.getElementById("tankModalTitle").textContent = t ? "Sửa bể" : "Thêm bể";
+  document.getElementById("tk_name").value = t?.name || "";
+  document.getElementById("tk_customer").value = t?.customer_id || "";
+  document.getElementById("tk_notes").value = t?.notes || "";
+  document.getElementById("tankModal").classList.add("open");
+}
+
+/* ============================================================
+   SỰ KIỆN CHUNG
+   ============================================================ */
+function bindGlobalEvents() {
+  document.getElementById("tankModalClose").addEventListener("click", () => document.getElementById("tankModal").classList.remove("open"));
+  document.getElementById("tankCancelBtn").addEventListener("click", () => document.getElementById("tankModal").classList.remove("open"));
+  document.getElementById("tankForm").addEventListener("submit", saveTank);
+
+  document.getElementById("paramModalClose").addEventListener("click", () => document.getElementById("paramModal").classList.remove("open"));
+  document.getElementById("paramCancelBtn").addEventListener("click", () => document.getElementById("paramModal").classList.remove("open"));
+  document.getElementById("paramSaveBtn").addEventListener("click", saveParam);
+
+  document.getElementById("chemModalClose").addEventListener("click", () => document.getElementById("chemModal").classList.remove("open"));
+  document.getElementById("chemCancelBtn").addEventListener("click", () => document.getElementById("chemModal").classList.remove("open"));
+  document.getElementById("chemSaveBtn").addEventListener("click", saveChemical);
+
+  document.getElementById("readingModalClose").addEventListener("click", () => document.getElementById("readingModal").classList.remove("open"));
+  document.getElementById("readingCancelBtn").addEventListener("click", () => document.getElementById("readingModal").classList.remove("open"));
+  document.getElementById("readingSaveBtn").addEventListener("click", saveReading);
+
+  document.getElementById("dosingModalClose").addEventListener("click", () => document.getElementById("dosingModal").classList.remove("open"));
+  document.getElementById("dosingCancelBtn").addEventListener("click", () => document.getElementById("dosingModal").classList.remove("open"));
+  document.getElementById("dosingSaveBtn").addEventListener("click", saveDosing);
+}
+
+async function saveTank(e) {
+  e.preventDefault();
+  const payload = {
+    name: document.getElementById("tk_name").value.trim(),
+    customer_id: document.getElementById("tk_customer").value || null,
+    notes: document.getElementById("tk_notes").value.trim() || null,
+  };
+  const btn = document.getElementById("tankSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  let error;
+  if (EDIT_TANK_ID) ({ error } = await sb.from("tanks").update(payload).eq("id", EDIT_TANK_ID));
+  else ({ error } = await sb.from("tanks").insert({ ...payload, created_by: CURRENT_PROFILE.id }));
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("tankModal").classList.remove("open");
+  await loadTanks();
+  renderTankGrid();
+}
+
+/* ============================================================
+   CHI TIẾT BỂ
+   ============================================================ */
+async function openTankDetail(tankId) {
+  CURRENT_TANK = ALL_TANKS.find(t => t.id === tankId);
+  if (!CURRENT_TANK) return;
+
+  document.getElementById("tankListView").style.display = "none";
+  document.getElementById("tankDetailView").style.display = "block";
+
+  await Promise.all([loadTankParams(tankId), loadTankChemicals(tankId), loadTankReadings(tankId), loadTankDosing(tankId)]);
+  renderTankDetailView();
+}
+
+async function loadTankParams(tankId) {
+  const { data } = await sb.from("tank_parameters").select("*").eq("tank_id", tankId).order("display_order").order("created_at");
+  CURRENT_PARAMS = data || [];
+}
+async function loadTankChemicals(tankId) {
+  const { data } = await sb.from("tank_chemicals").select("*").eq("tank_id", tankId).order("created_at");
+  CURRENT_CHEMICALS = data || [];
+}
+async function loadTankReadings(tankId) {
+  const { data: readings } = await sb.from("tank_readings").select("*").eq("tank_id", tankId).order("reading_date", { ascending: true });
+  const readingIds = (readings || []).map(r => r.id);
+  let values = [];
+  if (readingIds.length > 0) {
+    const { data } = await sb.from("tank_reading_values").select("*").in("reading_id", readingIds);
+    values = data || [];
+  }
+  CURRENT_READINGS = (readings || []).map(r => {
+    const valMap = {};
+    values.filter(v => v.reading_id === r.id).forEach(v => { valMap[v.parameter_id] = v.value; });
+    return { ...r, values: valMap };
+  });
+}
+async function loadTankDosing(tankId) {
+  const { data } = await sb.from("tank_dosing_log").select("*, tank_chemicals(name, unit)").eq("tank_id", tankId).order("dose_date", { ascending: false }).limit(50);
+  CURRENT_DOSING = data || [];
+}
+
+function renderTankDetailView() {
+  const wrap = document.getElementById("tankDetailView");
+  wrap.innerHTML = `
+    <div class="back-link" id="backToListBtn">← Danh sách bể</div>
+    <div class="flex" style="justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div>
+        <h2 style="font-family:var(--font-display); font-size:22px;">🪸 ${CURRENT_TANK.name}</h2>
+        <div class="text-mute" style="font-size:13px; margin-top:4px;">${CURRENT_TANK.customers?.name ? '👤 ' + CURRENT_TANK.customers.name : 'Bể của shop'}</div>
+      </div>
+      <span class="btn btn-secondary btn-mini" id="editTankBtn">Sửa thông tin bể</span>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header flex" style="justify-content:space-between;">
+        <h2>Chỉ số theo dõi</h2>
+        <div class="flex gap-8">
+          <span class="btn btn-secondary btn-mini" id="addParamBtn">+ Thêm chỉ số</span>
+          ${CURRENT_PARAMS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addReadingBtn">+ Ghi nhận đo</button>` : ""}
+        </div>
+      </div>
+      <div class="panel-body">
+        ${CURRENT_PARAMS.length === 0
+          ? `<div class="empty-state"><div class="icon">📊</div>Chưa có chỉ số nào. Thêm chỉ số (VD: pH, KH, Canxi...) để bắt đầu theo dõi.</div>`
+          : `<div id="paramManageList">${CURRENT_PARAMS.map(p => `
+              <div class="param-row" data-id="${p.id}">
+                <span>${p.name}${p.unit ? ` <span class="text-mute">(${p.unit})</span>` : ''}</span>
+                <span class="p-remove" data-id="${p.id}">✕</span>
+              </div>`).join("")}</div>`
+        }
+      </div>
+    </div>
+
+    ${CURRENT_PARAMS.length > 0 ? `
+    <div class="panel">
+      <div class="panel-header"><h2>Biểu đồ theo thời gian</h2></div>
+      <div class="panel-body">
+        ${CURRENT_READINGS.length < 2
+          ? `<div class="empty-state"><div class="icon">📈</div>Cần ít nhất 2 lần đo để vẽ được biểu đồ. Hiện có ${CURRENT_READINGS.length} lần đo.</div>`
+          : `<div class="chart-grid">${CURRENT_PARAMS.map(p => `
+              <div class="chart-card"><h4>${p.name}${p.unit ? ' (' + p.unit + ')' : ''}</h4><canvas id="chart-${p.id}"></canvas></div>
+            `).join("")}</div>`
+        }
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Lịch sử đo</h2></div>
+      <div class="panel-body">
+        ${CURRENT_READINGS.length === 0 ? `<div class="empty-state"><div class="icon">🧪</div>Chưa có lần đo nào.</div>` : `
+        <table><thead><tr><th>Ngày</th>${CURRENT_PARAMS.map(p => `<th>${p.name}</th>`).join("")}<th>Ghi chú</th></tr></thead><tbody>
+          ${[...CURRENT_READINGS].reverse().map(r => `<tr>
+            <td>${formatDateTime(r.reading_date)}</td>
+            ${CURRENT_PARAMS.map(p => `<td>${r.values[p.id] !== undefined ? r.values[p.id] : '—'}</td>`).join("")}
+            <td>${r.note || '—'}</td>
+          </tr>`).join("")}
+        </tbody></table>`}
+      </div>
+    </div>` : ""}
+
+    <div class="panel">
+      <div class="panel-header flex" style="justify-content:space-between;">
+        <h2>Hóa chất châm</h2>
+        <div class="flex gap-8">
+          <span class="btn btn-secondary btn-mini" id="addChemBtn">+ Thêm hóa chất</span>
+          ${CURRENT_CHEMICALS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addDosingBtn">+ Ghi nhận châm</button>` : ""}
+        </div>
+      </div>
+      <div class="panel-body">
+        ${CURRENT_CHEMICALS.length === 0
+          ? `<div class="empty-state"><div class="icon">🧴</div>Chưa có hóa chất nào. Thêm hóa chất (VD: Canxi lỏng, KH Buffer...) để bắt đầu ghi liều châm.</div>`
+          : `<div id="chemManageList" style="margin-bottom:14px;">${CURRENT_CHEMICALS.map(c => `
+              <div class="chem-row" data-id="${c.id}">
+                <span>${c.name}${c.unit ? ` <span class="text-mute">(${c.unit})</span>` : ''}</span>
+                <span class="c-remove" data-id="${c.id}">✕</span>
+              </div>`).join("")}</div>
+              ${CURRENT_DOSING.length === 0 ? `<div class="empty-state"><div class="icon">💧</div>Chưa có lần châm nào.</div>` : `
+              <table><thead><tr><th>Ngày</th><th>Hóa chất</th><th>Liều lượng</th><th>Ghi chú</th></tr></thead><tbody>
+                ${CURRENT_DOSING.map(d => `<tr>
+                  <td>${formatDateTime(d.dose_date)}</td>
+                  <td>${d.tank_chemicals?.name || '—'}</td>
+                  <td>${d.dose_amount} ${d.tank_chemicals?.unit || ''}</td>
+                  <td>${d.note || '—'}</td>
+                </tr>`).join("")}
+              </tbody></table>`}`
+        }
+      </div>
+    </div>
+  `;
+
+  bindDetailEvents();
+  if (CURRENT_PARAMS.length > 0 && CURRENT_READINGS.length >= 2) renderCharts();
+}
+
+function bindDetailEvents() {
+  document.getElementById("backToListBtn").addEventListener("click", () => { destroyCharts(); renderTankListView(); });
+  document.getElementById("editTankBtn").addEventListener("click", () => openTankModal(CURRENT_TANK.id));
+  document.getElementById("addParamBtn").addEventListener("click", () => {
+    document.getElementById("pm_name").value = "";
+    document.getElementById("pm_unit").value = "";
+    document.getElementById("paramModal").classList.add("open");
+  });
+  document.getElementById("addChemBtn").addEventListener("click", () => {
+    document.getElementById("cm_name").value = "";
+    document.getElementById("cm_unit").value = "";
+    document.getElementById("chemModal").classList.add("open");
+  });
+  const addReadingBtn = document.getElementById("addReadingBtn");
+  if (addReadingBtn) addReadingBtn.addEventListener("click", openReadingModal);
+  const addDosingBtn = document.getElementById("addDosingBtn");
+  if (addDosingBtn) addDosingBtn.addEventListener("click", openDosingModal);
+
+  document.querySelectorAll(".p-remove").forEach(el => el.addEventListener("click", () => removeParam(el.dataset.id)));
+  document.querySelectorAll(".c-remove").forEach(el => el.addEventListener("click", () => removeChemical(el.dataset.id)));
+}
+
+/* ---------- Quản lý chỉ số ---------- */
+async function saveParam() {
+  const name = document.getElementById("pm_name").value.trim();
+  if (!name) { alert("Vui lòng nhập tên chỉ số."); return; }
+  const unit = document.getElementById("pm_unit").value.trim() || null;
+  const { error } = await sb.from("tank_parameters").insert({ tank_id: CURRENT_TANK.id, name, unit, display_order: CURRENT_PARAMS.length });
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("paramModal").classList.remove("open");
+  await loadTankParams(CURRENT_TANK.id);
+  await loadTankReadings(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+async function removeParam(paramId) {
+  if (!window.confirm("Xóa chỉ số này? Toàn bộ dữ liệu đo đã ghi cho chỉ số này cũng sẽ bị xóa.")) return;
+  await sb.from("tank_parameters").delete().eq("id", paramId);
+  await loadTankParams(CURRENT_TANK.id);
+  await loadTankReadings(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+
+/* ---------- Quản lý hóa chất ---------- */
+async function saveChemical() {
+  const name = document.getElementById("cm_name").value.trim();
+  if (!name) { alert("Vui lòng nhập tên hóa chất."); return; }
+  const unit = document.getElementById("cm_unit").value.trim() || null;
+  const { error } = await sb.from("tank_chemicals").insert({ tank_id: CURRENT_TANK.id, name, unit });
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("chemModal").classList.remove("open");
+  await loadTankChemicals(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+async function removeChemical(chemId) {
+  if (!window.confirm("Xóa hóa chất này? Lịch sử châm của hóa chất này cũng sẽ bị xóa.")) return;
+  await sb.from("tank_chemicals").delete().eq("id", chemId);
+  await loadTankChemicals(CURRENT_TANK.id);
+  await loadTankDosing(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+
+/* ---------- Ghi nhận đo chỉ số ---------- */
+function openReadingModal() {
+  document.getElementById("rd_date").value = nowLocalDatetime();
+  document.getElementById("rd_note").value = "";
+  document.getElementById("rd_paramInputs").innerHTML = CURRENT_PARAMS.map(p => `
+    <div class="reading-input-row">
+      <label style="margin-bottom:0;">${p.name}${p.unit ? ` (${p.unit})` : ''}</label>
+      <input type="number" step="any" data-param-id="${p.id}" id="rdval-${p.id}">
+    </div>
+  `).join("");
+  document.getElementById("readingModal").classList.add("open");
+}
+
+async function saveReading() {
+  const btn = document.getElementById("readingSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const dateVal = document.getElementById("rd_date").value;
+  const note = document.getElementById("rd_note").value.trim() || null;
+
+  const { data: reading, error } = await sb.from("tank_readings").insert({
+    tank_id: CURRENT_TANK.id,
+    reading_date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+    note, created_by: CURRENT_PROFILE.id
+  }).select().single();
+
+  if (error) { alert("Lỗi: " + error.message); btn.disabled = false; btn.textContent = "Lưu kết quả đo"; return; }
+
+  const valueRows = CURRENT_PARAMS
+    .map(p => ({ reading_id: reading.id, parameter_id: p.id, value: document.getElementById(`rdval-${p.id}`).value }))
+    .filter(v => v.value !== "")
+    .map(v => ({ ...v, value: Number(v.value) }));
+
+  if (valueRows.length > 0) await sb.from("tank_reading_values").insert(valueRows);
+
+  btn.disabled = false; btn.textContent = "Lưu kết quả đo";
+  document.getElementById("readingModal").classList.remove("open");
+  await loadTankReadings(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+
+/* ---------- Ghi nhận châm hóa chất ---------- */
+function openDosingModal() {
+  document.getElementById("ds_chemical").innerHTML = CURRENT_CHEMICALS.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  document.getElementById("ds_amount").value = "";
+  document.getElementById("ds_date").value = nowLocalDatetime();
+  document.getElementById("ds_note").value = "";
+  document.getElementById("dosingModal").classList.add("open");
+}
+
+async function saveDosing() {
+  const chemicalId = document.getElementById("ds_chemical").value;
+  const amount = Number(document.getElementById("ds_amount").value || 0);
+  if (!chemicalId || amount <= 0) { alert("Vui lòng chọn hóa chất và nhập liều lượng hợp lệ."); return; }
+  const dateVal = document.getElementById("ds_date").value;
+  const note = document.getElementById("ds_note").value.trim() || null;
+
+  const btn = document.getElementById("dosingSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const { error } = await sb.from("tank_dosing_log").insert({
+    tank_id: CURRENT_TANK.id, chemical_id: chemicalId, dose_amount: amount,
+    dose_date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+    note, created_by: CURRENT_PROFILE.id
+  });
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("dosingModal").classList.remove("open");
+  await loadTankDosing(CURRENT_TANK.id);
+  renderTankDetailView();
+}
+
+/* ---------- Biểu đồ (dùng trục danh mục theo ngày, không cần thư viện adapter ngày tháng) ---------- */
+function destroyCharts() {
+  Object.values(CHART_INSTANCES).forEach(c => c.destroy());
+  CHART_INSTANCES = {};
+}
+
+function renderCharts() {
+  destroyCharts();
+  CURRENT_PARAMS.forEach(p => {
+    const canvas = document.getElementById(`chart-${p.id}`);
+    if (!canvas) return;
+    const filtered = CURRENT_READINGS.filter(r => r.values[p.id] !== undefined);
+    if (filtered.length < 2) {
+      const ctx = canvas.getContext("2d");
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText("Chưa đủ dữ liệu cho chỉ số này", 10, 20);
+      return;
+    }
+    const labels = filtered.map(r => formatDate(r.reading_date));
+    const data = filtered.map(r => r.values[p.id]);
+
+    CHART_INSTANCES[p.id] = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: p.name,
+          data,
+          borderColor: "#16a085",
+          backgroundColor: "rgba(0,168,150,0.1)",
+          tension: 0.25,
+          pointRadius: 3,
+          fill: true,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 } } },
+          y: { ticks: { font: { size: 10 } } }
+        }
+      }
+    });
+  });
+}
+</script>
+</body>
+</html>
