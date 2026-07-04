@@ -134,8 +134,8 @@ async function loadDashboard(isOwner) {
     const { data: pos } = await sb.from("purchase_orders").select("total_amount, paid_amount").eq("status","completed");
     const supplierDebt = (pos || []).reduce((s,o) => s + (Number(o.total_amount||0)-Number(o.paid_amount||0)), 0);
 
-    const { data: cashTx } = await sb.from("cash_transactions").select("type, amount");
-    const cashBalance = (cashTx || []).reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
+    const { data: cashTx } = await sb.from("cash_transactions").select("type, amount, method");
+    const cashBalance = (cashTx || []).filter(t => (t.method || "cash") === "cash").reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
 
     // Lãi gộp tháng này = doanh thu - giá vốn (dựa trên giá vốn hiện tại của sản phẩm)
     const { data: monthItems } = await sb
