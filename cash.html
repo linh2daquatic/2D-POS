@@ -223,13 +223,10 @@ function renderStats() {
       <div class="label">Chi tiền mặt hôm nay</div>
       <div class="value" style="color:var(--danger);">${formatVND(todayCashExpense)}</div>
     </div>
-    <div class="stat-card">
-      <div class="label">🏦 Thu chuyển khoản hôm nay</div>
-      <div class="value" style="color:var(--teal-deep); font-size:20px;">${formatVND(todayTransferIncome)}</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">🏦 Chi chuyển khoản hôm nay</div>
-      <div class="value" style="color:var(--danger); font-size:20px;">${formatVND(todayTransferExpense)}</div>
+    <div class="stat-card ${(todayTransferIncome - todayTransferExpense) < 0 ? 'danger-card' : ''}">
+      <div class="label">🏦 Chuyển khoản hôm nay (ròng)</div>
+      <div class="value">${formatVND(todayTransferIncome - todayTransferExpense)}</div>
+      <div class="delta text-mute" style="font-size:11px;">Thu ${formatVND(todayTransferIncome)} · Chi ${formatVND(todayTransferExpense)}</div>
     </div>
   `;
 }
