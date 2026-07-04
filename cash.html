@@ -202,13 +202,13 @@ function cashBalance() {
 
 function renderStats() {
   const balance = cashBalance();
-  const transferIncome = ALL_TX.filter(t => t.method === "transfer" && t.type === "income").reduce((s,t) => s + Number(t.amount), 0);
-  const transferExpense = ALL_TX.filter(t => t.method === "transfer" && t.type === "expense").reduce((s,t) => s + Number(t.amount), 0);
 
   const today = new Date(); today.setHours(0,0,0,0);
-  const todayTx = ALL_TX.filter(t => new Date(t.created_at) >= today && (t.method || "cash") === "cash");
-  const todayIncome = todayTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-  const todayExpense = todayTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+  const todayTx = ALL_TX.filter(t => new Date(t.created_at) >= today);
+  const todayCashIncome = todayTx.filter(t => t.type === "income" && (t.method || "cash") === "cash").reduce((s, t) => s + Number(t.amount), 0);
+  const todayCashExpense = todayTx.filter(t => t.type === "expense" && (t.method || "cash") === "cash").reduce((s, t) => s + Number(t.amount), 0);
+  const todayTransferIncome = todayTx.filter(t => t.type === "income" && t.method === "transfer").reduce((s, t) => s + Number(t.amount), 0);
+  const todayTransferExpense = todayTx.filter(t => t.type === "expense" && t.method === "transfer").reduce((s, t) => s + Number(t.amount), 0);
 
   document.getElementById("statGrid").innerHTML = `
     <div class="stat-card accent">
@@ -217,15 +217,19 @@ function renderStats() {
     </div>
     <div class="stat-card">
       <div class="label">Thu tiền mặt hôm nay</div>
-      <div class="value" style="color:var(--teal-deep);">${formatVND(todayIncome)}</div>
+      <div class="value" style="color:var(--teal-deep);">${formatVND(todayCashIncome)}</div>
     </div>
     <div class="stat-card">
       <div class="label">Chi tiền mặt hôm nay</div>
-      <div class="value" style="color:var(--danger);">${formatVND(todayExpense)}</div>
+      <div class="value" style="color:var(--danger);">${formatVND(todayCashExpense)}</div>
     </div>
     <div class="stat-card">
-      <div class="label">🏦 Chuyển khoản (không tính vào quỹ)</div>
-      <div class="value" style="font-size:20px;">${formatVND(transferIncome - transferExpense)}</div>
+      <div class="label">🏦 Thu chuyển khoản hôm nay</div>
+      <div class="value" style="color:var(--teal-deep); font-size:20px;">${formatVND(todayTransferIncome)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">🏦 Chi chuyển khoản hôm nay</div>
+      <div class="value" style="color:var(--danger); font-size:20px;">${formatVND(todayTransferExpense)}</div>
     </div>
   `;
 }
@@ -240,7 +244,7 @@ function renderList() {
       <th>Ngày</th><th>Loại</th><th>Hình thức</th><th>Danh mục</th><th>Ghi chú</th><th>Số tiền</th>
     </tr></thead><tbody>
     ${ALL_TX.map(t => `<tr>
-      <td>${formatDate(t.created_at)}</td>
+      <td>${formatDateTime(t.created_at)}</td>
       <td><span class="badge ${t.type === 'income' ? 'paid' : 'debt'}">${t.type === 'income' ? 'Thu' : 'Chi'}</span></td>
       <td>${(t.method || 'cash') === 'cash' ? '💵 Tiền mặt' : '🏦 Chuyển khoản'}</td>
       <td>${t.category || '—'}</td>
@@ -388,7 +392,7 @@ function renderReconList() {
       <div class="recon-head">
         <div>
           <span class="status-badge ${r.status}">${statusLabel}</span>
-          <div class="recon-meta">${formatDate(r.created_at)} · ${r.creator?.full_name || 'Nhân viên'}</div>
+          <div class="recon-meta">${formatDateTime(r.created_at)} · ${r.creator?.full_name || 'Nhân viên'}</div>
         </div>
         <div style="text-align:right;">
           <div class="recon-diff ${diffClass}">${diff > 0 ? '+' : ''}${formatVND(diff)}</div>
@@ -402,7 +406,7 @@ function renderReconList() {
           <button class="btn btn-secondary btn-mini" style="padding:7px 14px;" onclick="reviewRecon('${r.id}','rejected')">Từ chối</button>
         </div>
       ` : ""}
-      ${r.status !== 'pending' && r.reviewer?.full_name ? `<div class="recon-meta" style="margin-top:6px;">Duyệt bởi ${r.reviewer.full_name} · ${formatDate(r.reviewed_at)}</div>` : ""}
+      ${r.status !== 'pending' && r.reviewer?.full_name ? `<div class="recon-meta" style="margin-top:6px;">Duyệt bởi ${r.reviewer.full_name} · ${formatDateTime(r.reviewed_at)}</div>` : ""}
     </div>`;
   }).join("");
 }
