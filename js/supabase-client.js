@@ -51,3 +51,11 @@ function formatDate(dateStr) {
   const d = new Date(dateStr);
   return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
+
+// Định dạng ngày + giờ:phút Việt Nam (dùng cho lịch sử đơn hàng, thu chi, nhập hàng...)
+function formatDateTime(dateStr) {
+  const d = new Date(dateStr);
+  const datePart = d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const timePart = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  return `${datePart} ${timePart}`;
+}
