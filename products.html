@@ -158,7 +158,24 @@ let RC_ACTIVE_CATEGORY = "";
           <button class="btn btn-primary" id="rc_submitBtn" style="width:100%; max-width:420px; justify-content:center; padding:12px; margin-top:14px;">Ghi nhận nhập hàng</button>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2>Lịch sử nhập hàng</h2></div>
+        <div class="panel-body" id="rcHistoryWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+        </div>
+      </div>
     </div>` : ""}
+
+    <div class="modal-overlay" id="poDetailModal">
+      <div class="modal-box" style="max-width:560px;">
+        <div class="modal-header">
+          <h3 id="poDetailTitle">Chi tiết phiếu nhập</h3>
+          <span class="modal-close" id="poDetailClose">✕</span>
+        </div>
+        <div class="modal-body" id="poDetailBody"></div>
+      </div>
+    </div>
 
     <div class="modal-overlay" id="modalOverlay">
       <div class="modal-box">
@@ -211,6 +228,8 @@ let RC_ACTIVE_CATEGORY = "";
     await loadSuppliersForReceive();
     bindReceiveEvents();
     resetReceiveForm();
+    await loadReceiveHistory();
+    document.getElementById("poDetailClose").addEventListener("click", () => document.getElementById("poDetailModal").classList.remove("open"));
   }
 })();
 
@@ -645,7 +664,98 @@ async function submitReceive() {
 
   await loadProducts();
   resetReceiveForm();
+  await loadReceiveHistory();
   alert(`Đã ghi nhận nhập hàng ${poCode} thành công! Tồn kho đã được cập nhật.`);
+}
+
+/* ---------- Lịch sử nhập hàng ---------- */
+async function loadReceiveHistory() {
+  const wrap = document.getElementById("rcHistoryWrap");
+  const { data, error } = await sb
+    .from("purchase_orders")
+    .select("id, po_code, total_amount, paid_amount, created_at, suppliers(name)")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) { wrap.innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
+  if (!data || data.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">📦</div>Chưa có phiếu nhập hàng nào.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Mã phiếu</th><th>Ngày giờ</th><th>Nhà cung cấp</th><th>Tổng tiền</th><th>Đã trả</th><th>Trạng thái</th>
+    </tr></thead><tbody>
+    ${data.map(po => {
+      const debt = Number(po.total_amount) - Number(po.paid_amount);
+      return `<tr class="order-row-clickable" data-po-id="${po.id}" style="cursor:pointer;">
+        <td>${po.po_code}</td>
+        <td>${formatDateTime(po.created_at)}</td>
+        <td>${po.suppliers?.name || '—'}</td>
+        <td>${formatVND(po.total_amount)}</td>
+        <td>${formatVND(po.paid_amount)}</td>
+        <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+      </tr>`;
+    }).join("")}
+  </tbody></table>`;
+
+  wrap.querySelectorAll(".order-row-clickable").forEach(row => {
+    row.addEventListener("click", () => showPODetail(row.dataset.poId));
+  });
+}
+
+async function showPODetail(poId) {
+  const modal = document.getElementById("poDetailModal");
+  const body = document.getElementById("poDetailBody");
+  document.getElementById("poDetailTitle").textContent = "Chi tiết phiếu nhập";
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: po, error } = await sb
+    .from("purchase_orders")
+    .select("po_code, total_amount, paid_amount, created_at, suppliers(name, phone)")
+    .eq("id", poId)
+    .single();
+
+  const { data: items } = await sb
+    .from("purchase_order_items")
+    .select("quantity, unit_cost, subtotal, products(name, unit)")
+    .eq("purchase_order_id", poId);
+
+  const { data: payments } = await sb
+    .from("supplier_payments")
+    .select("amount, method")
+    .eq("purchase_order_id", poId);
+
+  if (error || !po) { body.innerHTML = `<div class="empty-state">Không tải được phiếu nhập.</div>`; return; }
+
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const debt = Number(po.total_amount) - Number(po.paid_amount);
+
+  document.getElementById("poDetailTitle").textContent = po.po_code;
+  body.innerHTML = `
+    <div class="summary-row"><span>Nhà cung cấp</span><span>${po.suppliers?.name || '—'}</span></div>
+    ${po.suppliers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${po.suppliers.phone}</span></div>` : ""}
+    <div class="summary-row"><span>Ngày giờ</span><span>${formatDateTime(po.created_at)}</span></div>
+
+    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL nhập</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <tbody>
+      ${(items || []).map(i => `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.quantity} ${i.products?.unit || ''}</td>
+        <td>${formatVND(i.unit_cost)}</td>
+        <td>${formatVND(i.subtotal)}</td>
+      </tr>`).join("")}
+    </tbody></table>
+
+    <div style="margin-top:14px;">
+      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(po.total_amount)}</span></div>
+      ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
+      ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
+      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+    </div>
+  `;
 }
 </script>
 </body>
