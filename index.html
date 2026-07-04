@@ -158,28 +158,66 @@ async function loadDashboard(isOwner) {
     });
     const profitMonth = monthItemRevenue - monthCost;
 
-    // Doanh số theo từng nhân viên (tháng này)
+    // Doanh số theo từng nhân viên (tháng này) — tách riêng sinh vật (Cá/San hô) để tính lương %
+    // Tính theo GIÁ TRỊ THỰC TẾ khách thanh toán: dùng giá đã sửa (order_items.unit_price) và
+    // phân bổ phần giảm giá của đơn theo đúng tỷ lệ sinh vật/còn lại trong đơn đó.
     const { data: staffOrders } = await sb
       .from("orders")
-      .select("total_amount, created_by")
+      .select("id, total_amount, created_by")
       .eq("status", "completed")
       .gte("created_at", monthStart.toISOString());
     const { data: allProfiles } = await sb.from("profiles").select("id, full_name, role");
 
+    const orderIds = (staffOrders || []).map(o => o.id);
+    let staffItems = [];
+    if (orderIds.length > 0) {
+      const { data } = await sb
+        .from("order_items")
+        .select("order_id, quantity, unit_price, products(category)")
+        .in("order_id", orderIds);
+      staffItems = data || [];
+    }
+
+    const isLivestockCategory = (cat) => {
+      const c = (cat || "").trim().toLowerCase();
+      return c === "cá" || c === "ca" || c === "san hô" || c === "san ho";
+    };
+
+    // Gộp giá trị gốc (trước giảm giá) theo từng đơn, tách sinh vật / còn lại
+    const orderBreakdown = {}; // order_id -> { subtotal, livestockSubtotal }
+    staffItems.forEach(i => {
+      if (!orderBreakdown[i.order_id]) orderBreakdown[i.order_id] = { subtotal: 0, livestockSubtotal: 0 };
+      const lineTotal = Number(i.quantity) * Number(i.unit_price);
+      orderBreakdown[i.order_id].subtotal += lineTotal;
+      if (isLivestockCategory(i.products?.category)) {
+        orderBreakdown[i.order_id].livestockSubtotal += lineTotal;
+      }
+    });
+
     const byStaff = {};
     (staffOrders || []).forEach(o => {
       const key = o.created_by || "unknown";
-      if (!byStaff[key]) byStaff[key] = { orderCount: 0, revenue: 0 };
+      if (!byStaff[key]) byStaff[key] = { orderCount: 0, revenue: 0, livestockRevenue: 0, otherRevenue: 0 };
       byStaff[key].orderCount += 1;
       byStaff[key].revenue += Number(o.total_amount || 0);
+
+      const bd = orderBreakdown[o.id];
+      const actualTotal = Number(o.total_amount || 0); // đã trừ giảm giá — giá trị thực tế khách trả
+      let livestockShare = 0;
+      if (bd && bd.subtotal > 0) livestockShare = bd.livestockSubtotal / bd.subtotal;
+      byStaff[key].livestockRevenue += actualTotal * livestockShare;
+      byStaff[key].otherRevenue += actualTotal * (1 - livestockShare);
     });
+
     window.__STAFF_STATS__ = Object.keys(byStaff).map(uid => {
       const profile = (allProfiles || []).find(p => p.id === uid);
       return {
         name: profile?.full_name || "Không rõ",
         role: profile?.role || "staff",
         orderCount: byStaff[uid].orderCount,
-        revenue: byStaff[uid].revenue
+        revenue: byStaff[uid].revenue,
+        livestockRevenue: byStaff[uid].livestockRevenue,
+        otherRevenue: byStaff[uid].otherRevenue
       };
     }).sort((a, b) => b.revenue - a.revenue);
 
@@ -208,14 +246,17 @@ async function loadDashboard(isOwner) {
       staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong tháng này.</div>`;
     } else {
       const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
-      staffBody.innerHTML = `<table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>Doanh thu</th></tr></thead><tbody>
+      staffBody.innerHTML = `<table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th><th>DT còn lại</th><th>Tổng doanh thu</th></tr></thead><tbody>
         ${stats.map(s => `<tr>
           <td>${s.name}${s.revenue === maxRevenue && s.revenue > 0 ? ' <span class="vip-tag" style="font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600;">🏆 Top</span>' : ''}</td>
           <td>${s.role === 'owner' ? 'Chủ' : 'Nhân viên'}</td>
           <td>${s.orderCount}</td>
-          <td>${formatVND(s.revenue)}</td>
+          <td style="color:var(--teal-deep); font-weight:600;">${formatVND(s.livestockRevenue)}</td>
+          <td>${formatVND(s.otherRevenue)}</td>
+          <td style="font-weight:600;">${formatVND(s.revenue)}</td>
         </tr>`).join("")}
-      </tbody></table>`;
+      </tbody></table>
+      <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.</p>`;
     }
   }
 
