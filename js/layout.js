@@ -12,7 +12,6 @@ const NAV_ITEMS = [
   { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
   { key: "customer-debt", label: "Công nợ khách hàng", href: "customer-debt.html", icon: "📗", ownerOnly: false },
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
-  { key: "supplier-debt", label: "Công nợ NCC", href: "supplier-debt.html", icon: "📕", ownerOnly: true },
 ];
 
 function renderLayout({ activePage, profile, title, subtitle }) {
