@@ -41,6 +41,13 @@
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>
+    ${isOwner ? `
+    <div class="panel">
+      <div class="panel-header"><h2>Doanh số theo nhân viên (tháng này)</h2></div>
+      <div class="panel-body" id="staffStatsBody">
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+      </div>
+    </div>` : ""}
     <div class="panel">
       <div class="panel-header"><h2>Đơn hàng gần đây</h2></div>
       <div class="panel-body" id="recentOrdersBody">
@@ -151,6 +158,31 @@ async function loadDashboard(isOwner) {
     });
     const profitMonth = monthItemRevenue - monthCost;
 
+    // Doanh số theo từng nhân viên (tháng này)
+    const { data: staffOrders } = await sb
+      .from("orders")
+      .select("total_amount, created_by")
+      .eq("status", "completed")
+      .gte("created_at", monthStart.toISOString());
+    const { data: allProfiles } = await sb.from("profiles").select("id, full_name, role");
+
+    const byStaff = {};
+    (staffOrders || []).forEach(o => {
+      const key = o.created_by || "unknown";
+      if (!byStaff[key]) byStaff[key] = { orderCount: 0, revenue: 0 };
+      byStaff[key].orderCount += 1;
+      byStaff[key].revenue += Number(o.total_amount || 0);
+    });
+    window.__STAFF_STATS__ = Object.keys(byStaff).map(uid => {
+      const profile = (allProfiles || []).find(p => p.id === uid);
+      return {
+        name: profile?.full_name || "Không rõ",
+        role: profile?.role || "staff",
+        orderCount: byStaff[uid].orderCount,
+        revenue: byStaff[uid].revenue
+      };
+    }).sort((a, b) => b.revenue - a.revenue);
+
     cards += `
       <div class="stat-card ${supplierDebt > 0 ? 'warn' : ''}">
         <div class="label">Công nợ nhà cung cấp</div>
@@ -168,6 +200,24 @@ async function loadDashboard(isOwner) {
   }
 
   statGrid.innerHTML = cards;
+
+  if (isOwner) {
+    const staffBody = document.getElementById("staffStatsBody");
+    const stats = window.__STAFF_STATS__ || [];
+    if (stats.length === 0) {
+      staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong tháng này.</div>`;
+    } else {
+      const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
+      staffBody.innerHTML = `<table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>Doanh thu</th></tr></thead><tbody>
+        ${stats.map(s => `<tr>
+          <td>${s.name}${s.revenue === maxRevenue && s.revenue > 0 ? ' <span class="vip-tag" style="font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600;">🏆 Top</span>' : ''}</td>
+          <td>${s.role === 'owner' ? 'Chủ' : 'Nhân viên'}</td>
+          <td>${s.orderCount}</td>
+          <td>${formatVND(s.revenue)}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+    }
+  }
 
   // Biểu đồ doanh thu 7 ngày
   const chartBody = document.getElementById("chartBody");
