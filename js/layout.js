@@ -43,12 +43,6 @@ function renderLayout({ activePage, profile, title, subtitle }) {
         </div>
       </div>
       <div class="main-top">
-        <div class="topbar">
-          <div>
-            <h1>${title}</h1>
-            ${subtitle ? `<div class="subtitle">${subtitle}</div>` : ""}
-          </div>
-        </div>
         <div class="content" id="pageContent"></div>
       </div>
     </div>
