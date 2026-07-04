@@ -30,6 +30,7 @@
 <script>
 let CURRENT_PROFILE = null;
 let ALL_ORDERS = [];
+let PAYMENT_BREAKDOWN = {};
 
 (async () => {
   const auth = await requireAuth();
@@ -80,6 +81,21 @@ async function loadOrders() {
     return;
   }
   ALL_ORDERS = data || [];
+
+  // Lấy breakdown tiền mặt/chuyển khoản cho tất cả đơn trong danh sách (1 lần truy vấn, gộp theo order_id)
+  const orderIds = ALL_ORDERS.map(o => o.id);
+  PAYMENT_BREAKDOWN = {};
+  if (orderIds.length > 0) {
+    const { data: payments } = await sb
+      .from("customer_payments")
+      .select("order_id, amount, method")
+      .in("order_id", orderIds);
+    (payments || []).forEach(p => {
+      if (!PAYMENT_BREAKDOWN[p.order_id]) PAYMENT_BREAKDOWN[p.order_id] = { cash: 0, transfer: 0 };
+      PAYMENT_BREAKDOWN[p.order_id][p.method === "transfer" ? "transfer" : "cash"] += Number(p.amount);
+    });
+  }
+
   renderList("");
 }
 
@@ -96,17 +112,19 @@ function renderList(filter) {
   }
 
   wrap.innerHTML = `<table><thead><tr>
-      <th>Mã đơn</th><th>Ngày</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>Đã trả</th><th>Trạng thái</th>
+      <th>Mã đơn</th><th>Ngày</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>💵 Tiền mặt</th><th>🏦 Chuyển khoản</th><th>Trạng thái</th>
     </tr></thead><tbody>
     ${list.map(o => {
       const debt = Number(o.total_amount) - Number(o.paid_amount);
+      const bd = PAYMENT_BREAKDOWN[o.id] || { cash: 0, transfer: 0 };
       return `<tr class="order-row-clickable" data-order-id="${o.id}">
         <td>${o.order_code}</td>
         <td>${formatDateTime(o.created_at)}</td>
         <td>${o.customers?.name || "Khách lẻ"}</td>
         <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
         <td>${formatVND(o.total_amount)}</td>
-        <td>${formatVND(o.paid_amount)}</td>
+        <td>${bd.cash > 0 ? formatVND(bd.cash) : '—'}</td>
+        <td>${bd.transfer > 0 ? formatVND(bd.transfer) : '—'}</td>
         <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
       </tr>`;
     }).join("")}
