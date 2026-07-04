@@ -37,6 +37,11 @@ function renderLayout({ activePage, profile, title, subtitle }) {
         <div class="topnav-brand"><span class="dot"></span> 2D Aquatic</div>
         <div class="topnav-items" id="topnavItems">${navHtml}</div>
         <div class="topnav-user">
+          ${isOwner ? `
+          <div class="notif-bell-wrap" id="notifBellWrap">
+            <span class="notif-bell" id="notifBell">🔔<span class="notif-badge" id="notifBadge" style="display:none;">0</span></span>
+            <div class="notif-dropdown" id="notifDropdown"></div>
+          </div>` : ""}
           <span class="role-badge">${isOwner ? "Chủ cửa hàng" : "Nhân viên"}</span>
           <span class="topnav-username">${profile.full_name || "Người dùng"}</span>
           <span class="logout-btn" id="logoutBtn">Đăng xuất →</span>
@@ -52,7 +57,89 @@ function renderLayout({ activePage, profile, title, subtitle }) {
 
   document.getElementById("logoutBtn").addEventListener("click", doLogout);
 
+  if (isOwner) setupNotifications();
+
   // Tự cuộn tới mục đang chọn nếu bị tràn ngoài vùng nhìn thấy (hữu ích trên mobile)
   const activeEl = document.querySelector(".topnav-item.active");
   if (activeEl) activeEl.scrollIntoView({ inline: "center", block: "nearest" });
+}
+
+/* ============================================================
+   THÔNG BÁO — chỉ dành cho Chủ cửa hàng
+   ============================================================ */
+async function setupNotifications() {
+  const bell = document.getElementById("notifBell");
+  const dropdown = document.getElementById("notifDropdown");
+  const badge = document.getElementById("notifBadge");
+
+  async function loadNotifications() {
+    const { data } = await sb.from("notifications")
+      .select("*")
+      .in("target_role", ["owner", "all"])
+      .order("created_at", { ascending: false })
+      .limit(20);
+    return data || [];
+  }
+
+  function renderDropdown(list) {
+    const unreadCount = list.filter(n => !n.is_read).length;
+    badge.textContent = unreadCount;
+    badge.style.display = unreadCount > 0 ? "flex" : "none";
+
+    if (list.length === 0) {
+      dropdown.innerHTML = `<div class="notif-empty">Chưa có thông báo nào.</div>`;
+      return;
+    }
+    dropdown.innerHTML = `
+      <div class="notif-header">Thông báo</div>
+      <div class="notif-list">
+        ${list.map(n => `
+          <div class="notif-item ${n.is_read ? '' : 'unread'}" data-id="${n.id}" data-link="${n.link || ''}">
+            <div class="notif-title">${n.title}</div>
+            ${n.message ? `<div class="notif-message">${n.message}</div>` : ""}
+            <div class="notif-time">${formatDateTime(n.created_at)}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+    dropdown.querySelectorAll(".notif-item").forEach(el => {
+      el.addEventListener("click", async () => {
+        await sb.from("notifications").update({ is_read: true }).eq("id", el.dataset.id);
+        if (el.dataset.link) window.location.href = el.dataset.link;
+      });
+    });
+  }
+
+  let cachedList = await loadNotifications();
+  renderDropdown(cachedList);
+
+  bell.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dropdown.classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#notifBellWrap")) dropdown.classList.remove("open");
+  });
+
+  // Lắng nghe realtime — có thông báo mới thì hiện ngay, không cần tải lại trang
+  sb.channel("notifications-channel")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, (payload) => {
+      const n = payload.new;
+      if (n.target_role !== "owner" && n.target_role !== "all") return;
+      cachedList = [n, ...cachedList].slice(0, 20);
+      renderDropdown(cachedList);
+      bell.classList.add("pulse");
+      setTimeout(() => bell.classList.remove("pulse"), 1000);
+
+      // Thông báo hệ điều hành (nếu trình duyệt đã cấp quyền)
+      if (window.Notification && Notification.permission === "granted") {
+        new Notification(n.title, { body: n.message || "", icon: "" });
+      }
+    })
+    .subscribe();
+
+  // Xin quyền hiện thông báo hệ điều hành khi Chủ bấm vào chuông lần đầu
+  if (window.Notification && Notification.permission === "default") {
+    bell.addEventListener("click", () => Notification.requestPermission(), { once: true });
+  }
 }
