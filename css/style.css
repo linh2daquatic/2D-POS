@@ -255,9 +255,22 @@ label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-m
 
 /* ---------- Mobile ---------- */
 @media (max-width: 860px) {
-  .topnav { padding: 0 12px; gap: 2px; }
+  .topnav {
+    padding: 0 12px; gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topnav::-webkit-scrollbar { display: none; }
   .topnav-brand { display: none; } /* ẩn brand trên mobile để dành chỗ cho menu cuộn ngang */
-  .topnav-user { margin-left: 8px; padding-left: 10px; }
+  .topnav-items {
+    overflow-x: visible; /* không cuộn riêng nữa, cuộn chung với cả thanh topnav */
+    flex: none;
+  }
+  .topnav-user {
+    margin-left: 8px; padding-left: 10px;
+    flex-shrink: 0; /* vẫn giữ nguyên khối, nhưng giờ nằm trong dòng cuộn chung, cuộn hết menu mới thấy */
+  }
   .topnav-username { display: none; } /* ẩn tên, chỉ giữ badge quyền + đăng xuất cho gọn */
   .content { padding: 22px 16px 60px; }
   .topbar { padding: 14px 16px; top: 58px; }
