@@ -5,6 +5,7 @@
 
 const NAV_ITEMS = [
   { key: "orders", label: "Bán hàng", href: "orders.html", icon: "🛒", ownerOnly: false },
+  { key: "order-history", label: "Lịch sử đơn", href: "order-history.html", icon: "🧾", ownerOnly: false },
   { key: "products", label: "Kho hàng", href: "products.html", icon: "📦", ownerOnly: false },
   { key: "cash", label: "Quỹ tiền mặt", href: "cash.html", icon: "💰", ownerOnly: false },
   { key: "dashboard", label: "Dashboard", href: "index.html", icon: "◱", ownerOnly: false },
