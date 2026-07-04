@@ -164,7 +164,7 @@ function renderTable(filter) {
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
             <span class="btn btn-secondary btn-mini" onclick="quickAdjust('${p.id}')" title="Nhập/Xuất kho nhanh">±Kho</span>
-            ${isOwner ? `<span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>` : ""}
+            <span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>
             ${isOwner ? `<span class="btn btn-danger btn-mini" onclick="deleteProduct('${p.id}','${p.name.replace(/'/g,"\\'")}')">Xóa</span>` : ""}
           </div></td>
         </tr>`;
