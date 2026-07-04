@@ -308,6 +308,15 @@ async function saveTx(e) {
   if (error) { alert("Lỗi khi lưu: " + error.message); return; }
   closeModal();
   await loadTx();
+
+  if (CURRENT_PROFILE.role !== "owner") {
+    pushNotification(
+      FORM_TYPE === "income" ? "cash_income" : "cash_expense",
+      FORM_TYPE === "income" ? "💰 Ghi nhận thu mới" : "💸 Ghi nhận chi mới",
+      `${CURRENT_PROFILE.full_name || "Nhân viên"} vừa ghi ${FORM_TYPE === "income" ? "thu" : "chi"} ${formatVND(amount)} (${category || "Khác"})`,
+      "cash.html"
+    );
+  }
 }
 
 /* ---------- Kiểm quỹ ---------- */
@@ -350,6 +359,16 @@ async function submitRecon() {
   closeReconModal();
   await loadRecon();
   switchTab("recon");
+
+  if (CURRENT_PROFILE.role !== "owner") {
+    pushNotification(
+      "recon_pending",
+      "🧮 Đề xuất kiểm quỹ mới",
+      `${CURRENT_PROFILE.full_name || "Nhân viên"} vừa gửi đề xuất kiểm quỹ, chênh lệch ${formatVND(Number(counted) - expected)}`,
+      "cash.html"
+    );
+  }
+
   alert("Đã gửi đề xuất kiểm quỹ, chờ Chủ cửa hàng duyệt.");
 }
 
