@@ -325,7 +325,7 @@ async function showOrderDetail(orderId) {
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, total_amount, paid_amount, created_at, customers(name, phone, address)")
+    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -362,6 +362,7 @@ async function showOrderDetail(orderId) {
     </tbody></table>
 
     <div style="margin-top:14px;">
+      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
       <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
