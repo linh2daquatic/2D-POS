@@ -59,3 +59,12 @@ function formatDateTime(dateStr) {
   const timePart = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
   return `${datePart} ${timePart}`;
 }
+
+// Gửi thông báo cho Chủ cửa hàng (chỉ gọi khi người thực hiện là nhân viên, tránh tự báo cho chính mình)
+async function pushNotification(type, title, message, link) {
+  try {
+    await sb.from("notifications").insert({ type, title, message, link, target_role: "owner" });
+  } catch (e) {
+    console.error("Không gửi được thông báo:", e);
+  }
+}
