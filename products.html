@@ -386,16 +386,19 @@ function renderTable(filter) {
   wrap.innerHTML = `<table>
     <thead><tr>
       <th>Sản phẩm</th><th>SKU</th><th>Danh mục</th><th>Tồn kho</th>
+      ${isOwner ? `<th>Giá nhập</th>` : ""}
       <th>Giá lẻ</th><th>Giá buôn</th><th></th>
     </tr></thead>
     <tbody>
       ${list.map(p => {
         const low = Number(p.quantity) <= Number(p.low_stock_threshold);
+        const noCost = !p.cost_price || Number(p.cost_price) <= 0;
         return `<tr>
           <td>${p.name}</td>
           <td>${p.sku || "—"}</td>
           <td>${p.category || "—"}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
+          ${isOwner ? `<td>${noCost ? '<span style="color:var(--warning);">⚠️ Chưa có</span>' : formatVND(p.cost_price)}</td>` : ""}
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
