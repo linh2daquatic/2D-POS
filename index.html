@@ -144,17 +144,17 @@ async function loadDashboard(isOwner) {
     const { data: cashTx } = await sb.from("cash_transactions").select("type, amount, method");
     const cashBalance = (cashTx || []).filter(t => (t.method || "cash") === "cash").reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
 
-    // Lãi gộp tháng này = doanh thu - giá vốn (dựa trên giá vốn hiện tại của sản phẩm)
+    // Lãi gộp tháng này = doanh thu - giá vốn ĐÃ CHỐT tại thời điểm bán (không đổi dù sau này sửa giá vốn trong Kho hàng)
     const { data: monthItems } = await sb
       .from("order_items")
-      .select("quantity, unit_price, orders!inner(created_at,status), products(cost_price)")
+      .select("quantity, unit_price, cost_price_at_sale, orders!inner(created_at,status)")
       .eq("orders.status", "completed")
       .gte("orders.created_at", monthStart.toISOString());
 
     let monthCost = 0, monthItemRevenue = 0;
     (monthItems || []).forEach(i => {
       monthItemRevenue += Number(i.quantity) * Number(i.unit_price);
-      monthCost += Number(i.quantity) * Number(i.products?.cost_price || 0);
+      monthCost += Number(i.quantity) * Number(i.cost_price_at_sale || 0);
     });
     const profitMonth = monthItemRevenue - monthCost;
 
@@ -233,7 +233,7 @@ async function loadDashboard(isOwner) {
       <div class="stat-card ${profitMonth >= 0 ? 'accent' : 'danger-card'}">
         <div class="label">Lãi gộp tháng này</div>
         <div class="value">${formatVND(profitMonth)}</div>
-        <div class="delta text-mute" style="font-size:11px;">*Ước tính theo giá vốn hiện tại</div>
+        <div class="delta text-mute" style="font-size:11px;">*Tính theo giá vốn tại thời điểm bán</div>
       </div>`;
   }
 
