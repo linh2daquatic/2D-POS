@@ -212,7 +212,7 @@ function renderTable(filter) {
   const maxSpent = Math.max(...list.map(c => statsOf(c.id).totalSpent), 0);
 
   wrap.innerHTML = `<table><thead><tr>
-      <th>Tên khách hàng</th><th>SĐT</th><th>Loại</th><th>Số đơn</th><th>Tổng chi tiêu</th><th>Mua gần nhất</th><th></th>
+      <th>Tên khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Loại</th><th>Số đơn</th><th>Tổng chi tiêu</th><th>Mua gần nhất</th><th></th>
     </tr></thead><tbody>
     ${list.map(c => {
       const s = statsOf(c.id);
@@ -220,6 +220,7 @@ function renderTable(filter) {
       return `<tr>
         <td class="order-row-clickable" onclick="openOrdersHistory('${c.id}')" style="font-weight:600; color:var(--ink);">${c.name}${isVip ? '<span class="vip-tag">⭐ VIP</span>' : ''}</td>
         <td>${c.phone || "—"}</td>
+        <td>${c.address || "—"}</td>
         <td><span class="badge ${c.type}">${c.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
         <td>${s.orderCount}</td>
         <td>${s.totalSpent > 0 ? formatVND(s.totalSpent) : '—'}</td>
