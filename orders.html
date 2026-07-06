@@ -549,10 +549,13 @@ function renderCart() {
   if (CART.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">🛒</div>Chưa có sản phẩm nào<br>Bấm vào sản phẩm phía trên để thêm</div>`;
   } else {
-    wrap.innerHTML = CART.map(item => `
+    wrap.innerHTML = CART.map(item => {
+      const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
+      const noCost = !p?.cost_price || Number(p.cost_price) <= 0;
+      return `
       <div class="cart-line">
         <div class="cl-info">
-          <div class="cl-name">${item.name}</div>
+          <div class="cl-name">${item.name} ${noCost ? '<span title="Chưa nhập giá vốn cho sản phẩm này — lãi gộp sẽ tính sai" style="color:var(--warning);">⚠️</span>' : ''}</div>
           <div class="cl-price cl-price-edit" data-id="${item.product_id}">✎ ${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
         </div>
         <div class="cl-stepper">
@@ -562,7 +565,8 @@ function renderCart() {
         </div>
         <span class="cl-remove" data-id="${item.product_id}">✕</span>
       </div>
-    `).join("");
+    `;
+    }).join("");
     wrap.querySelectorAll(".cl-stepper button").forEach(btn => {
       btn.addEventListener("click", () => changeQty(btn.dataset.id, Number(btn.dataset.d)));
     });
@@ -650,7 +654,10 @@ async function submitOrder() {
     return;
   }
 
-  const itemRows = CART.map(i => ({ order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price }));
+  const itemRows = CART.map(i => {
+    const p = ALL_PRODUCTS.find(x => x.id === i.product_id);
+    return { order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, cost_price_at_sale: Number(p?.cost_price || 0) };
+  });
   await sb.from("order_items").insert(itemRows);
 
   for (const item of CART) {
