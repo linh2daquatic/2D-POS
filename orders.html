@@ -405,8 +405,10 @@ function renderCustomerList(filter) {
     });
   });
   document.getElementById("quickAddCustomerItem").addEventListener("click", () => {
-    document.getElementById("qc_name").value = filter || "";
-    document.getElementById("qc_phone").value = "";
+    const typedVal = (filter || "").trim();
+    const looksLikePhone = /^[0-9+\s]{4,}$/.test(typedVal);
+    document.getElementById("qc_name").value = looksLikePhone ? "" : typedVal;
+    document.getElementById("qc_phone").value = looksLikePhone ? typedVal : "";
     document.getElementById("qc_address").value = "";
     document.getElementById("quickCustomerModal").classList.add("open");
     list.classList.remove("open");
