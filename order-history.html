@@ -181,12 +181,17 @@ function renderList(filter) {
   });
 }
 
+let CURRENT_DETAIL_ORDER = null;
+let CURRENT_DETAIL_ITEMS = [];
+let EDIT_PRICE_MODE = false;
+
 async function showOrderDetail(orderId) {
   const modal = document.getElementById("orderDetailModal");
   const body = document.getElementById("orderDetailBody");
   document.getElementById("orderDetailTitle").textContent = "Chi tiết đơn hàng";
   body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   modal.classList.add("open");
+  EDIT_PRICE_MODE = false;
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
@@ -196,7 +201,7 @@ async function showOrderDetail(orderId) {
 
   const { data: items } = await sb
     .from("order_items")
-    .select("quantity, unit_price, subtotal, products(name, unit)")
+    .select("id, quantity, unit_price, subtotal, products(name, unit)")
     .eq("order_id", orderId);
 
   const { data: payments } = await sb
@@ -206,8 +211,19 @@ async function showOrderDetail(orderId) {
 
   if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
 
-  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
-  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  CURRENT_DETAIL_ORDER = { id: orderId, ...order };
+  CURRENT_DETAIL_ITEMS = items || [];
+
+  renderOrderDetailBody(payments || []);
+}
+
+function renderOrderDetailBody(payments) {
+  const order = CURRENT_DETAIL_ORDER;
+  const items = CURRENT_DETAIL_ITEMS;
+  const body = document.getElementById("orderDetailBody");
+
+  const cashPaid = payments.filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = payments.filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
   const debt = Number(order.total_amount) - Number(order.paid_amount);
   const isCancelled = order.status === "cancelled";
   const isOwner = CURRENT_PROFILE.role === "owner";
@@ -221,12 +237,21 @@ async function showOrderDetail(orderId) {
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
     <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
 
-    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <div class="flex" style="justify-content:space-between; align-items:center; margin-top:12px;">
+      <strong style="font-size:13.5px;">Sản phẩm</strong>
+      ${!isCancelled && isOwner ? (EDIT_PRICE_MODE
+        ? `<span class="btn btn-secondary btn-mini" id="cancelEditPriceBtn">Hủy sửa</span>`
+        : `<span class="btn btn-secondary btn-mini" id="editPriceBtn">✎ Sửa giá bán</span>`
+      ) : ""}
+    </div>
+    <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
     <tbody>
-      ${(items || []).map(i => `<tr>
+      ${items.map(i => `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
-        <td>${formatVND(i.unit_price)}</td>
+        <td>${EDIT_PRICE_MODE
+          ? `<input type="number" step="any" value="${i.unit_price}" data-item-id="${i.id}" class="edit-price-input" style="width:110px;">`
+          : formatVND(i.unit_price)}</td>
         <td>${formatVND(i.subtotal)}</td>
       </tr>`).join("")}
     </tbody></table>
@@ -236,11 +261,47 @@ async function showOrderDetail(orderId) {
       <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
-      <div class="summary-row total"><span>${isCancelled ? 'Trạng thái' : (debt > 0 ? 'Còn nợ' : 'Trạng thái')}</span><span>${isCancelled ? 'Đã hủy' : (debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ')}</span></div>
+      <div class="summary-row total"><span>${isCancelled ? 'Trạng thái' : (debt > 0 ? 'Còn nợ' : (debt < 0 ? 'Khách trả dư' : 'Trạng thái'))}</span><span>${isCancelled ? 'Đã hủy' : (debt !== 0 ? formatVND(Math.abs(debt)) : 'Đã thanh toán đủ')}</span></div>
     </div>
 
-    ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;" onclick="cancelOrder('${orderId}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
+    ${EDIT_PRICE_MODE ? `<button class="btn btn-primary" id="savePriceBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;">💾 Lưu giá đã sửa</button>` : ""}
+    ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:10px;" onclick="cancelOrder('${order.id}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
   `;
+
+  const editBtn = document.getElementById("editPriceBtn");
+  if (editBtn) editBtn.addEventListener("click", () => { EDIT_PRICE_MODE = true; renderOrderDetailBody(payments); });
+  const cancelEditBtn = document.getElementById("cancelEditPriceBtn");
+  if (cancelEditBtn) cancelEditBtn.addEventListener("click", () => { EDIT_PRICE_MODE = false; renderOrderDetailBody(payments); });
+  const saveBtn = document.getElementById("savePriceBtn");
+  if (saveBtn) saveBtn.addEventListener("click", () => saveEditedPrices(payments));
+}
+
+async function saveEditedPrices(payments) {
+  const saveBtn = document.getElementById("savePriceBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const inputs = document.querySelectorAll(".edit-price-input");
+  for (const input of inputs) {
+    const newPrice = Number(input.value || 0);
+    if (newPrice < 0) continue;
+    const item = CURRENT_DETAIL_ITEMS.find(i => i.id === input.dataset.itemId);
+    if (item && Number(item.unit_price) !== newPrice) {
+      await sb.from("order_items").update({ unit_price: newPrice }).eq("id", item.id);
+      item.unit_price = newPrice;
+      item.subtotal = newPrice * item.quantity; // cập nhật tạm để hiển thị, DB sẽ tự tính lại cột generated
+    }
+  }
+
+  const newSubtotal = CURRENT_DETAIL_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
+  const newTotal = newSubtotal - Number(CURRENT_DETAIL_ORDER.discount_amount || 0);
+  await sb.from("orders").update({ total_amount: newTotal }).eq("id", CURRENT_DETAIL_ORDER.id);
+  CURRENT_DETAIL_ORDER.total_amount = newTotal;
+
+  EDIT_PRICE_MODE = false;
+  await loadOrders();
+  await showOrderDetail(CURRENT_DETAIL_ORDER.id);
+  alert("Đã cập nhật giá bán cho đơn hàng.");
 }
 
 let CANCEL_CONTEXT = null;
