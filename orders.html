@@ -218,6 +218,32 @@ let DISCOUNT_TYPE = "percent";
       </div>
     </div>
 
+    <div class="modal-overlay" id="itemPriceModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="epTitle">Sửa giá sản phẩm</h3><span class="modal-close" id="epClose">✕</span></div>
+        <div class="modal-body">
+          <div class="summary-row"><span>Giá gốc</span><span id="epOriginalPrice">0₫</span></div>
+
+          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin:14px 0 6px;">Giảm giá nhanh cho sản phẩm này</label>
+          <div style="display:flex; gap:8px;">
+            <div class="discount-type-toggle" style="flex-shrink:0;">
+              <div class="discount-type-btn active" id="epDiscPercentBtn">%</div>
+              <div class="discount-type-btn" id="epDiscAmountBtn">₫</div>
+            </div>
+            <input id="ep_discValue" type="number" step="any" placeholder="VD: 10">
+            <button type="button" class="btn btn-secondary" id="epApplyDiscBtn" style="flex-shrink:0;">Áp dụng</button>
+          </div>
+
+          <div class="field" style="margin-top:16px;"><label>Giá bán mới (có thể chỉnh tay)</label><input id="ep_newPrice" type="number" step="any"></div>
+
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="epCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="epSaveBtn">Lưu giá</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="add-toast" id="addToast"></div>
   `;
 
@@ -299,6 +325,13 @@ function bindEvents() {
   document.getElementById("closeQuickCustomer").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
   document.getElementById("qcCancelBtn").addEventListener("click", () => document.getElementById("quickCustomerModal").classList.remove("open"));
   document.getElementById("qcSaveBtn").addEventListener("click", saveQuickCustomer);
+
+  document.getElementById("epClose").addEventListener("click", () => document.getElementById("itemPriceModal").classList.remove("open"));
+  document.getElementById("epCancelBtn").addEventListener("click", () => document.getElementById("itemPriceModal").classList.remove("open"));
+  document.getElementById("epDiscPercentBtn").addEventListener("click", () => setEpDiscType("percent"));
+  document.getElementById("epDiscAmountBtn").addEventListener("click", () => setEpDiscType("amount"));
+  document.getElementById("epApplyDiscBtn").addEventListener("click", applyEpDiscount);
+  document.getElementById("epSaveBtn").addEventListener("click", saveEpPrice);
 }
 
 function setOrderType(type) {
@@ -525,14 +558,45 @@ function changeQty(productId, delta) {
   renderCart();
 }
 
+let EDIT_ITEM_ID = null;
+
 function editItemPrice(productId) {
   const item = CART.find(i => i.product_id === productId);
   if (!item) return;
-  const input = window.prompt(`Sửa giá bán cho "${item.name}"\nGiá hiện tại: ${formatVND(item.unit_price)}\n\nNhập giá bán mới:`, item.unit_price);
-  if (input === null) return;
-  const newPrice = Number(input);
+  EDIT_ITEM_ID = productId;
+
+  document.getElementById("epTitle").textContent = item.name;
+  document.getElementById("epOriginalPrice").textContent = formatVND(item.unit_price);
+  document.getElementById("ep_newPrice").value = item.unit_price;
+  document.getElementById("ep_discValue").value = "";
+  setEpDiscType("percent");
+  document.getElementById("itemPriceModal").classList.add("open");
+}
+
+function setEpDiscType(type) {
+  window.EP_DISC_TYPE = type;
+  document.getElementById("epDiscPercentBtn").classList.toggle("active", type === "percent");
+  document.getElementById("epDiscAmountBtn").classList.toggle("active", type === "amount");
+}
+
+function applyEpDiscount() {
+  const item = CART.find(i => i.product_id === EDIT_ITEM_ID);
+  if (!item) return;
+  const val = Number(document.getElementById("ep_discValue").value || 0);
+  if (val <= 0) { alert("Nhập số giảm giá trước đã."); return; }
+  const basePrice = item.unit_price;
+  const discount = window.EP_DISC_TYPE === "percent" ? basePrice * (val / 100) : val;
+  const newPrice = Math.max(basePrice - discount, 0);
+  document.getElementById("ep_newPrice").value = Math.round(newPrice);
+}
+
+function saveEpPrice() {
+  const item = CART.find(i => i.product_id === EDIT_ITEM_ID);
+  if (!item) return;
+  const newPrice = Number(document.getElementById("ep_newPrice").value);
   if (isNaN(newPrice) || newPrice < 0) { alert("Giá không hợp lệ."); return; }
   item.unit_price = newPrice;
+  document.getElementById("itemPriceModal").classList.remove("open");
   renderCart();
 }
 
