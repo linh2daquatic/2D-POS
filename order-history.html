@@ -184,6 +184,7 @@ function renderList(filter) {
 let CURRENT_DETAIL_ORDER = null;
 let CURRENT_DETAIL_ITEMS = [];
 let EDIT_PRICE_MODE = false;
+let EDIT_DISCOUNT_TYPE = "percent";
 
 async function showOrderDetail(orderId) {
   const modal = document.getElementById("orderDetailModal");
@@ -245,20 +246,36 @@ function renderOrderDetailBody(payments) {
       ) : ""}
     </div>
     <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
-    <tbody>
+    <tbody id="editItemsTbody">
       ${items.map(i => `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
         <td>${EDIT_PRICE_MODE
           ? `<input type="number" step="any" value="${i.unit_price}" data-item-id="${i.id}" class="edit-price-input" style="width:110px;">`
           : formatVND(i.unit_price)}</td>
-        <td>${formatVND(i.subtotal)}</td>
+        <td class="edit-item-subtotal" data-item-id="${i.id}">${formatVND(i.subtotal)}</td>
       </tr>`).join("")}
     </tbody></table>
 
+    ${EDIT_PRICE_MODE ? `
+    <div style="margin-top:14px; padding:12px; background:#f8fafc; border-radius:8px;">
+      <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Giảm giá trên tổng đơn</label>
+      <div class="discount-row" style="display:flex; gap:8px; align-items:center;">
+        <div class="discount-type-toggle" style="display:flex; border:1.5px solid var(--border); border-radius:8px; overflow:hidden; flex-shrink:0;">
+          <div class="discount-type-btn ${EDIT_DISCOUNT_TYPE === 'percent' ? 'active' : ''}" id="editDiscPercentBtn" style="padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; ${EDIT_DISCOUNT_TYPE === 'percent' ? 'background:var(--ink); color:#fff;' : 'background:#fff; color:var(--text-mute);'}">%</div>
+          <div class="discount-type-btn ${EDIT_DISCOUNT_TYPE === 'amount' ? 'active' : ''}" id="editDiscAmountBtn" style="padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; ${EDIT_DISCOUNT_TYPE === 'amount' ? 'background:var(--ink); color:#fff;' : 'background:#fff; color:var(--text-mute);'}">₫</div>
+        </div>
+        <input id="editDiscountValue" type="number" step="any" value="${order.discount_value || 0}" style="flex:1;">
+      </div>
+    </div>
+    <div class="summary-row" style="margin-top:10px;"><span>Tạm tính</span><span id="editSumSubtotal">0₫</span></div>
+    <div class="summary-row"><span>Giảm giá</span><span id="editSumDiscount">-0₫</span></div>
+    <div class="summary-row total"><span>Tổng tiền mới</span><span id="editSumTotal">0₫</span></div>
+    ` : ""}
+
     <div style="margin-top:14px;">
-      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
-      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
+      ${!EDIT_PRICE_MODE && Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
+      ${!EDIT_PRICE_MODE ? `<div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>` : ""}
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
       <div class="summary-row total"><span>${isCancelled ? 'Trạng thái' : (debt > 0 ? 'Còn nợ' : (debt < 0 ? 'Khách trả dư' : 'Trạng thái'))}</span><span>${isCancelled ? 'Đã hủy' : (debt !== 0 ? formatVND(Math.abs(debt)) : 'Đã thanh toán đủ')}</span></div>
@@ -269,11 +286,51 @@ function renderOrderDetailBody(payments) {
   `;
 
   const editBtn = document.getElementById("editPriceBtn");
-  if (editBtn) editBtn.addEventListener("click", () => { EDIT_PRICE_MODE = true; renderOrderDetailBody(payments); });
+  if (editBtn) editBtn.addEventListener("click", () => {
+    EDIT_PRICE_MODE = true;
+    EDIT_DISCOUNT_TYPE = order.discount_type || "percent";
+    renderOrderDetailBody(payments);
+  });
   const cancelEditBtn = document.getElementById("cancelEditPriceBtn");
   if (cancelEditBtn) cancelEditBtn.addEventListener("click", () => { EDIT_PRICE_MODE = false; renderOrderDetailBody(payments); });
   const saveBtn = document.getElementById("savePriceBtn");
   if (saveBtn) saveBtn.addEventListener("click", () => saveEditedPrices(payments));
+
+  if (EDIT_PRICE_MODE) {
+    document.querySelectorAll(".edit-price-input").forEach(el => el.addEventListener("input", updateEditPreview));
+    document.getElementById("editDiscountValue").addEventListener("input", updateEditPreview);
+    document.getElementById("editDiscPercentBtn").addEventListener("click", () => { EDIT_DISCOUNT_TYPE = "percent"; renderOrderDetailBody(payments); });
+    document.getElementById("editDiscAmountBtn").addEventListener("click", () => { EDIT_DISCOUNT_TYPE = "amount"; renderOrderDetailBody(payments); });
+    updateEditPreview();
+  }
+}
+
+function calcEditDiscount(subtotal) {
+  const val = Number(document.getElementById("editDiscountValue")?.value || 0);
+  if (val <= 0) return 0;
+  const discount = EDIT_DISCOUNT_TYPE === "percent" ? subtotal * (val / 100) : val;
+  return Math.min(discount, subtotal);
+}
+
+function updateEditPreview() {
+  document.querySelectorAll(".edit-price-input").forEach(el => {
+    const item = CURRENT_DETAIL_ITEMS.find(i => i.id === el.dataset.itemId);
+    if (!item) return;
+    const cell = document.querySelector(`.edit-item-subtotal[data-item-id="${el.dataset.itemId}"]`);
+    if (cell) cell.textContent = formatVND(Number(el.value || 0) * item.quantity);
+  });
+
+  const subtotal = CURRENT_DETAIL_ITEMS.reduce((s, i) => {
+    const input = document.querySelector(`.edit-price-input[data-item-id="${i.id}"]`);
+    const price = input ? Number(input.value || 0) : Number(i.unit_price);
+    return s + price * i.quantity;
+  }, 0);
+  const discount = calcEditDiscount(subtotal);
+  const total = subtotal - discount;
+
+  document.getElementById("editSumSubtotal").textContent = formatVND(subtotal);
+  document.getElementById("editSumDiscount").textContent = "-" + formatVND(discount);
+  document.getElementById("editSumTotal").textContent = formatVND(total);
 }
 
 async function saveEditedPrices(payments) {
@@ -289,19 +346,28 @@ async function saveEditedPrices(payments) {
     if (item && Number(item.unit_price) !== newPrice) {
       await sb.from("order_items").update({ unit_price: newPrice }).eq("id", item.id);
       item.unit_price = newPrice;
-      item.subtotal = newPrice * item.quantity; // cập nhật tạm để hiển thị, DB sẽ tự tính lại cột generated
     }
   }
 
   const newSubtotal = CURRENT_DETAIL_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
-  const newTotal = newSubtotal - Number(CURRENT_DETAIL_ORDER.discount_amount || 0);
-  await sb.from("orders").update({ total_amount: newTotal }).eq("id", CURRENT_DETAIL_ORDER.id);
+  const discountValue = Number(document.getElementById("editDiscountValue").value || 0);
+  const discountAmount = calcEditDiscount(newSubtotal);
+  const newTotal = newSubtotal - discountAmount;
+
+  await sb.from("orders").update({
+    total_amount: newTotal,
+    discount_type: discountAmount > 0 ? EDIT_DISCOUNT_TYPE : null,
+    discount_value: discountAmount > 0 ? discountValue : 0,
+    discount_amount: discountAmount
+  }).eq("id", CURRENT_DETAIL_ORDER.id);
+
   CURRENT_DETAIL_ORDER.total_amount = newTotal;
+  CURRENT_DETAIL_ORDER.discount_amount = discountAmount;
 
   EDIT_PRICE_MODE = false;
   await loadOrders();
   await showOrderDetail(CURRENT_DETAIL_ORDER.id);
-  alert("Đã cập nhật giá bán cho đơn hàng.");
+  alert("Đã cập nhật giá bán và giảm giá cho đơn hàng.");
 }
 
 let CANCEL_CONTEXT = null;
