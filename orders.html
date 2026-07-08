@@ -557,11 +557,11 @@ function removeVietnameseTones(str) {
     .trim();
 }
 
-function buildDefaultQrNote(orderCode) {
+function buildDefaultQrNote() {
   if (SELECTED_CUSTOMER?.name) {
     return `${removeVietnameseTones(SELECTED_CUSTOMER.name).toUpperCase()} CHUYEN TIEN`;
   }
-  return orderCode;
+  return ""; // Không chọn khách (khách lẻ) -> để trống hoàn toàn, không dùng mã đơn
 }
 
 function buildVietQrUrl(amount, note) {
@@ -978,7 +978,7 @@ async function submitOrder() {
     document.getElementById("qrAmount").textContent = formatVND(transfer);
     document.getElementById("qrAccountInfo").textContent =
       `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
-    document.getElementById("qr_note").value = buildDefaultQrNote(pendingCode);
+    document.getElementById("qr_note").value = buildDefaultQrNote();
     document.getElementById("submitOrderBtn").disabled = true;
     refreshQrImage();
     document.getElementById("qrConfirmModal").classList.add("open");
