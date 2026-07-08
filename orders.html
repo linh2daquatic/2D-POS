@@ -549,14 +549,30 @@ async function saveBankSettings() {
   alert("Đã lưu cài đặt tài khoản nhận tiền.");
 }
 
+function removeVietnameseTones(str) {
+  return (str || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d").replace(/Đ/g, "D")
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .trim();
+}
+
+function buildDefaultQrNote(orderCode) {
+  if (SELECTED_CUSTOMER?.name) {
+    return `${removeVietnameseTones(SELECTED_CUSTOMER.name).toUpperCase()} CHUYEN TIEN`;
+  }
+  return orderCode;
+}
+
 function buildVietQrUrl(amount, note) {
   const s = SHOP_BANK_SETTINGS;
   if (!s?.bank_code || !s?.bank_account_no) return null;
-  const params = new URLSearchParams({
+  const paramsObj = {
     amount: Math.round(amount),
-    addInfo: note || "Thanh toan don hang",
     accountName: s.bank_account_name || ""
-  });
+  };
+  if (note && note.trim()) paramsObj.addInfo = note.trim();
+  const params = new URLSearchParams(paramsObj);
   return `https://img.vietqr.io/image/${s.bank_code}-${s.bank_account_no}-compact2.png?${params.toString()}`;
 }
 
@@ -570,7 +586,7 @@ function closeQrModal() {
 
 function refreshQrImage() {
   if (!PENDING_ORDER_PARAMS) return;
-  const note = document.getElementById("qr_note").value.trim() || PENDING_ORDER_PARAMS.orderCode;
+  const note = document.getElementById("qr_note").value.trim();
   const qrUrl = buildVietQrUrl(PENDING_ORDER_PARAMS.transfer, note);
   if (qrUrl) document.getElementById("qrImage").src = qrUrl;
 }
@@ -962,7 +978,7 @@ async function submitOrder() {
     document.getElementById("qrAmount").textContent = formatVND(transfer);
     document.getElementById("qrAccountInfo").textContent =
       `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
-    document.getElementById("qr_note").value = pendingCode;
+    document.getElementById("qr_note").value = buildDefaultQrNote(pendingCode);
     document.getElementById("submitOrderBtn").disabled = true;
     refreshQrImage();
     document.getElementById("qrConfirmModal").classList.add("open");
