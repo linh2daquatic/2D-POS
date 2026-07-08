@@ -104,6 +104,11 @@
   display:flex; align-items:center; gap:8px; box-shadow:0 8px 24px rgba(0,0,0,0.25); white-space:nowrap;
 }
 .add-toast.show { opacity:1; transform: translateX(-50%) translateY(0); }
+.qr-wrap { text-align:center; }
+.qr-wrap img { width:260px; height:260px; border:1px solid var(--border); border-radius:12px; margin:0 auto; }
+.qr-amount { font-family:var(--font-display); font-size:24px; font-weight:700; color:var(--ink); margin:14px 0 4px; }
+.qr-account-info { font-size:13px; color:var(--text-mute); line-height:1.6; }
+.settings-link { font-size:12.5px; color:var(--text-mute); text-decoration:underline; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -123,6 +128,8 @@ const PRODUCT_GRID_LIMIT = 8;
 let PAY_MODE = "quick";
 let PAY_METHOD = "cash";
 let DISCOUNT_TYPE = "percent";
+let SHOP_BANK_SETTINGS = null;
+let PENDING_ORDER_PARAMS = null;
 
 (async () => {
   const auth = await requireAuth();
@@ -175,7 +182,10 @@ let DISCOUNT_TYPE = "percent";
             <div class="summary-row total"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
 
             <div style="margin-top:14px;">
-              <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thanh toán</label>
+              <div class="flex" style="justify-content:space-between; margin-bottom:6px;">
+                <label style="font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:0;">Thanh toán</label>
+                <span class="settings-link" id="bankSettingsLink" style="display:none;">⚙️ Cài đặt QR nhận tiền</span>
+              </div>
               <div class="pay-quick-row" id="payQuickRow">
                 <div class="pay-quick-btn cash active" id="quickCashBtn">💵 Tiền mặt<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
                 <div class="pay-quick-btn transfer" id="quickTransferBtn">🏦 Chuyển khoản<br><span style="font-weight:400; font-size:11px;">(thanh toán đủ)</span></div>
@@ -247,7 +257,72 @@ let DISCOUNT_TYPE = "percent";
     <div class="add-toast" id="addToast"></div>
   `;
 
-  await Promise.all([loadProducts(), loadCustomers()]);
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-overlay" id="bankSettingsModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Cài đặt QR nhận tiền</h3><span class="modal-close" id="bsClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Ngân hàng *</label>
+            <select id="bs_bankCode">
+              <option value="">-- Chọn ngân hàng --</option>
+              <option value="vietinbank">VietinBank</option>
+              <option value="vietcombank">Vietcombank</option>
+              <option value="bidv">BIDV</option>
+              <option value="agribank">Agribank</option>
+              <option value="acb">ACB</option>
+              <option value="techcombank">Techcombank</option>
+              <option value="mbbank">MB Bank</option>
+              <option value="vpbank">VPBank</option>
+              <option value="tpbank">TPBank</option>
+              <option value="sacombank">Sacombank</option>
+              <option value="shb">SHB</option>
+              <option value="eximbank">Eximbank</option>
+              <option value="msb">MSB</option>
+              <option value="vib">VIB</option>
+              <option value="hdbank">HDBank</option>
+              <option value="scb">SCB</option>
+              <option value="seabank">SeABank</option>
+              <option value="ocb">OCB</option>
+              <option value="namabank">Nam Á Bank</option>
+              <option value="bacabank">Bac A Bank</option>
+              <option value="pvcombank">PVcomBank</option>
+              <option value="vietabank">VietABank</option>
+              <option value="dongabank">DongA Bank</option>
+              <option value="baovietbank">BaoViet Bank</option>
+            </select>
+          </div>
+          <div class="field"><label>Số tài khoản *</label><input id="bs_accountNo" placeholder="VD: 0123456789"></div>
+          <div class="field"><label>Tên chủ tài khoản *</label><input id="bs_accountName" placeholder="VD: NGUYEN VAN A (viết không dấu, in hoa)"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="bsCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="bsSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="qrConfirmModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Quét mã QR để thanh toán</h3><span class="modal-close" id="qrClose">✕</span></div>
+        <div class="modal-body">
+          <div class="qr-wrap">
+            <img id="qrImage" src="" alt="Mã QR thanh toán">
+            <div class="qr-amount" id="qrAmount">0₫</div>
+            <div class="qr-account-info" id="qrAccountInfo"></div>
+          </div>
+          <p class="text-mute" style="font-size:12.5px; text-align:center; margin-top:14px;">
+            Đưa mã QR cho khách quét bằng app ngân hàng bất kỳ. Sau khi kiểm tra thấy tiền đã vào tài khoản, bấm xác nhận bên dưới để tạo đơn hàng.
+          </p>
+          <div class="flex gap-8" style="margin-top:16px; flex-direction:column;">
+            <button type="button" class="btn btn-primary" id="qrConfirmBtn" style="justify-content:center; padding:12px;">✅ Đã nhận được tiền — Tạo đơn hàng</button>
+            <button type="button" class="btn btn-secondary" id="qrCancelBtn" style="justify-content:center;">Chưa nhận được tiền, quay lại</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  await Promise.all([loadProducts(), loadCustomers(), loadBankSettings()]);
   bindEvents();
   resetOrderState();
 })();
@@ -332,6 +407,74 @@ function bindEvents() {
   document.getElementById("epDiscAmountBtn").addEventListener("click", () => setEpDiscType("amount"));
   document.getElementById("epApplyDiscBtn").addEventListener("click", applyEpDiscount);
   document.getElementById("epSaveBtn").addEventListener("click", saveEpPrice);
+
+  document.getElementById("bankSettingsLink").addEventListener("click", openBankSettingsModal);
+  document.getElementById("bsClose").addEventListener("click", () => document.getElementById("bankSettingsModal").classList.remove("open"));
+  document.getElementById("bsCancelBtn").addEventListener("click", () => document.getElementById("bankSettingsModal").classList.remove("open"));
+  document.getElementById("bsSaveBtn").addEventListener("click", saveBankSettings);
+
+  document.getElementById("qrClose").addEventListener("click", closeQrModal);
+  document.getElementById("qrCancelBtn").addEventListener("click", closeQrModal);
+  document.getElementById("qrConfirmBtn").addEventListener("click", confirmQrPaymentAndCreateOrder);
+
+  if (CURRENT_PROFILE.role === "owner") {
+    document.getElementById("bankSettingsLink").style.display = "inline-block";
+  }
+}
+
+/* ============================================================
+   CÀI ĐẶT QR NGÂN HÀNG (chỉ Chủ cấu hình, dùng chung cho mọi đơn)
+   ============================================================ */
+async function loadBankSettings() {
+  const { data } = await sb.from("shop_settings").select("*").eq("id", 1).single();
+  SHOP_BANK_SETTINGS = data || null;
+}
+
+function openBankSettingsModal() {
+  document.getElementById("bs_bankCode").value = SHOP_BANK_SETTINGS?.bank_code || "";
+  document.getElementById("bs_accountNo").value = SHOP_BANK_SETTINGS?.bank_account_no || "";
+  document.getElementById("bs_accountName").value = SHOP_BANK_SETTINGS?.bank_account_name || "";
+  document.getElementById("bankSettingsModal").classList.add("open");
+}
+
+async function saveBankSettings() {
+  const bank_code = document.getElementById("bs_bankCode").value;
+  const bank_account_no = document.getElementById("bs_accountNo").value.trim();
+  const bank_account_name = document.getElementById("bs_accountName").value.trim().toUpperCase();
+
+  if (!bank_code || !bank_account_no || !bank_account_name) { alert("Vui lòng điền đủ thông tin ngân hàng."); return; }
+
+  const btn = document.getElementById("bsSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const { error } = await sb.from("shop_settings").update({
+    bank_code, bank_account_no, bank_account_name, updated_at: new Date().toISOString()
+  }).eq("id", 1);
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+
+  await loadBankSettings();
+  document.getElementById("bankSettingsModal").classList.remove("open");
+  alert("Đã lưu cài đặt tài khoản nhận tiền.");
+}
+
+function buildVietQrUrl(amount, note) {
+  const s = SHOP_BANK_SETTINGS;
+  if (!s?.bank_code || !s?.bank_account_no) return null;
+  const params = new URLSearchParams({
+    amount: Math.round(amount),
+    addInfo: note || "Thanh toan don hang",
+    accountName: s.bank_account_name || ""
+  });
+  return `https://img.vietqr.io/image/${s.bank_code}-${s.bank_account_no}-compact2.png?${params.toString()}`;
+}
+
+function closeQrModal() {
+  document.getElementById("qrConfirmModal").classList.remove("open");
+  PENDING_ORDER_PARAMS = null;
+  const submitBtn = document.getElementById("submitOrderBtn");
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Tạo đơn hàng"; }
 }
 
 function setOrderType(type) {
@@ -681,10 +824,6 @@ async function submitOrder() {
     }
   }
 
-  const submitBtn = document.getElementById("submitOrderBtn");
-  submitBtn.disabled = true;
-  submitBtn.textContent = "Đang tạo đơn...";
-
   const subtotal = CART.reduce((s, i) => s + (i.quantity * i.unit_price), 0);
   const discountAmount = calcDiscount(subtotal);
   const discountValue = Number(document.getElementById("discountValue").value || 0);
@@ -697,6 +836,54 @@ async function submitOrder() {
     cash = Number(document.getElementById("payCash").value || 0);
     transfer = Number(document.getElementById("payTransfer").value || 0);
   }
+
+  const params = { subtotal, discountAmount, discountValue, total, cash, transfer };
+
+  // Nếu có phần chuyển khoản -> bắt buộc hiện QR, xác nhận đã nhận tiền mới tạo đơn
+  if (transfer > 0) {
+    const qrUrl = buildVietQrUrl(transfer, `Thanh toan don hang`);
+    if (!qrUrl) {
+      if (!window.confirm(
+        "Chưa cài đặt tài khoản ngân hàng để tạo mã QR.\n" +
+        (CURRENT_PROFILE.role === "owner" ? "Bấm OK để vào Cài đặt QR nhận tiền ngay, hoặc Cancel để tạo đơn không hiện QR." : "Vui lòng nhờ Chủ cửa hàng cài đặt trước. Bấm Cancel để tạo đơn không hiện QR.")
+      )) {
+        await finalizeOrder(params);
+        return;
+      }
+      if (CURRENT_PROFILE.role === "owner") { openBankSettingsModal(); return; }
+      await finalizeOrder(params);
+      return;
+    }
+
+    PENDING_ORDER_PARAMS = params;
+    document.getElementById("qrImage").src = qrUrl;
+    document.getElementById("qrAmount").textContent = formatVND(transfer);
+    document.getElementById("qrAccountInfo").textContent =
+      `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
+    document.getElementById("qrConfirmModal").classList.add("open");
+    document.getElementById("submitOrderBtn").disabled = true;
+    return;
+  }
+
+  // Chỉ tiền mặt hoặc toàn bộ là nợ -> tạo đơn luôn, không cần QR
+  await finalizeOrder(params);
+}
+
+async function confirmQrPaymentAndCreateOrder() {
+  if (!PENDING_ORDER_PARAMS) return;
+  const btn = document.getElementById("qrConfirmBtn");
+  btn.disabled = true; btn.textContent = "Đang tạo đơn...";
+  await finalizeOrder(PENDING_ORDER_PARAMS);
+  btn.disabled = false; btn.textContent = "✅ Đã nhận được tiền — Tạo đơn hàng";
+  document.getElementById("qrConfirmModal").classList.remove("open");
+  PENDING_ORDER_PARAMS = null;
+}
+
+async function finalizeOrder({ subtotal, discountAmount, discountValue, total, cash, transfer }) {
+  const submitBtn = document.getElementById("submitOrderBtn");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Đang tạo đơn...";
+
   const paid = cash + transfer;
   const orderCode = "DH" + Date.now().toString().slice(-8);
 
@@ -749,7 +936,7 @@ async function submitOrder() {
   if (transfer > 0) {
     await sb.from("customer_payments").insert({
       customer_id: SELECTED_CUSTOMER?.id || null, order_id: order.id, amount: transfer,
-      method: "transfer", note: "Thanh toán lúc tạo đơn", created_by: CURRENT_PROFILE.id
+      method: "transfer", note: "Thanh toán lúc tạo đơn — đã xác nhận qua QR", created_by: CURRENT_PROFILE.id
     });
     await sb.from("cash_transactions").insert({
       type: "income", method: "transfer", category: "Bán hàng", amount: transfer,
