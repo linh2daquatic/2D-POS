@@ -310,7 +310,8 @@ let PENDING_ORDER_PARAMS = null;
             <div class="qr-amount" id="qrAmount">0₫</div>
             <div class="qr-account-info" id="qrAccountInfo"></div>
           </div>
-          <p class="text-mute" style="font-size:12.5px; text-align:center; margin-top:14px;">
+          <div class="field" style="margin-top:14px;"><label>Nội dung chuyển khoản</label><input id="qr_note"></div>
+          <p class="text-mute" style="font-size:12.5px; text-align:center; margin-top:10px;">
             Đưa mã QR cho khách quét bằng app ngân hàng bất kỳ. Sau khi kiểm tra thấy tiền đã vào tài khoản, bấm xác nhận bên dưới để tạo đơn hàng.
           </p>
           <div class="flex gap-8" style="margin-top:16px; flex-direction:column;">
@@ -416,6 +417,7 @@ function bindEvents() {
   document.getElementById("qrClose").addEventListener("click", closeQrModal);
   document.getElementById("qrCancelBtn").addEventListener("click", closeQrModal);
   document.getElementById("qrConfirmBtn").addEventListener("click", confirmQrPaymentAndCreateOrder);
+  document.getElementById("qr_note").addEventListener("input", refreshQrImage);
 
   if (CURRENT_PROFILE.role === "owner") {
     document.getElementById("bankSettingsLink").style.display = "inline-block";
@@ -475,6 +477,13 @@ function closeQrModal() {
   PENDING_ORDER_PARAMS = null;
   const submitBtn = document.getElementById("submitOrderBtn");
   if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Tạo đơn hàng"; }
+}
+
+function refreshQrImage() {
+  if (!PENDING_ORDER_PARAMS) return;
+  const note = document.getElementById("qr_note").value.trim() || PENDING_ORDER_PARAMS.orderCode;
+  const qrUrl = buildVietQrUrl(PENDING_ORDER_PARAMS.transfer, note);
+  if (qrUrl) document.getElementById("qrImage").src = qrUrl;
 }
 
 function setOrderType(type) {
@@ -841,8 +850,11 @@ async function submitOrder() {
 
   // Nếu có phần chuyển khoản -> bắt buộc hiện QR, xác nhận đã nhận tiền mới tạo đơn
   if (transfer > 0) {
-    const qrUrl = buildVietQrUrl(transfer, `Thanh toan don hang`);
-    if (!qrUrl) {
+    // Sinh sẵn mã đơn để dùng làm nội dung chuyển khoản mặc định (dễ đối chiếu sao kê sau này)
+    const pendingCode = "DH" + Date.now().toString().slice(-8);
+    params.orderCode = pendingCode;
+
+    if (!SHOP_BANK_SETTINGS?.bank_code || !SHOP_BANK_SETTINGS?.bank_account_no) {
       if (!window.confirm(
         "Chưa cài đặt tài khoản ngân hàng để tạo mã QR.\n" +
         (CURRENT_PROFILE.role === "owner" ? "Bấm OK để vào Cài đặt QR nhận tiền ngay, hoặc Cancel để tạo đơn không hiện QR." : "Vui lòng nhờ Chủ cửa hàng cài đặt trước. Bấm Cancel để tạo đơn không hiện QR.")
@@ -856,10 +868,11 @@ async function submitOrder() {
     }
 
     PENDING_ORDER_PARAMS = params;
-    document.getElementById("qrImage").src = qrUrl;
     document.getElementById("qrAmount").textContent = formatVND(transfer);
     document.getElementById("qrAccountInfo").textContent =
       `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
+    document.getElementById("qr_note").value = pendingCode;
+    refreshQrImage();
     document.getElementById("qrConfirmModal").classList.add("open");
     document.getElementById("submitOrderBtn").disabled = true;
     return;
@@ -879,13 +892,13 @@ async function confirmQrPaymentAndCreateOrder() {
   PENDING_ORDER_PARAMS = null;
 }
 
-async function finalizeOrder({ subtotal, discountAmount, discountValue, total, cash, transfer }) {
+async function finalizeOrder({ subtotal, discountAmount, discountValue, total, cash, transfer, orderCode: presetCode }) {
   const submitBtn = document.getElementById("submitOrderBtn");
   submitBtn.disabled = true;
   submitBtn.textContent = "Đang tạo đơn...";
 
   const paid = cash + transfer;
-  const orderCode = "DH" + Date.now().toString().slice(-8);
+  const orderCode = presetCode || ("DH" + Date.now().toString().slice(-8));
 
   const { data: order, error: orderErr } = await sb.from("orders").insert({
     order_code: orderCode,
