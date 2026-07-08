@@ -130,6 +130,7 @@ let PAY_METHOD = "cash";
 let DISCOUNT_TYPE = "percent";
 let SHOP_BANK_SETTINGS = null;
 let PENDING_ORDER_PARAMS = null;
+const DRAFT_KEY = "2d_pos_order_draft";
 
 (async () => {
   const auth = await requireAuth();
@@ -314,18 +315,25 @@ let PENDING_ORDER_PARAMS = null;
           <p class="text-mute" style="font-size:12.5px; text-align:center; margin-top:10px;">
             Đưa mã QR cho khách quét bằng app ngân hàng bất kỳ. Sau khi kiểm tra thấy tiền đã vào tài khoản, bấm xác nhận bên dưới để tạo đơn hàng.
           </p>
-          <div class="flex gap-8" style="margin-top:16px; flex-direction:column;">
+          <div class="flex gap-8" id="qrOwnerActions" style="margin-top:16px; flex-direction:column;">
             <button type="button" class="btn btn-primary" id="qrConfirmBtn" style="justify-content:center; padding:12px;">✅ Đã nhận được tiền — Tạo đơn hàng</button>
             <button type="button" class="btn btn-secondary" id="qrCancelBtn" style="justify-content:center;">Chưa nhận được tiền, quay lại</button>
           </div>
         </div>
       </div>
     </div>
+
   `);
 
   await Promise.all([loadProducts(), loadCustomers(), loadBankSettings()]);
   bindEvents();
+
+  const draft = loadDraft();
   resetOrderState();
+  if (draft && (draft.cart || []).length > 0) {
+    restoreDraft(draft);
+    showAddToast("Đã khôi phục đơn đang dở trước đó", 1);
+  }
 })();
 
 async function loadProducts() {
@@ -336,6 +344,86 @@ async function loadCustomers() {
   const { data } = await sb.from("customers").select("*").order("name");
   ALL_CUSTOMERS = data || [];
 }
+
+/* ============================================================
+   LƯU TẠM ĐƠN ĐANG DỞ — tránh mất giỏ hàng/trạng thái chờ QR
+   khi lỡ chuyển tab hoặc rời trang giữa chừng
+   ============================================================ */
+function saveDraft() {
+  try {
+    const draft = {
+      cart: CART,
+      customer: SELECTED_CUSTOMER,
+      orderType: ORDER_TYPE,
+      discountType: DISCOUNT_TYPE,
+      discountValue: document.getElementById("discountValue")?.value || 0,
+      payMode: PAY_MODE,
+      payMethod: PAY_METHOD,
+      payCash: document.getElementById("payCash")?.value || 0,
+      payTransfer: document.getElementById("payTransfer")?.value || 0,
+      pendingOrder: PENDING_ORDER_PARAMS,
+      qrNote: document.getElementById("qr_note")?.value || "",
+      qrOpen: document.getElementById("qrConfirmModal")?.classList.contains("open") || false,
+      savedAt: Date.now()
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch (e) { /* bỏ qua nếu trình duyệt chặn localStorage */ }
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+}
+
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    // Bản nháp quá 12 tiếng thì bỏ qua, coi như đã hết hạn (tránh khôi phục nhầm đơn cũ)
+    if (Date.now() - (draft.savedAt || 0) > 12 * 60 * 60 * 1000) { clearDraft(); return null; }
+    return draft;
+  } catch (e) { return null; }
+}
+
+function restoreDraft(draft) {
+  CART = draft.cart || [];
+  SELECTED_CUSTOMER = draft.customer || null;
+  ORDER_TYPE = draft.orderType || "retail";
+  DISCOUNT_TYPE = draft.discountType || "percent";
+  PAY_MODE = draft.payMode || "quick";
+  PAY_METHOD = draft.payMethod || "cash";
+
+  document.getElementById("discountValue").value = draft.discountValue || 0;
+  document.getElementById("discPercentBtn").classList.toggle("active", DISCOUNT_TYPE === "percent");
+  document.getElementById("discAmountBtn").classList.toggle("active", DISCOUNT_TYPE === "amount");
+  document.getElementById("payCash").value = draft.payCash || 0;
+  document.getElementById("payTransfer").value = draft.payTransfer || 0;
+  document.getElementById("quickCashBtn").classList.toggle("active", PAY_METHOD === "cash");
+  document.getElementById("quickTransferBtn").classList.toggle("active", PAY_METHOD === "transfer");
+  if (PAY_MODE === "custom") {
+    document.getElementById("payQuickRow").style.display = "none";
+    document.getElementById("toggleCustomPay").style.display = "none";
+    document.getElementById("customPayFields").style.display = "block";
+  }
+
+  renderCustomerPicker();
+  renderCategoryChips();
+  renderProductGrid("");
+  renderCart();
+
+  // Nếu lúc rời trang đang mở màn QR chờ xác nhận -> tự động mở lại đúng trạng thái đó
+  if (draft.qrOpen && draft.pendingOrder && SHOP_BANK_SETTINGS?.bank_code) {
+    PENDING_ORDER_PARAMS = draft.pendingOrder;
+    document.getElementById("qrAmount").textContent = formatVND(draft.pendingOrder.transfer);
+    document.getElementById("qrAccountInfo").textContent =
+      `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
+    document.getElementById("qr_note").value = draft.qrNote || draft.pendingOrder.orderCode || "";
+    document.getElementById("submitOrderBtn").disabled = true;
+    refreshQrImage();
+    document.getElementById("qrConfirmModal").classList.add("open");
+  }
+}
+
 
 function resetOrderState() {
   CART = [];
@@ -369,7 +457,7 @@ function bindEvents() {
 
   document.getElementById("clearCartBtn").addEventListener("click", () => {
     if (CART.length === 0) return;
-    if (window.confirm("Xóa toàn bộ sản phẩm trong đơn hàng?")) { CART = []; renderProductGrid(document.getElementById("productSearch").value); renderCart(); }
+    if (window.confirm("Xóa toàn bộ sản phẩm trong đơn hàng?")) { CART = []; clearDraft(); renderProductGrid(document.getElementById("productSearch").value); renderCart(); }
   });
 
   document.getElementById("discPercentBtn").addEventListener("click", () => setDiscountType("percent"));
@@ -417,7 +505,7 @@ function bindEvents() {
   document.getElementById("qrClose").addEventListener("click", closeQrModal);
   document.getElementById("qrCancelBtn").addEventListener("click", closeQrModal);
   document.getElementById("qrConfirmBtn").addEventListener("click", confirmQrPaymentAndCreateOrder);
-  document.getElementById("qr_note").addEventListener("input", refreshQrImage);
+  document.getElementById("qr_note").addEventListener("input", () => { refreshQrImage(); saveDraft(); });
 
   if (CURRENT_PROFILE.role === "owner") {
     document.getElementById("bankSettingsLink").style.display = "inline-block";
@@ -477,6 +565,7 @@ function closeQrModal() {
   PENDING_ORDER_PARAMS = null;
   const submitBtn = document.getElementById("submitOrderBtn");
   if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Tạo đơn hàng"; }
+  if (CART.length > 0) saveDraft(); else clearDraft();
 }
 
 function refreshQrImage() {
@@ -525,6 +614,7 @@ function calcDiscount(subtotal) {
 
 /* ---------- Khách hàng ---------- */
 function renderCustomerPicker() {
+  if (CART.length > 0) saveDraft();
   const wrap = document.getElementById("customerPickerWrap");
   if (SELECTED_CUSTOMER) {
     wrap.innerHTML = `<div class="selected-customer-tag">
@@ -819,6 +909,8 @@ function updateSummary() {
   document.getElementById("sumDiscount").textContent = "-" + formatVND(discount);
   document.getElementById("sumTotal").textContent = formatVND(total);
   document.getElementById("sumDebt").textContent = formatVND(debt);
+
+  if (CART.length > 0) saveDraft(); else clearDraft();
 }
 
 /* ---------- Tạo đơn ---------- */
@@ -848,9 +940,8 @@ async function submitOrder() {
 
   const params = { subtotal, discountAmount, discountValue, total, cash, transfer };
 
-  // Nếu có phần chuyển khoản -> bắt buộc hiện QR, xác nhận đã nhận tiền mới tạo đơn
+  // Nếu có phần chuyển khoản -> hiện QR để khách quét, rồi tự xác nhận ngay (không chờ ai)
   if (transfer > 0) {
-    // Sinh sẵn mã đơn để dùng làm nội dung chuyển khoản mặc định (dễ đối chiếu sao kê sau này)
     const pendingCode = "DH" + Date.now().toString().slice(-8);
     params.orderCode = pendingCode;
 
@@ -872,9 +963,10 @@ async function submitOrder() {
     document.getElementById("qrAccountInfo").textContent =
       `${SHOP_BANK_SETTINGS.bank_account_name} — STK ${SHOP_BANK_SETTINGS.bank_account_no} (${SHOP_BANK_SETTINGS.bank_code.toUpperCase()})`;
     document.getElementById("qr_note").value = pendingCode;
+    document.getElementById("submitOrderBtn").disabled = true;
     refreshQrImage();
     document.getElementById("qrConfirmModal").classList.add("open");
-    document.getElementById("submitOrderBtn").disabled = true;
+    saveDraft();
     return;
   }
 
@@ -969,6 +1061,7 @@ async function finalizeOrder({ subtotal, discountAmount, discountValue, total, c
     );
   }
 
+  clearDraft();
   await loadProducts();
   resetOrderState();
   alert(`Đã tạo đơn hàng ${orderCode} thành công!`);
