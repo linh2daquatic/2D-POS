@@ -3,72 +3,51 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Quản lý bể — 2D Aquatic POS</title>
+<title>Khách hàng — 2D Aquatic POS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
 .modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
 .modal-overlay.open { display:flex; }
-.modal-box { background:#fff; border-radius:14px; width:100%; max-width:440px; max-height:88vh; overflow-y:auto; }
-.modal-box.wide { max-width:640px; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:88vh; overflow-y:auto; }
+.modal-box.wide { max-width:560px; }
+.summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
+.order-row-clickable { cursor:pointer; }
+.order-row-clickable:hover { background:#f8fafc; }
 .modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
 .modal-header h3 { font-family:var(--font-display); font-size:18px; }
 .modal-body { padding:20px 22px; }
 .modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
-.param-row, .chem-row, .sched-row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:13.5px; }
-.param-row:last-child, .chem-row:last-child, .sched-row:last-child { border-bottom:none; }
-.param-row .p-remove, .chem-row .c-remove, .sched-row .s-remove { color:var(--danger); cursor:pointer; font-size:15px; }
-.chart-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px,1fr)); gap:16px; }
-.chart-card { border:1px solid var(--border); border-radius:10px; padding:14px; background:#fff; }
-.chart-card h4 { font-size:13.5px; font-weight:600; margin-bottom:8px; color:var(--ink); }
-.chart-card canvas { max-height:200px; }
-.reading-input-row { display:grid; grid-template-columns:1fr 100px; gap:10px; align-items:center; padding:6px 0; }
-.back-link { font-size:13.5px; color:var(--text-mute); cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-bottom:14px; }
-.back-link:hover { color:var(--ink); }
-
-.sched-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:14px; background:#fff; box-shadow:var(--shadow); }
-.sched-table { width:100%; border-collapse:collapse; min-width:760px; }
-.sched-table th, .sched-table td { border:1px solid #eef1f5; vertical-align:top; }
-.sched-table thead th {
-  background:var(--ink); color:#fff; font-size:12.5px; font-weight:600;
-  padding:12px 8px; text-align:center; letter-spacing:0.02em;
-}
-.sched-table thead th:first-child { background:var(--ink); }
-.sched-table thead th.weekend { background:#1b3a5c; }
-.sched-table .slot-label-cell {
-  font-weight:700; font-size:13px; text-align:center; padding:16px 8px; width:90px;
-}
-.sched-table .slot-label-cell.sang { background:#fff7ed; color:#c2410c; }
-.sched-table .slot-label-cell.chieu { background:#eff6ff; color:#1d4ed8; }
-.sched-cell { padding:10px; min-width:120px; background:#fff; transition:background .12s; }
-.sched-cell.weekend { background:#fbfcfe; }
-.sched-cell:hover { background:#f6fdfb; }
-.name-chip {
-  display:block; font-weight:600; font-size:12.5px; padding:6px 10px; border-radius:8px;
-  margin-bottom:6px; cursor:pointer; border-left:3px solid var(--teal-deep);
-  background:#ecfdf5; color:#0f5e52; transition:transform .08s, box-shadow .12s;
-}
-.name-chip:hover { background:#d1fae5; transform:translateX(2px); box-shadow:0 2px 6px rgba(0,168,150,0.18); }
-.task-chip {
-  display:block; font-weight:600; font-size:12.5px; padding:6px 10px; border-radius:8px;
-  margin-bottom:6px; cursor:pointer; border-left:3px solid #c2410c;
-  background:#fff7ed; color:#9a3412; transition:transform .08s, box-shadow .12s;
-}
-.task-chip:hover { background:#ffedd5; transform:translateX(2px); box-shadow:0 2px 6px rgba(194,65,12,0.18); }
-.cell-add-btn {
-  font-size:11px; color:#b8c0cc; cursor:pointer; text-align:center; padding:5px; border-radius:6px;
-  border:1px dashed transparent;
-}
-.cell-add-btn:hover { background:#f0fdfa; color:var(--teal-deep); border-color:var(--teal); }
-.unscheduled-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-.unscheduled-chip { background:#fff; border:1px dashed var(--border); color:var(--text-mute); font-size:12.5px; padding:6px 12px; border-radius:20px; cursor:pointer; }
-.unscheduled-chip:hover { border-color:var(--teal); color:var(--teal-deep); }
-.type-btn.active { background:var(--ink); color:#fff; border-color:var(--ink) !important; }
-.week-nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:10px; flex-wrap:wrap; }
-.settings-link { font-size:11.5px; color:var(--teal-deep); text-decoration:underline; cursor:pointer; }
+.row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.search-bar { max-width:320px; margin-bottom:0; }
+.btn-mini { padding:5px 10px; font-size:12px; }
+.row-actions { display:flex; gap:6px; }
+.type-toggle { display:flex; gap:6px; }
+.type-btn { flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px; color:var(--text-mute); background:#fff; }
+.type-btn.active.retail { border-color:var(--teal-deep); color:var(--teal-deep); background:#ecfdf5; }
+.type-btn.active.wholesale { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
+.sort-chips { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+.sort-chip { padding:6px 14px; border-radius:20px; font-size:12.5px; border:1px solid var(--border); cursor:pointer; background:#fff; color:var(--text-mute); }
+.sort-chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+.no-purchase { color:var(--text-mute); font-style:italic; }
+.vip-tag { font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600; }
+.tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
+.pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.debt-card { border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+.debt-card-head { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:#fff; flex-wrap:wrap; gap:10px; }
+.debt-card-head:hover { background:#f8fafc; }
+.debt-card-name { font-weight:600; font-size:14.5px; }
+.debt-card-sub { font-size:12px; color:var(--text-mute); margin-top:2px; }
+.debt-card-amount { font-family:var(--font-display); font-weight:700; font-size:17px; color:var(--danger); }
+.debt-card-body { display:none; border-top:1px solid var(--border); padding:12px 16px; background:#fbfcfd; }
+.debt-card-body.open { display:block; }
+.debt-order-row { display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px dashed var(--border); }
+.debt-order-row:last-child { border-bottom:none; }
 </style>
 </head>
 <body>
@@ -77,22 +56,13 @@
 <script src="js/layout.js"></script>
 <script>
 let CURRENT_PROFILE = null;
-let ALL_TANKS = [];
-let ALL_CUSTOMERS_TK = [];
-let ALL_CARE_SCHEDULE = [];
-let CURRENT_TANK = null;
-let CURRENT_PARAMS = [];
-let CURRENT_CHEMICALS = [];
-let CURRENT_READINGS = [];
-let CURRENT_DOSING = [];
-let CURRENT_TANK_SCHEDULE = [];
-let CHART_INSTANCES = {};
-let EDIT_TANK_ID = null;
-let ADD_SLOT_DAY = 0;
-let ADD_SLOT_TIME = "sang";
-
-const DAY_NAMES = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"];
-const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều" }];
+let ALL_CUSTOMERS = [];
+let CUSTOMER_STATS = {};
+let EDIT_ID = null;
+let FORM_TYPE = "retail";
+let SORT_MODE = "name";
+let DEBT_LIST = [];
+let PAY_CUSTOMER = null;
 
 (async () => {
   const auth = await requireAuth();
@@ -100,1036 +70,554 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
   CURRENT_PROFILE = auth.profile;
 
   renderLayout({
-    activePage: "tanks",
+    activePage: "customers",
     profile: CURRENT_PROFILE,
-    title: "Quản lý bể",
-    subtitle: "Lịch chăm sóc cố định hàng tuần"
+    title: "Khách hàng",
+    subtitle: "Danh sách khách hàng và công nợ"
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div id="gridView"></div>
-    <div id="tankDetailView" style="display:none;"></div>
+    <div class="tabs-row">
+      <div class="tab-btn active" data-tab="customers">Khách hàng</div>
+      <div class="tab-btn" data-tab="debt">Công nợ khách hàng</div>
+    </div>
 
-    <div class="modal-overlay" id="addSlotModal">
-      <div class="modal-box">
-        <div class="modal-header"><h3 id="addSlotTitle">Thêm vào lịch</h3><span class="modal-close" id="addSlotClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Loại</label>
-            <div class="flex gap-6">
-              <div class="type-btn active" data-addtype="care" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">🪸 Bể chăm sóc<br><span style="font-weight:400; font-size:10.5px;">(lặp mỗi tuần)</span></div>
-              <div class="type-btn" data-addtype="task" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">🧾 Công việc<br><span style="font-weight:400; font-size:10.5px;">(chỉ đúng ngày này)</span></div>
-            </div>
-          </div>
-
-          <div id="addSlotCareFields">
-            <div class="field"><label>Chọn bể có sẵn</label>
-              <select id="as_existingTank"><option value="">— Hoặc tạo bể mới bên dưới —</option></select>
-            </div>
-            <div class="field"><label>Hoặc tạo bể mới</label><input id="as_newTankName" placeholder="VD: Anh Sơn, Bể chị Mai..."></div>
-            <div class="field"><label>Khách hàng liên kết (không bắt buộc)</label>
-              <select id="as_customer"><option value="">— Không liên kết —</option></select>
-            </div>
-          </div>
-
-          <div id="addSlotTaskFields" style="display:none;">
-            <div class="field"><label>Loại công việc</label>
-              <div class="flex gap-6">
-                <div class="type-btn active" data-slottasktype="setup" style="flex:1; padding:8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">🔧 Setup</div>
-                <div class="type-btn" data-slottasktype="ban_giao" style="flex:1; padding:8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">📦 Bàn giao</div>
-                <div class="type-btn" data-slottasktype="khac" style="flex:1; padding:8px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">Khác</div>
-              </div>
-            </div>
-            <div class="field"><label>Tiêu đề *</label><input id="as_taskTitle" placeholder="VD: Giao bể 120 - Anh Long"></div>
-            <div class="field"><label>Bể liên quan (không bắt buộc)</label>
-              <select id="as_taskTank"><option value="">— Không liên kết —</option></select>
-            </div>
-            <div class="field"><label>Ghi chú</label><input id="as_taskNote" placeholder="Không bắt buộc"></div>
-          </div>
-
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="addSlotCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="addSlotSaveBtn">Thêm vào lịch</button>
-          </div>
+    <div id="customersTab">
+      <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+        <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
+        <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
+      </div>
+      <div class="sort-chips" id="sortChips">
+        <div class="sort-chip active" data-sort="name">Tên A-Z</div>
+        <div class="sort-chip" data-sort="spend">Chi tiêu cao nhất</div>
+        <div class="sort-chip" data-sort="recent">Mua gần đây nhất</div>
+      </div>
+      <div class="panel">
+        <div class="panel-body" id="tableWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
     </div>
 
-    <div class="modal-overlay" id="tankModal">
+    <div id="debtTab" style="display:none;">
+      <div class="stat-grid" id="statGrid"></div>
+      <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm khách hàng..." style="margin-bottom:16px;">
+      <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
+    </div>
+
+    <div class="modal-overlay" id="modalOverlay">
       <div class="modal-box">
-        <div class="modal-header"><h3 id="tankModalTitle">Sửa bể</h3><span class="modal-close" id="tankModalClose">✕</span></div>
+        <div class="modal-header">
+          <h3 id="modalTitle">Thêm khách hàng</h3>
+          <span class="modal-close" id="modalClose">✕</span>
+        </div>
         <div class="modal-body">
-          <form id="tankForm">
-            <div class="field"><label>Tên bể *</label><input id="tk_name" required></div>
-            <div class="field"><label>Khách hàng (nếu là bể của khách)</label>
-              <select id="tk_customer"><option value="">— Bể của shop —</option></select>
+          <form id="custForm">
+            <div class="field"><label>Loại khách hàng</label>
+              <div class="type-toggle">
+                <div class="type-btn retail active" id="typeRetailBtn">Bán lẻ</div>
+                <div class="type-btn wholesale" id="typeWholesaleBtn">Bán buôn</div>
+              </div>
             </div>
-            <div class="field"><label>Ghi chú</label><textarea id="tk_notes" rows="2"></textarea></div>
+            <div class="field"><label>Tên khách hàng *</label><input id="f_name" required></div>
+            <div class="row-2">
+              <div class="field"><label>Số điện thoại</label><input id="f_phone"></div>
+              <div class="field"><label>Hạn mức nợ (₫)</label><input id="f_debt_limit" type="number" step="any" value="0"></div>
+            </div>
+            <div class="field"><label>Địa chỉ</label><input id="f_address"></div>
+            <div class="field"><label>Ghi chú</label><textarea id="f_notes" rows="2"></textarea></div>
             <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-              <button type="button" class="btn btn-secondary" id="tankCancelBtn">Hủy</button>
-              <button type="submit" class="btn btn-primary" id="tankSaveBtn">Lưu</button>
+              <button type="button" class="btn btn-secondary" id="cancelBtn">Hủy</button>
+              <button type="submit" class="btn btn-primary" id="saveBtn">Lưu khách hàng</button>
             </div>
           </form>
         </div>
       </div>
     </div>
 
-    <div class="modal-overlay" id="paramModal">
-      <div class="modal-box">
-        <div class="modal-header"><h3>Thêm chỉ số theo dõi</h3><span class="modal-close" id="paramModalClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Tên chỉ số *</label><input id="pm_name" placeholder="VD: pH, KH, Canxi, Độ mặn, Nhiệt độ..." required></div>
-          <div class="field"><label>Đơn vị</label><input id="pm_unit" placeholder="VD: dKH, ppm, ppt, °C (không bắt buộc)"></div>
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="paramCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="paramSaveBtn">Thêm</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="chemModal">
-      <div class="modal-box">
-        <div class="modal-header"><h3>Thêm hóa chất</h3><span class="modal-close" id="chemModalClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Tên hóa chất *</label><input id="cm_name" placeholder="VD: Canxi lỏng, KH Buffer, Amino acid..." required></div>
-          <div class="field"><label>Đơn vị</label><input id="cm_unit" placeholder="VD: ml, giọt, g (không bắt buộc)"></div>
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="chemCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="chemSaveBtn">Thêm</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="readingModal">
+    <div class="modal-overlay" id="ordersHistoryModal">
       <div class="modal-box wide">
-        <div class="modal-header"><h3>Ghi nhận đo chỉ số</h3><span class="modal-close" id="readingModalClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Ngày đo</label><input id="rd_date" type="datetime-local"></div>
-          <div id="rd_paramInputs" style="margin-top:10px;"></div>
-          <div class="field" style="margin-top:10px;"><label>Ghi chú</label><input id="rd_note" placeholder="Không bắt buộc"></div>
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="readingCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="readingSaveBtn">Lưu kết quả đo</button>
-          </div>
+        <div class="modal-header">
+          <h3 id="ordersHistoryTitle">Lịch sử mua hàng</h3>
+          <span class="modal-close" id="ordersHistoryClose">✕</span>
         </div>
+        <div class="modal-body" id="ordersHistoryBody"></div>
       </div>
     </div>
 
-    <div class="modal-overlay" id="dosingModal">
+    <div class="modal-overlay" id="payModal">
       <div class="modal-box">
-        <div class="modal-header"><h3>Ghi nhận châm hóa chất</h3><span class="modal-close" id="dosingModalClose">✕</span></div>
+        <div class="modal-header">
+          <h3 id="payModalTitle">Ghi nhận thanh toán</h3>
+          <span class="modal-close" id="payModalClose">✕</span>
+        </div>
         <div class="modal-body">
-          <div class="field"><label>Hóa chất *</label><select id="ds_chemical"></select></div>
-          <div class="field"><label>Liều lượng *</label><input id="ds_amount" type="number" step="any" required></div>
-          <div class="field"><label>Ngày châm</label><input id="ds_date" type="datetime-local"></div>
-          <div class="field"><label>Ghi chú</label><input id="ds_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total" style="margin-bottom:14px;">
+            <span>Đang nợ</span><span id="payCurrentDebt">0₫</span>
+          </div>
+          <div class="pay-method-row">
+            <div class="field"><label>Tiền mặt</label><input id="pay_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Chuyển khoản</label><input id="pay_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="pay_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total"><span>Còn nợ sau khi trả</span><span id="payRemaining">0₫</span></div>
           <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="dosingCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="dosingSaveBtn">Lưu</button>
+            <button type="button" class="btn btn-secondary" id="payCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="paySaveBtn">Ghi nhận</button>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="modal-overlay" id="taskModal">
-      <div class="modal-box">
-        <div class="modal-header"><h3>Thêm công việc</h3><span class="modal-close" id="taskModalClose">✕</span></div>
-        <div class="modal-body">
-          <div class="field"><label>Loại công việc</label>
-            <div class="flex gap-6">
-              <div class="type-btn active" data-tasktype="setup" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">🔧 Setup bể</div>
-              <div class="type-btn" data-tasktype="ban_giao" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">📦 Bàn giao</div>
-              <div class="type-btn" data-tasktype="khac" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">Khác</div>
-            </div>
-          </div>
-          <div class="field"><label>Tiêu đề *</label><input id="tk_task_title" placeholder="VD: Setup bể mới cho anh Long" required></div>
-          <div class="field"><label>Ngày thực hiện *</label><input id="tk_task_date" type="date" required></div>
-          <div class="field"><label>Bể liên quan (không bắt buộc)</label>
-            <select id="tk_task_tank"><option value="">— Không liên kết —</option></select>
-          </div>
-          <div class="field"><label>Tên khách (nếu chưa có bể trong hệ thống)</label><input id="tk_task_customer" placeholder="Không bắt buộc"></div>
-          <div class="field"><label>Ghi chú</label><input id="tk_task_note" placeholder="Không bắt buộc"></div>
-          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-            <button type="button" class="btn btn-secondary" id="taskCancelBtn">Hủy</button>
-            <button type="button" class="btn btn-primary" id="taskSaveBtn">Lưu</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="taskDetailModal">
+    <div class="modal-overlay" id="orderDetailModal">
       <div class="modal-box wide">
-        <div class="modal-header"><h3 id="taskDetailTitle">Chi tiết công việc</h3><span class="modal-close" id="taskDetailClose">✕</span></div>
-        <div class="modal-body">
-          <div id="taskDetailInfo"></div>
-
-          <div style="margin-top:18px;">
-            <div class="flex" style="justify-content:space-between; align-items:center;">
-              <strong style="font-size:13.5px;">Báo giá / Bảng kê</strong>
-              <span class="btn btn-secondary btn-mini" id="addQuoteItemBtn">+ Thêm dòng</span>
-            </div>
-            <table style="margin-top:8px;"><thead><tr><th>Tên mục</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th><th></th></tr></thead>
-              <tbody id="quoteItemsTbody"></tbody>
-            </table>
-            <div class="summary-row total" style="margin-top:10px;"><span>Tổng cộng</span><span id="quoteTotal">0₫</span></div>
-          </div>
-
-          <div class="flex gap-8" style="margin-top:18px; justify-content:space-between;">
-            <span class="btn btn-danger btn-mini" id="deleteTaskBtn">Xóa công việc</span>
-            <button class="btn btn-primary" id="markTaskDoneBtn">✅ Đánh dấu đã hoàn thành</button>
-          </div>
+        <div class="modal-header">
+          <h3 id="orderDetailTitle">Chi tiết đơn hàng</h3>
+          <span class="modal-close" id="orderDetailClose">✕</span>
         </div>
+        <div class="modal-body" id="orderDetailBody"></div>
       </div>
     </div>
   `;
 
-  await Promise.all([loadTanks(), loadCustomersForTank(), loadCareSchedule()]);
-  bindGlobalEvents();
-  bindTaskEvents();
-  renderGridView();
+  await Promise.all([loadCustomers(), loadDebts()]);
+
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => {
+    el.addEventListener("click", () => switchMainTab(el.dataset.tab));
+  });
+
+  document.getElementById("searchInput").addEventListener("input", (e) => renderTable(e.target.value));
+  document.getElementById("addBtn").addEventListener("click", () => openModal());
+  document.getElementById("modalClose").addEventListener("click", closeModal);
+  document.getElementById("cancelBtn").addEventListener("click", closeModal);
+  document.getElementById("custForm").addEventListener("submit", saveCustomer);
+  document.getElementById("typeRetailBtn").addEventListener("click", () => setFormType("retail"));
+  document.getElementById("typeWholesaleBtn").addEventListener("click", () => setFormType("wholesale"));
+
+  document.querySelectorAll("#sortChips .sort-chip").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll("#sortChips .sort-chip").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+      SORT_MODE = el.dataset.sort;
+      renderTable(document.getElementById("searchInput").value);
+    });
+  });
+
+  document.getElementById("ordersHistoryClose").addEventListener("click", () => document.getElementById("ordersHistoryModal").classList.remove("open"));
+  document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
+
+  document.getElementById("debtSearchInput").addEventListener("input", (e) => renderDebtList(e.target.value));
+  document.getElementById("payModalClose").addEventListener("click", closePayModal);
+  document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
+  document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
+  document.getElementById("pay_transfer").addEventListener("input", updatePaySummary);
+  document.getElementById("paySaveBtn").addEventListener("click", submitPayment);
 })();
 
-let WEEK_TASKS = [];
-let WEEK_OFFSET = 0; // 0 = tuần này, +1 = tuần sau, -1 = tuần trước...
-
-function getMondayOfWeek(offset) {
-  const now = new Date();
-  const day = now.getDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday + offset * 7);
-  monday.setHours(0, 0, 0, 0);
-  return monday;
-}
-function getDateForWeekday(dayIdx) {
-  const monday = getMondayOfWeek(WEEK_OFFSET);
-  const d = new Date(monday);
-  d.setDate(monday.getDate() + dayIdx);
-  return d;
-}
-function toDateKey(d) {
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-async function loadWeekTasks() {
-  const monday = getMondayOfWeek(WEEK_OFFSET);
-  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-  const { data } = await sb.from("tank_tasks").select("*, tanks(name)")
-    .gte("task_date", toDateKey(monday)).lte("task_date", toDateKey(sunday))
-    .order("task_date");
-  WEEK_TASKS = data || [];
+function switchMainTab(tab) {
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+  document.getElementById("customersTab").style.display = tab === "customers" ? "block" : "none";
+  document.getElementById("debtTab").style.display = tab === "debt" ? "block" : "none";
 }
 
-function nowLocalDatetime() {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
+function setFormType(t) {
+  FORM_TYPE = t;
+  document.getElementById("typeRetailBtn").classList.toggle("active", t === "retail");
+  document.getElementById("typeWholesaleBtn").classList.toggle("active", t === "wholesale");
 }
 
-async function loadTanks() {
-  const { data } = await sb.from("tanks").select("*, customers(name)").order("name");
-  ALL_TANKS = data || [];
-}
-async function loadCustomersForTank() {
-  const { data } = await sb.from("customers").select("id, name").order("name");
-  ALL_CUSTOMERS_TK = data || [];
-}
-async function loadCareSchedule() {
-  const { data } = await sb.from("tank_care_schedule").select("*, tanks(name)").order("day_of_week").order("time_slot");
-  ALL_CARE_SCHEDULE = data || [];
-}
-
-async function renderGridView() {
-  document.getElementById("gridView").style.display = "block";
-  document.getElementById("tankDetailView").style.display = "none";
-
-  await loadWeekTasks();
-
-  const scheduledTankIds = new Set(ALL_CARE_SCHEDULE.map(s => s.tank_id));
-  const unscheduled = ALL_TANKS.filter(t => !scheduledTankIds.has(t.id));
-
-  const wrap = document.getElementById("gridView");
-  const weekDates = [getDateForWeekday(0), getDateForWeekday(6)];
-  const weekRangeLabel = `${weekDates[0].toLocaleDateString("vi-VN")} — ${weekDates[1].toLocaleDateString("vi-VN")}`;
-  const weekTitleLabel = WEEK_OFFSET === 0 ? "Tuần này" : WEEK_OFFSET === 1 ? "Tuần sau" : WEEK_OFFSET === -1 ? "Tuần trước"
-    : (WEEK_OFFSET > 0 ? WEEK_OFFSET + " tuần sau" : Math.abs(WEEK_OFFSET) + " tuần trước");
-
-  wrap.innerHTML = `
-    <div class="week-nav">
-      <button class="btn btn-secondary btn-mini" id="weekPrevBtn">← Tuần trước</button>
-      <div style="text-align:center;">
-        <div style="font-family:var(--font-display); font-size:16px; font-weight:600; color:var(--ink);">${weekTitleLabel}</div>
-        <div class="text-mute" style="font-size:12px;">${weekRangeLabel}</div>
-        ${WEEK_OFFSET !== 0 ? `<span class="settings-link" id="weekTodayBtn">Về tuần này</span>` : ""}
-      </div>
-      <button class="btn btn-secondary btn-mini" id="weekNextBtn">Tuần sau →</button>
-    </div>
-    <div class="sched-table-wrap">
-      <table class="sched-table">
-        <thead><tr><th></th>${DAY_NAMES.map((d, i) => `<th class="${i >= 5 ? 'weekend' : ''}">${d}<br><span style="font-weight:400; opacity:0.75;">${getDateForWeekday(i).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}</span></th>`).join("")}</tr></thead>
-        <tbody>
-          ${SLOTS.map(slot => `
-            <tr>
-              <td class="slot-label-cell ${slot.key}">${slot.label}</td>
-              ${DAY_NAMES.map((_, dayIdx) => {
-                const items = ALL_CARE_SCHEDULE.filter(s => s.day_of_week === dayIdx && s.time_slot === slot.key);
-                const dateKey = toDateKey(getDateForWeekday(dayIdx));
-                const tasks = WEEK_TASKS.filter(t => t.task_date === dateKey && t.time_slot === slot.key);
-                return `<td class="sched-cell ${dayIdx >= 5 ? 'weekend' : ''}">
-                  ${items.map(it => `<span class="name-chip" data-tank-id="${it.tank_id}">🪸 ${it.tanks?.name || '—'}</span>`).join("")}
-                  ${tasks.map(t => `<span class="task-chip" data-task-id="${t.id}">${TASK_TYPE_ICON[t.task_type] || '🧾'} ${t.title}</span>`).join("")}
-                  <div class="cell-add-btn" data-day="${dayIdx}" data-slot="${slot.key}">+ Thêm</div>
-                </td>`;
-              }).join("")}
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-
-    ${unscheduled.length > 0 ? `
-    <div style="margin-top:20px;">
-      <div style="font-size:13px; font-weight:600; color:var(--text-mute); margin-bottom:8px;">Bể chưa có lịch cố định</div>
-      <div class="unscheduled-grid">
-        ${unscheduled.map(t => `<div class="unscheduled-chip" data-tank-id="${t.id}">🪸 ${t.name}</div>`).join("")}
-        <div class="unscheduled-chip" id="addNewTankChip" style="border-style:solid; color:var(--teal-deep); border-color:var(--teal);">+ Thêm bể mới</div>
-      </div>
-    </div>` : `
-    <div style="margin-top:20px;">
-      <span class="unscheduled-chip" id="addNewTankChip" style="border-style:solid; color:var(--teal-deep); border-color:var(--teal);">+ Thêm bể mới (chưa xếp lịch)</span>
-    </div>`}
-
-    <div class="panel" style="margin-top:24px;">
-      <div class="panel-header flex" style="justify-content:space-between;">
-        <h2>Công việc (Setup, Bàn giao bể...)</h2>
-        <button class="btn btn-primary btn-mini" id="addTaskBtn">+ Thêm công việc</button>
-      </div>
-      <div class="panel-body" id="taskListWrap"></div>
-    </div>
-  `;
-
-  await renderTaskList();
-
-  wrap.querySelectorAll(".name-chip").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
-  wrap.querySelectorAll(".task-chip").forEach(el => el.addEventListener("click", () => openTaskDetail(el.dataset.taskId)));
-
-  document.getElementById("weekPrevBtn").addEventListener("click", () => { WEEK_OFFSET--; renderGridView(); });
-  document.getElementById("weekNextBtn").addEventListener("click", () => { WEEK_OFFSET++; renderGridView(); });
-  document.getElementById("weekTodayBtn")?.addEventListener("click", () => { WEEK_OFFSET = 0; renderGridView(); });
-  wrap.querySelectorAll(".unscheduled-chip[data-tank-id]").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
-  wrap.querySelectorAll(".cell-add-btn").forEach(el => el.addEventListener("click", () => openAddSlotModal(Number(el.dataset.day), el.dataset.slot)));
-  document.getElementById("addNewTankChip")?.addEventListener("click", () => openTankModal());
-}
-
-let ADD_SLOT_TYPE = "care";
-let ADD_SLOT_TASK_TYPE = "setup";
-
-function openAddSlotModal(dayOfWeek, timeSlot) {
-  ADD_SLOT_DAY = dayOfWeek;
-  ADD_SLOT_TIME = timeSlot;
-  ADD_SLOT_TYPE = "care";
-  ADD_SLOT_TASK_TYPE = "setup";
-  const slotLabel = SLOTS.find(s => s.key === timeSlot)?.label;
-  const dateLabel = getDateForWeekday(dayOfWeek).toLocaleDateString("vi-VN");
-  document.getElementById("addSlotTitle").textContent = `Thêm vào lịch — ${DAY_NAMES[dayOfWeek]} (${dateLabel}), buổi ${slotLabel}`;
-
-  document.querySelectorAll("#addSlotModal [data-addtype]").forEach(el => el.classList.toggle("active", el.dataset.addtype === "care"));
-  document.getElementById("addSlotCareFields").style.display = "block";
-  document.getElementById("addSlotTaskFields").style.display = "none";
-
-  document.getElementById("as_existingTank").innerHTML = `<option value="">— Hoặc tạo bể mới bên dưới —</option>` +
-    ALL_TANKS.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
-  document.getElementById("as_newTankName").value = "";
-  document.getElementById("as_customer").innerHTML = `<option value="">— Không liên kết —</option>` +
-    ALL_CUSTOMERS_TK.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-
-  document.querySelectorAll("#addSlotModal [data-slottasktype]").forEach(el => el.classList.toggle("active", el.dataset.slottasktype === "setup"));
-  document.getElementById("as_taskTitle").value = "";
-  document.getElementById("as_taskTank").innerHTML = `<option value="">— Không liên kết —</option>` +
-    ALL_TANKS.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
-  document.getElementById("as_taskNote").value = "";
-
-  document.getElementById("addSlotModal").classList.add("open");
-}
-
-async function saveAddSlot() {
-  const btn = document.getElementById("addSlotSaveBtn");
-
-  if (ADD_SLOT_TYPE === "task") {
-    const title = document.getElementById("as_taskTitle").value.trim();
-    if (!title) { alert("Vui lòng nhập tiêu đề công việc."); return; }
-
-    btn.disabled = true; btn.textContent = "Đang lưu...";
-    const { error } = await sb.from("tank_tasks").insert({
-      title, task_type: ADD_SLOT_TASK_TYPE,
-      task_date: toDateKey(getDateForWeekday(ADD_SLOT_DAY)),
-      time_slot: ADD_SLOT_TIME,
-      tank_id: document.getElementById("as_taskTank").value || null,
-      note: document.getElementById("as_taskNote").value.trim() || null,
-      created_by: CURRENT_PROFILE.id
-    });
-    btn.disabled = false; btn.textContent = "Thêm vào lịch";
-    if (error) { alert("Lỗi: " + error.message); return; }
-
-    document.getElementById("addSlotModal").classList.remove("open");
-    renderGridView();
-    return;
-  }
-
-  const existingTankId = document.getElementById("as_existingTank").value;
-  const newName = document.getElementById("as_newTankName").value.trim();
-
-  if (!existingTankId && !newName) { alert("Vui lòng chọn bể có sẵn hoặc nhập tên bể mới."); return; }
-
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-
-  let tankId = existingTankId;
-  if (!tankId) {
-    const customerId = document.getElementById("as_customer").value || null;
-    const { data: newTank, error: tankErr } = await sb.from("tanks").insert({
-      name: newName, customer_id: customerId, created_by: CURRENT_PROFILE.id
-    }).select().single();
-    if (tankErr) { alert("Lỗi khi tạo bể: " + tankErr.message); btn.disabled = false; btn.textContent = "Thêm vào lịch"; return; }
-    tankId = newTank.id;
-  }
-
-  const { error } = await sb.from("tank_care_schedule").insert({
-    tank_id: tankId, day_of_week: ADD_SLOT_DAY, time_slot: ADD_SLOT_TIME, created_by: CURRENT_PROFILE.id
-  });
-
-  btn.disabled = false; btn.textContent = "Thêm vào lịch";
-  if (error) { alert("Lỗi: " + error.message); return; }
-
-  document.getElementById("addSlotModal").classList.remove("open");
-  await Promise.all([loadTanks(), loadCareSchedule()]);
-  renderGridView();
-}
-
-function bindGlobalEvents() {
-  document.getElementById("addSlotClose").addEventListener("click", () => document.getElementById("addSlotModal").classList.remove("open"));
-  document.getElementById("addSlotCancelBtn").addEventListener("click", () => document.getElementById("addSlotModal").classList.remove("open"));
-  document.getElementById("addSlotSaveBtn").addEventListener("click", saveAddSlot);
-
-  document.querySelectorAll("#addSlotModal [data-addtype]").forEach(el => {
-    el.addEventListener("click", () => {
-      ADD_SLOT_TYPE = el.dataset.addtype;
-      document.querySelectorAll("#addSlotModal [data-addtype]").forEach(x => x.classList.remove("active"));
-      el.classList.add("active");
-      document.getElementById("addSlotCareFields").style.display = ADD_SLOT_TYPE === "care" ? "block" : "none";
-      document.getElementById("addSlotTaskFields").style.display = ADD_SLOT_TYPE === "task" ? "block" : "none";
-    });
-  });
-  document.querySelectorAll("#addSlotModal [data-slottasktype]").forEach(el => {
-    el.addEventListener("click", () => {
-      ADD_SLOT_TASK_TYPE = el.dataset.slottasktype;
-      document.querySelectorAll("#addSlotModal [data-slottasktype]").forEach(x => x.classList.remove("active"));
-      el.classList.add("active");
-    });
-  });
-
-  document.getElementById("tankModalClose").addEventListener("click", () => document.getElementById("tankModal").classList.remove("open"));
-  document.getElementById("tankCancelBtn").addEventListener("click", () => document.getElementById("tankModal").classList.remove("open"));
-  document.getElementById("tankForm").addEventListener("submit", saveTank);
-
-  document.getElementById("paramModalClose").addEventListener("click", () => document.getElementById("paramModal").classList.remove("open"));
-  document.getElementById("paramCancelBtn").addEventListener("click", () => document.getElementById("paramModal").classList.remove("open"));
-  document.getElementById("paramSaveBtn").addEventListener("click", saveParam);
-
-  document.getElementById("chemModalClose").addEventListener("click", () => document.getElementById("chemModal").classList.remove("open"));
-  document.getElementById("chemCancelBtn").addEventListener("click", () => document.getElementById("chemModal").classList.remove("open"));
-  document.getElementById("chemSaveBtn").addEventListener("click", saveChemical);
-
-  document.getElementById("readingModalClose").addEventListener("click", () => document.getElementById("readingModal").classList.remove("open"));
-  document.getElementById("readingCancelBtn").addEventListener("click", () => document.getElementById("readingModal").classList.remove("open"));
-  document.getElementById("readingSaveBtn").addEventListener("click", saveReading);
-
-  document.getElementById("dosingModalClose").addEventListener("click", () => document.getElementById("dosingModal").classList.remove("open"));
-  document.getElementById("dosingCancelBtn").addEventListener("click", () => document.getElementById("dosingModal").classList.remove("open"));
-  document.getElementById("dosingSaveBtn").addEventListener("click", saveDosing);
-}
-
-function openTankModal(id) {
-  EDIT_TANK_ID = id || null;
-  const t = id ? ALL_TANKS.find(x => x.id === id) : null;
-  document.getElementById("tankModalTitle").textContent = t ? "Sửa bể" : "Thêm bể mới";
-  document.getElementById("tk_name").value = t?.name || "";
-  document.getElementById("tk_customer").innerHTML = `<option value="">— Bể của shop —</option>` +
-    ALL_CUSTOMERS_TK.map(c => `<option value="${c.id}" ${c.id === t?.customer_id ? 'selected' : ''}>${c.name}</option>`).join("");
-  document.getElementById("tk_notes").value = t?.notes || "";
-  document.getElementById("tankModal").classList.add("open");
-}
-
-async function saveTank(e) {
-  e.preventDefault();
-  const payload = {
-    name: document.getElementById("tk_name").value.trim(),
-    customer_id: document.getElementById("tk_customer").value || null,
-    notes: document.getElementById("tk_notes").value.trim() || null,
-  };
-  const btn = document.getElementById("tankSaveBtn");
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-
-  let error, savedId = EDIT_TANK_ID;
-  if (EDIT_TANK_ID) {
-    ({ error } = await sb.from("tanks").update(payload).eq("id", EDIT_TANK_ID));
-  } else {
-    const { data, error: insErr } = await sb.from("tanks").insert({ ...payload, created_by: CURRENT_PROFILE.id }).select().single();
-    error = insErr;
-    savedId = data?.id;
-  }
-
-  btn.disabled = false; btn.textContent = "Lưu";
-  if (error) { alert("Lỗi: " + error.message); return; }
-  document.getElementById("tankModal").classList.remove("open");
-  await loadTanks();
-
-  if (document.getElementById("tankDetailView").style.display !== "none" && CURRENT_TANK) {
-    await openTankDetail(CURRENT_TANK.id);
-  } else {
-    renderGridView();
-  }
-}
-
-async function openTankDetail(tankId) {
-  CURRENT_TANK = ALL_TANKS.find(t => t.id === tankId);
-  if (!CURRENT_TANK) return;
-
-  document.getElementById("gridView").style.display = "none";
-  document.getElementById("tankDetailView").style.display = "block";
-
-  await Promise.all([loadTankParams(tankId), loadTankChemicals(tankId), loadTankReadings(tankId), loadTankDosing(tankId)]);
-  CURRENT_TANK_SCHEDULE = ALL_CARE_SCHEDULE.filter(s => s.tank_id === tankId);
-  renderTankDetailView();
-}
-
-async function loadTankParams(tankId) {
-  const { data } = await sb.from("tank_parameters").select("*").eq("tank_id", tankId).order("display_order").order("created_at");
-  CURRENT_PARAMS = data || [];
-}
-async function loadTankChemicals(tankId) {
-  const { data } = await sb.from("tank_chemicals").select("*").eq("tank_id", tankId).order("created_at");
-  CURRENT_CHEMICALS = data || [];
-}
-async function loadTankReadings(tankId) {
-  const { data: readings } = await sb.from("tank_readings").select("*").eq("tank_id", tankId).order("reading_date", { ascending: true });
-  const readingIds = (readings || []).map(r => r.id);
-  let values = [];
-  if (readingIds.length > 0) {
-    const { data } = await sb.from("tank_reading_values").select("*").in("reading_id", readingIds);
-    values = data || [];
-  }
-  CURRENT_READINGS = (readings || []).map(r => {
-    const valMap = {};
-    values.filter(v => v.reading_id === r.id).forEach(v => { valMap[v.parameter_id] = v.value; });
-    return { ...r, values: valMap };
-  });
-}
-async function loadTankDosing(tankId) {
-  const { data } = await sb.from("tank_dosing_log").select("*, tank_chemicals(name, unit)").eq("tank_id", tankId).order("dose_date", { ascending: false }).limit(50);
-  CURRENT_DOSING = data || [];
-}
-
-function renderTankDetailView() {
-  const wrap = document.getElementById("tankDetailView");
-  wrap.innerHTML = `
-    <div class="back-link" id="backToGridBtn">← Quay lại lịch chăm sóc</div>
-    <div class="flex" style="justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
-      <div>
-        <h2 style="font-family:var(--font-display); font-size:22px;">🪸 ${CURRENT_TANK.name}</h2>
-        <div class="text-mute" style="font-size:13px; margin-top:4px;">${CURRENT_TANK.customers?.name ? '👤 ' + CURRENT_TANK.customers.name : 'Bể của shop'}</div>
-      </div>
-      <span class="btn btn-secondary btn-mini" id="editTankBtn">Sửa thông tin bể</span>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h2>Lịch chăm sóc cố định</h2></div>
-      <div class="panel-body">
-        ${CURRENT_TANK_SCHEDULE.length === 0
-          ? `<div class="empty-state"><div class="icon">🗓️</div>Bể này chưa có lịch cố định.</div>`
-          : `<div id="tankSchedList">${CURRENT_TANK_SCHEDULE.map(s => `
-              <div class="sched-row" data-id="${s.id}">
-                <span>${DAY_NAMES[s.day_of_week]} — ${SLOTS.find(x => x.key === s.time_slot)?.label}</span>
-                <span class="s-remove" data-id="${s.id}">✕</span>
-              </div>`).join("")}</div>`
-        }
-        <div style="margin-top:12px;">
-          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thêm lịch mới cho bể này</label>
-          <div class="flex gap-8" style="flex-wrap:wrap;">
-            <select id="quickAddDay" style="max-width:140px;">${DAY_NAMES.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select>
-            <select id="quickAddSlot" style="max-width:120px;">${SLOTS.map(s => `<option value="${s.key}">${s.label}</option>`).join("")}</select>
-            <button class="btn btn-secondary btn-mini" id="quickAddSchedBtn">+ Thêm</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header flex" style="justify-content:space-between;">
-        <h2>Chỉ số theo dõi</h2>
-        <div class="flex gap-8">
-          <span class="btn btn-secondary btn-mini" id="addParamBtn">+ Thêm chỉ số</span>
-          ${CURRENT_PARAMS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addReadingBtn">+ Ghi nhận đo</button>` : ""}
-        </div>
-      </div>
-      <div class="panel-body">
-        ${CURRENT_PARAMS.length === 0
-          ? `<div class="empty-state"><div class="icon">📊</div>Chưa có chỉ số nào. Thêm chỉ số (VD: pH, KH, Canxi...) để bắt đầu theo dõi.</div>`
-          : `<div id="paramManageList">${CURRENT_PARAMS.map(p => `
-              <div class="param-row" data-id="${p.id}">
-                <span>${p.name}${p.unit ? ` <span class="text-mute">(${p.unit})</span>` : ''}</span>
-                <span class="p-remove" data-id="${p.id}">✕</span>
-              </div>`).join("")}</div>`
-        }
-      </div>
-    </div>
-
-    ${CURRENT_PARAMS.length > 0 ? `
-    <div class="panel">
-      <div class="panel-header"><h2>Biểu đồ theo thời gian</h2></div>
-      <div class="panel-body">
-        ${CURRENT_READINGS.length < 2
-          ? `<div class="empty-state"><div class="icon">📈</div>Cần ít nhất 2 lần đo để vẽ được biểu đồ. Hiện có ${CURRENT_READINGS.length} lần đo.</div>`
-          : `<div class="chart-grid">${CURRENT_PARAMS.map(p => `
-              <div class="chart-card"><h4>${p.name}${p.unit ? ' (' + p.unit + ')' : ''}</h4><canvas id="chart-${p.id}"></canvas></div>
-            `).join("")}</div>`
-        }
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header"><h2>Lịch sử đo</h2></div>
-      <div class="panel-body">
-        ${CURRENT_READINGS.length === 0 ? `<div class="empty-state"><div class="icon">🧪</div>Chưa có lần đo nào.</div>` : `
-        <table><thead><tr><th>Ngày</th>${CURRENT_PARAMS.map(p => `<th>${p.name}</th>`).join("")}<th>Ghi chú</th></tr></thead><tbody>
-          ${[...CURRENT_READINGS].reverse().map(r => `<tr>
-            <td>${formatDateTime(r.reading_date)}</td>
-            ${CURRENT_PARAMS.map(p => `<td>${r.values[p.id] !== undefined ? r.values[p.id] : '—'}</td>`).join("")}
-            <td>${r.note || '—'}</td>
-          </tr>`).join("")}
-        </tbody></table>`}
-      </div>
-    </div>` : ""}
-
-    <div class="panel">
-      <div class="panel-header flex" style="justify-content:space-between;">
-        <h2>Hóa chất châm</h2>
-        <div class="flex gap-8">
-          <span class="btn btn-secondary btn-mini" id="addChemBtn">+ Thêm hóa chất</span>
-          ${CURRENT_CHEMICALS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addDosingBtn">+ Ghi nhận châm</button>` : ""}
-        </div>
-      </div>
-      <div class="panel-body">
-        ${CURRENT_CHEMICALS.length === 0
-          ? `<div class="empty-state"><div class="icon">🧴</div>Chưa có hóa chất nào. Thêm hóa chất (VD: Canxi lỏng, KH Buffer...) để bắt đầu ghi liều châm.</div>`
-          : `<div id="chemManageList" style="margin-bottom:14px;">${CURRENT_CHEMICALS.map(c => `
-              <div class="chem-row" data-id="${c.id}">
-                <span>${c.name}${c.unit ? ` <span class="text-mute">(${c.unit})</span>` : ''}</span>
-                <span class="c-remove" data-id="${c.id}">✕</span>
-              </div>`).join("")}</div>
-              ${CURRENT_DOSING.length === 0 ? `<div class="empty-state"><div class="icon">💧</div>Chưa có lần châm nào.</div>` : `
-              <table><thead><tr><th>Ngày</th><th>Hóa chất</th><th>Liều lượng</th><th>Ghi chú</th></tr></thead><tbody>
-                ${CURRENT_DOSING.map(d => `<tr>
-                  <td>${formatDateTime(d.dose_date)}</td>
-                  <td>${d.tank_chemicals?.name || '—'}</td>
-                  <td>${d.dose_amount} ${d.tank_chemicals?.unit || ''}</td>
-                  <td>${d.note || '—'}</td>
-                </tr>`).join("")}
-              </tbody></table>`}`
-        }
-      </div>
-    </div>
-  `;
-
-  bindDetailEvents();
-  if (CURRENT_PARAMS.length > 0 && CURRENT_READINGS.length >= 2) renderCharts();
-}
-
-function bindDetailEvents() {
-  document.getElementById("backToGridBtn").addEventListener("click", () => { destroyCharts(); renderGridView(); });
-  document.getElementById("editTankBtn").addEventListener("click", () => openTankModal(CURRENT_TANK.id));
-  document.getElementById("addParamBtn").addEventListener("click", () => {
-    document.getElementById("pm_name").value = "";
-    document.getElementById("pm_unit").value = "";
-    document.getElementById("paramModal").classList.add("open");
-  });
-  document.getElementById("addChemBtn").addEventListener("click", () => {
-    document.getElementById("cm_name").value = "";
-    document.getElementById("cm_unit").value = "";
-    document.getElementById("chemModal").classList.add("open");
-  });
-  const addReadingBtn = document.getElementById("addReadingBtn");
-  if (addReadingBtn) addReadingBtn.addEventListener("click", openReadingModal);
-  const addDosingBtn = document.getElementById("addDosingBtn");
-  if (addDosingBtn) addDosingBtn.addEventListener("click", openDosingModal);
-
-  document.querySelectorAll(".p-remove").forEach(el => el.addEventListener("click", () => removeParam(el.dataset.id)));
-  document.querySelectorAll(".c-remove").forEach(el => el.addEventListener("click", () => removeChemical(el.dataset.id)));
-  document.querySelectorAll(".s-remove").forEach(el => el.addEventListener("click", () => removeTankScheduleSlot(el.dataset.id)));
-  document.getElementById("quickAddSchedBtn").addEventListener("click", addTankScheduleSlot);
-}
-
-async function addTankScheduleSlot() {
-  const day = Number(document.getElementById("quickAddDay").value);
-  const slot = document.getElementById("quickAddSlot").value;
-
-  const dup = CURRENT_TANK_SCHEDULE.find(s => s.day_of_week === day && s.time_slot === slot);
-  if (dup) { alert("Bể này đã có lịch vào đúng ngày/buổi này rồi."); return; }
-
-  const { error } = await sb.from("tank_care_schedule").insert({
-    tank_id: CURRENT_TANK.id, day_of_week: day, time_slot: slot, created_by: CURRENT_PROFILE.id
-  });
-  if (error) { alert("Lỗi: " + error.message); return; }
-  await loadCareSchedule();
-  CURRENT_TANK_SCHEDULE = ALL_CARE_SCHEDULE.filter(s => s.tank_id === CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-async function removeTankScheduleSlot(id) {
-  if (!window.confirm("Bỏ lịch cố định này?")) return;
-  await sb.from("tank_care_schedule").delete().eq("id", id);
-  await loadCareSchedule();
-  CURRENT_TANK_SCHEDULE = ALL_CARE_SCHEDULE.filter(s => s.tank_id === CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-async function saveParam() {
-  const name = document.getElementById("pm_name").value.trim();
-  if (!name) { alert("Vui lòng nhập tên chỉ số."); return; }
-  const unit = document.getElementById("pm_unit").value.trim() || null;
-  const { error } = await sb.from("tank_parameters").insert({ tank_id: CURRENT_TANK.id, name, unit, display_order: CURRENT_PARAMS.length });
-  if (error) { alert("Lỗi: " + error.message); return; }
-  document.getElementById("paramModal").classList.remove("open");
-  await loadTankParams(CURRENT_TANK.id);
-  await loadTankReadings(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-async function removeParam(paramId) {
-  if (!window.confirm("Xóa chỉ số này? Toàn bộ dữ liệu đo đã ghi cho chỉ số này cũng sẽ bị xóa.")) return;
-  await sb.from("tank_parameters").delete().eq("id", paramId);
-  await loadTankParams(CURRENT_TANK.id);
-  await loadTankReadings(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-async function saveChemical() {
-  const name = document.getElementById("cm_name").value.trim();
-  if (!name) { alert("Vui lòng nhập tên hóa chất."); return; }
-  const unit = document.getElementById("cm_unit").value.trim() || null;
-  const { error } = await sb.from("tank_chemicals").insert({ tank_id: CURRENT_TANK.id, name, unit });
-  if (error) { alert("Lỗi: " + error.message); return; }
-  document.getElementById("chemModal").classList.remove("open");
-  await loadTankChemicals(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-async function removeChemical(chemId) {
-  if (!window.confirm("Xóa hóa chất này? Lịch sử châm của hóa chất này cũng sẽ bị xóa.")) return;
-  await sb.from("tank_chemicals").delete().eq("id", chemId);
-  await loadTankChemicals(CURRENT_TANK.id);
-  await loadTankDosing(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-function openReadingModal() {
-  document.getElementById("rd_date").value = nowLocalDatetime();
-  document.getElementById("rd_note").value = "";
-  document.getElementById("rd_paramInputs").innerHTML = CURRENT_PARAMS.map(p => `
-    <div class="reading-input-row">
-      <label style="margin-bottom:0;">${p.name}${p.unit ? ` (${p.unit})` : ''}</label>
-      <input type="number" step="any" data-param-id="${p.id}" id="rdval-${p.id}">
-    </div>
-  `).join("");
-  document.getElementById("readingModal").classList.add("open");
-}
-
-async function saveReading() {
-  const btn = document.getElementById("readingSaveBtn");
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-
-  const dateVal = document.getElementById("rd_date").value;
-  const note = document.getElementById("rd_note").value.trim() || null;
-
-  const { data: reading, error } = await sb.from("tank_readings").insert({
-    tank_id: CURRENT_TANK.id,
-    reading_date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
-    note, created_by: CURRENT_PROFILE.id
-  }).select().single();
-
-  if (error) { alert("Lỗi: " + error.message); btn.disabled = false; btn.textContent = "Lưu kết quả đo"; return; }
-
-  const valueRows = CURRENT_PARAMS
-    .map(p => ({ reading_id: reading.id, parameter_id: p.id, value: document.getElementById(`rdval-${p.id}`).value }))
-    .filter(v => v.value !== "")
-    .map(v => ({ ...v, value: Number(v.value) }));
-
-  if (valueRows.length > 0) await sb.from("tank_reading_values").insert(valueRows);
-
-  btn.disabled = false; btn.textContent = "Lưu kết quả đo";
-  document.getElementById("readingModal").classList.remove("open");
-  await loadTankReadings(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-function openDosingModal() {
-  document.getElementById("ds_chemical").innerHTML = CURRENT_CHEMICALS.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-  document.getElementById("ds_amount").value = "";
-  document.getElementById("ds_date").value = nowLocalDatetime();
-  document.getElementById("ds_note").value = "";
-  document.getElementById("dosingModal").classList.add("open");
-}
-
-async function saveDosing() {
-  const chemicalId = document.getElementById("ds_chemical").value;
-  const amount = Number(document.getElementById("ds_amount").value || 0);
-  if (!chemicalId || amount <= 0) { alert("Vui lòng chọn hóa chất và nhập liều lượng hợp lệ."); return; }
-  const dateVal = document.getElementById("ds_date").value;
-  const note = document.getElementById("ds_note").value.trim() || null;
-
-  const btn = document.getElementById("dosingSaveBtn");
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-
-  const { error } = await sb.from("tank_dosing_log").insert({
-    tank_id: CURRENT_TANK.id, chemical_id: chemicalId, dose_amount: amount,
-    dose_date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
-    note, created_by: CURRENT_PROFILE.id
-  });
-
-  btn.disabled = false; btn.textContent = "Lưu";
-  if (error) { alert("Lỗi: " + error.message); return; }
-  document.getElementById("dosingModal").classList.remove("open");
-  await loadTankDosing(CURRENT_TANK.id);
-  renderTankDetailView();
-}
-
-function destroyCharts() {
-  Object.values(CHART_INSTANCES).forEach(c => c.destroy());
-  CHART_INSTANCES = {};
-}
-
-function renderCharts() {
-  destroyCharts();
-  CURRENT_PARAMS.forEach(p => {
-    const canvas = document.getElementById(`chart-${p.id}`);
-    if (!canvas) return;
-    const filtered = CURRENT_READINGS.filter(r => r.values[p.id] !== undefined);
-    if (filtered.length < 2) {
-      const ctx = canvas.getContext("2d");
-      ctx.font = "12px sans-serif";
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText("Chưa đủ dữ liệu cho chỉ số này", 10, 20);
-      return;
+/* ================= TAB: KHÁCH HÀNG ================= */
+async function loadCustomers() {
+  const { data, error } = await sb.from("customers").select("*").order("name");
+  if (error) { console.error(error); return; }
+  ALL_CUSTOMERS = data || [];
+
+  const { data: orders } = await sb
+    .from("orders")
+    .select("customer_id, total_amount, created_at")
+    .eq("status", "completed")
+    .not("customer_id", "is", null);
+
+  CUSTOMER_STATS = {};
+  (orders || []).forEach(o => {
+    if (!CUSTOMER_STATS[o.customer_id]) {
+      CUSTOMER_STATS[o.customer_id] = { orderCount: 0, totalSpent: 0, lastOrderDate: null };
     }
-    const labels = filtered.map(r => formatDate(r.reading_date));
-    const data = filtered.map(r => r.values[p.id]);
-
-    CHART_INSTANCES[p.id] = new Chart(canvas, {
-      type: "line",
-      data: {
-        labels,
-        datasets: [{
-          label: p.name,
-          data,
-          borderColor: "#16a085",
-          backgroundColor: "rgba(0,168,150,0.1)",
-          tension: 0.25,
-          pointRadius: 3,
-          fill: true,
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { font: { size: 10 } } },
-          y: { ticks: { font: { size: 10 } } }
-        }
-      }
-    });
+    const s = CUSTOMER_STATS[o.customer_id];
+    s.orderCount += 1;
+    s.totalSpent += Number(o.total_amount);
+    if (!s.lastOrderDate || new Date(o.created_at) > new Date(s.lastOrderDate)) {
+      s.lastOrderDate = o.created_at;
+    }
   });
+
+  renderTable(document.getElementById("searchInput")?.value || "");
 }
 
-/* ============================================================
-   CÔNG VIỆC (Setup, Bàn giao...) — ghi theo ngày thực tế,
-   không lặp lại như lịch chăm sóc, kèm báo giá/bảng kê
-   ============================================================ */
-let ALL_TASKS = [];
-let TASK_TYPE = "setup";
-let EDIT_TASK_ID = null;
-let CURRENT_TASK = null;
-let CURRENT_QUOTE_ITEMS = [];
-const TASK_TYPE_LABEL = { setup: "🔧 Setup bể", ban_giao: "📦 Bàn giao", khac: "Khác" };
-const TASK_TYPE_ICON = { setup: "🔧", ban_giao: "📦", khac: "🧾" };
+function renderTable(filter) {
+  const wrap = document.getElementById("tableWrap");
+  const f = (filter || "").trim().toLowerCase();
+  let list = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
 
-async function loadTasks() {
-  const { data } = await sb.from("tank_tasks").select("*, tanks(name)").order("task_date", { ascending: false }).limit(100);
-  ALL_TASKS = data || [];
-}
+  const statsOf = (id) => CUSTOMER_STATS[id] || { orderCount: 0, totalSpent: 0, lastOrderDate: null };
 
-async function renderTaskList() {
-  await loadTasks();
-  const wrap = document.getElementById("taskListWrap");
-  if (!wrap) return;
+  if (SORT_MODE === "spend") {
+    list = [...list].sort((a, b) => statsOf(b.id).totalSpent - statsOf(a.id).totalSpent);
+  } else if (SORT_MODE === "recent") {
+    list = [...list].sort((a, b) => {
+      const da = statsOf(a.id).lastOrderDate, db = statsOf(b.id).lastOrderDate;
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      return new Date(db) - new Date(da);
+    });
+  }
 
-  document.getElementById("addTaskBtn").addEventListener("click", openTaskModal);
-
-  if (ALL_TASKS.length === 0) {
-    wrap.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Chưa có công việc nào. Bấm "+ Thêm công việc" để bắt đầu ghi (VD: Setup bể mới, Bàn giao bể cho khách...).</div>`;
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">👤</div>
+      ${ALL_CUSTOMERS.length === 0 ? 'Chưa có khách hàng nào.' : 'Không tìm thấy khách hàng phù hợp.'}
+    </div>`;
     return;
   }
 
-  wrap.innerHTML = `<table><thead><tr><th>Ngày</th><th>Loại</th><th>Tiêu đề</th><th>Bể/Khách</th><th>Trạng thái</th></tr></thead><tbody>
-    ${ALL_TASKS.map(t => `<tr class="order-row-clickable" data-task-id="${t.id}" style="cursor:pointer;">
-      <td>${formatDate(t.task_date)}</td>
-      <td>${TASK_TYPE_LABEL[t.task_type] || t.task_type}</td>
-      <td>${t.title}</td>
-      <td>${t.tanks?.name || t.customer_name || '—'}</td>
-      <td><span class="badge ${t.status === 'done' ? 'paid' : 'debt'}">${t.status === 'done' ? 'Đã xong' : 'Đang chờ'}</span></td>
-    </tr>`).join("")}
+  const maxSpent = Math.max(...list.map(c => statsOf(c.id).totalSpent), 0);
+
+  wrap.innerHTML = `<table><thead><tr>
+      <th>Tên khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Loại</th><th>Số đơn</th><th>Tổng chi tiêu</th><th>Mua gần nhất</th><th></th>
+    </tr></thead><tbody>
+    ${list.map(c => {
+      const s = statsOf(c.id);
+      const isVip = maxSpent > 0 && s.totalSpent === maxSpent && s.totalSpent > 0;
+      return `<tr>
+        <td class="order-row-clickable" onclick="openOrdersHistory('${c.id}')" style="font-weight:600; color:var(--ink);">${c.name}${isVip ? '<span class="vip-tag">⭐ VIP</span>' : ''}</td>
+        <td>${c.phone || "—"}</td>
+        <td>${c.address || "—"}</td>
+        <td><span class="badge ${c.type}">${c.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+        <td>${s.orderCount}</td>
+        <td>${s.totalSpent > 0 ? formatVND(s.totalSpent) : '—'}</td>
+        <td>${s.lastOrderDate ? formatDate(s.lastOrderDate) : '<span class="no-purchase">Chưa mua</span>'}</td>
+        <td><span class="btn btn-secondary btn-mini" onclick="event.stopPropagation(); openModal('${c.id}')">Sửa</span></td>
+      </tr>`;
+    }).join("")}
+  </tbody></table>`;
+}
+
+function openModal(id) {
+  EDIT_ID = id || null;
+  const c = id ? ALL_CUSTOMERS.find(x => x.id === id) : null;
+  document.getElementById("modalTitle").textContent = c ? "Sửa khách hàng" : "Thêm khách hàng";
+  setFormType(c?.type || "retail");
+  document.getElementById("f_name").value = c?.name || "";
+  document.getElementById("f_phone").value = c?.phone || "";
+  document.getElementById("f_debt_limit").value = c?.debt_limit ?? 0;
+  document.getElementById("f_address").value = c?.address || "";
+  document.getElementById("f_notes").value = c?.notes || "";
+  document.getElementById("modalOverlay").classList.add("open");
+}
+function closeModal() { document.getElementById("modalOverlay").classList.remove("open"); }
+
+async function saveCustomer(e) {
+  e.preventDefault();
+  const saveBtn = document.getElementById("saveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const payload = {
+    name: document.getElementById("f_name").value.trim(),
+    phone: document.getElementById("f_phone").value.trim() || null,
+    type: FORM_TYPE,
+    debt_limit: Number(document.getElementById("f_debt_limit").value || 0),
+    address: document.getElementById("f_address").value.trim() || null,
+    notes: document.getElementById("f_notes").value.trim() || null,
+  };
+
+  let error;
+  if (EDIT_ID) {
+    ({ error } = await sb.from("customers").update(payload).eq("id", EDIT_ID));
+  } else {
+    ({ error } = await sb.from("customers").insert(payload));
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Lưu khách hàng";
+
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  closeModal();
+  await loadCustomers();
+}
+
+async function openOrdersHistory(customerId) {
+  const customer = ALL_CUSTOMERS.find(c => c.id === customerId);
+  if (!customer) return;
+
+  const modal = document.getElementById("ordersHistoryModal");
+  const body = document.getElementById("ordersHistoryBody");
+  document.getElementById("ordersHistoryTitle").textContent = "Lịch sử mua hàng — " + customer.name;
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: orders, error } = await sb
+    .from("orders")
+    .select("id, order_code, type, total_amount, paid_amount, created_at")
+    .eq("customer_id", customerId)
+    .order("created_at", { ascending: false });
+
+  if (error || !orders || orders.length === 0) {
+    body.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Khách hàng này chưa có đơn hàng nào.</div>`;
+    return;
+  }
+
+  body.innerHTML = `<table><thead><tr>
+      <th>Mã đơn</th><th>Ngày</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th>
+    </tr></thead><tbody>
+    ${orders.map(o => {
+      const debt = Number(o.total_amount) - Number(o.paid_amount);
+      return `<tr class="order-row-clickable" data-order-id="${o.id}">
+        <td>${o.order_code}</td>
+        <td>${formatDateTime(o.created_at)}</td>
+        <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+        <td>${formatVND(o.total_amount)}</td>
+        <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+      </tr>`;
+    }).join("")}
   </tbody></table>`;
 
-  wrap.querySelectorAll("[data-task-id]").forEach(el => {
-    el.addEventListener("click", () => openTaskDetail(el.dataset.taskId));
+  body.querySelectorAll(".order-row-clickable").forEach(row => {
+    row.addEventListener("click", () => showOrderDetail(row.dataset.orderId));
   });
 }
 
-function openTaskModal() {
-  EDIT_TASK_ID = null;
-  TASK_TYPE = "setup";
-  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => el.classList.toggle("active", el.dataset.tasktype === "setup"));
-  document.getElementById("tk_task_title").value = "";
-  document.getElementById("tk_task_date").value = new Date().toISOString().slice(0, 10);
-  document.getElementById("tk_task_tank").innerHTML = `<option value="">— Không liên kết —</option>` + ALL_TANKS.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
-  document.getElementById("tk_task_customer").value = "";
-  document.getElementById("tk_task_note").value = "";
-  document.getElementById("taskModal").classList.add("open");
+/* ================= TAB: CÔNG NỢ KHÁCH HÀNG ================= */
+async function loadDebts() {
+  const { data: customers } = await sb.from("customers").select("*");
+  const { data: orders } = await sb.from("orders")
+    .select("id, order_code, type, total_amount, paid_amount, created_at, customer_id")
+    .eq("status", "completed")
+    .not("customer_id", "is", null)
+    .order("created_at", { ascending: true });
+
+  const byCustomer = {};
+  (orders || []).forEach(o => {
+    const debt = Number(o.total_amount) - Number(o.paid_amount);
+    if (debt <= 0) return;
+    if (!byCustomer[o.customer_id]) byCustomer[o.customer_id] = [];
+    byCustomer[o.customer_id].push({ ...o, debt });
+  });
+
+  DEBT_LIST = Object.keys(byCustomer).map(custId => {
+    const customer = (customers || []).find(c => c.id === custId);
+    const ordersForCustomer = byCustomer[custId];
+    const totalDebt = ordersForCustomer.reduce((s, o) => s + o.debt, 0);
+    return { customer, orders: ordersForCustomer, totalDebt };
+  }).filter(x => x.customer).sort((a, b) => b.totalDebt - a.totalDebt);
+
+  renderDebtStats();
+  renderDebtList("");
 }
 
-async function saveTask() {
-  const title = document.getElementById("tk_task_title").value.trim();
-  const date = document.getElementById("tk_task_date").value;
-  if (!title || !date) { alert("Vui lòng nhập tiêu đề và ngày thực hiện."); return; }
-
-  const payload = {
-    title, task_type: TASK_TYPE, task_date: date,
-    tank_id: document.getElementById("tk_task_tank").value || null,
-    customer_name: document.getElementById("tk_task_customer").value.trim() || null,
-    note: document.getElementById("tk_task_note").value.trim() || null,
-  };
-
-  const btn = document.getElementById("taskSaveBtn");
-  btn.disabled = true; btn.textContent = "Đang lưu...";
-  const { error } = await sb.from("tank_tasks").insert({ ...payload, created_by: CURRENT_PROFILE.id });
-  btn.disabled = false; btn.textContent = "Lưu";
-
-  if (error) { alert("Lỗi: " + error.message); return; }
-  document.getElementById("taskModal").classList.remove("open");
-  await renderGridView();
-}
-
-async function openTaskDetail(taskId) {
-  CURRENT_TASK = ALL_TASKS.find(t => t.id === taskId) || WEEK_TASKS.find(t => t.id === taskId);
-  if (!CURRENT_TASK) return;
-
-  document.getElementById("taskDetailTitle").textContent = CURRENT_TASK.title;
-  document.getElementById("taskDetailInfo").innerHTML = `
-    <div class="summary-row"><span>Loại</span><span>${TASK_TYPE_LABEL[CURRENT_TASK.task_type] || CURRENT_TASK.task_type}</span></div>
-    <div class="summary-row"><span>Ngày thực hiện</span><span>${formatDate(CURRENT_TASK.task_date)}</span></div>
-    ${CURRENT_TASK.tanks?.name ? `<div class="summary-row"><span>Bể liên quan</span><span>${CURRENT_TASK.tanks.name}</span></div>` : ""}
-    ${CURRENT_TASK.customer_name ? `<div class="summary-row"><span>Khách hàng</span><span>${CURRENT_TASK.customer_name}</span></div>` : ""}
-    ${CURRENT_TASK.note ? `<div class="summary-row"><span>Ghi chú</span><span>${CURRENT_TASK.note}</span></div>` : ""}
-    <div class="summary-row"><span>Trạng thái</span><span class="badge ${CURRENT_TASK.status === 'done' ? 'paid' : 'debt'}">${CURRENT_TASK.status === 'done' ? 'Đã hoàn thành' : 'Đang chờ'}</span></div>
-    ${CURRENT_TASK.status === 'done' && CURRENT_TASK.completed_at ? `<div class="summary-row"><span>Hoàn thành lúc</span><span>${formatDateTime(CURRENT_TASK.completed_at)}</span></div>` : ""}
+function renderDebtStats() {
+  const total = DEBT_LIST.reduce((s, x) => s + x.totalDebt, 0);
+  document.getElementById("statGrid").innerHTML = `
+    <div class="stat-card danger-card">
+      <div class="label">Tổng công nợ khách hàng</div>
+      <div class="value">${formatVND(total)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Số khách đang nợ</div>
+      <div class="value">${DEBT_LIST.length}</div>
+    </div>
   `;
-
-  const markBtn = document.getElementById("markTaskDoneBtn");
-  markBtn.textContent = CURRENT_TASK.status === 'done' ? "↺ Bỏ đánh dấu hoàn thành" : "✅ Đánh dấu đã hoàn thành";
-
-  await loadQuoteItems(taskId);
-  document.getElementById("taskDetailModal").classList.add("open");
 }
 
-async function loadQuoteItems(taskId) {
-  const { data } = await sb.from("tank_task_quote_items").select("*").eq("task_id", taskId).order("created_at");
-  CURRENT_QUOTE_ITEMS = data || [];
-  renderQuoteItems();
-}
+function renderDebtList(filter) {
+  const wrap = document.getElementById("debtListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = DEBT_LIST.filter(x => !f || x.customer.name.toLowerCase().includes(f) || (x.customer.phone || "").includes(f));
 
-function renderQuoteItems() {
-  const tbody = document.getElementById("quoteItemsTbody");
-  if (CURRENT_QUOTE_ITEMS.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-mute" style="text-align:center; padding:14px;">Chưa có dòng báo giá nào.</td></tr>`;
-  } else {
-    tbody.innerHTML = CURRENT_QUOTE_ITEMS.map(i => `<tr>
-      <td>${i.item_name}</td>
-      <td>${i.quantity}</td>
-      <td>${formatVND(i.unit_price)}</td>
-      <td>${formatVND(i.quantity * i.unit_price)}</td>
-      <td><span class="p-remove" data-qid="${i.id}">✕</span></td>
-    </tr>`).join("");
-    tbody.querySelectorAll(".p-remove").forEach(el => el.addEventListener("click", () => removeQuoteItem(el.dataset.qid)));
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>
+      ${DEBT_LIST.length === 0 ? 'Không có khách hàng nào đang nợ. Tuyệt vời!' : 'Không tìm thấy khách hàng phù hợp.'}
+    </div>`;
+    return;
   }
-  const total = CURRENT_QUOTE_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
-  document.getElementById("quoteTotal").textContent = formatVND(total);
-}
 
-async function addQuoteItemRow() {
-  const name = window.prompt("Tên mục (VD: Bể kính 60x40x40, San hô SPS, Công lắp đặt...):");
-  if (!name || !name.trim()) return;
-  const qtyStr = window.prompt("Số lượng:", "1");
-  const qty = Number(qtyStr);
-  if (isNaN(qty) || qty <= 0) { alert("Số lượng không hợp lệ."); return; }
-  const priceStr = window.prompt("Đơn giá (đ):", "0");
-  const price = Number(priceStr);
-  if (isNaN(price) || price < 0) { alert("Đơn giá không hợp lệ."); return; }
+  wrap.innerHTML = list.map((x, idx) => `
+    <div class="debt-card">
+      <div class="debt-card-head" data-idx="${idx}">
+        <div>
+          <div class="debt-card-name">${x.customer.name}</div>
+          <div class="debt-card-sub">${x.customer.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa thanh toán hết</div>
+        </div>
+        <div class="flex gap-12">
+          <div class="debt-card-amount">${formatVND(x.totalDebt)}</div>
+          <button class="btn btn-primary btn-mini" style="padding:7px 12px;" onclick="event.stopPropagation(); openPayModal('${x.customer.id}')">Ghi nhận trả nợ</button>
+        </div>
+      </div>
+      <div class="debt-card-body" id="debtBody-${idx}">
+        ${x.orders.map(o => `
+          <div class="debt-order-row order-row-clickable" data-order-id="${o.id}" style="border-radius:6px; padding:7px 6px;">
+            <span>${o.order_code} · ${formatDateTime(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
+            <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
 
-  const { error } = await sb.from("tank_task_quote_items").insert({
-    task_id: CURRENT_TASK.id, item_name: name.trim(), quantity: qty, unit_price: price
-  });
-  if (error) { alert("Lỗi: " + error.message); return; }
-  await loadQuoteItems(CURRENT_TASK.id);
-}
-
-async function removeQuoteItem(id) {
-  if (!window.confirm("Xóa dòng này khỏi báo giá?")) return;
-  await sb.from("tank_task_quote_items").delete().eq("id", id);
-  await loadQuoteItems(CURRENT_TASK.id);
-}
-
-async function toggleTaskDone() {
-  if (!CURRENT_TASK) return;
-  const newStatus = CURRENT_TASK.status === 'done' ? 'planned' : 'done';
-  const payload = { status: newStatus, completed_at: newStatus === 'done' ? new Date().toISOString() : null };
-  await sb.from("tank_tasks").update(payload).eq("id", CURRENT_TASK.id);
-  CURRENT_TASK = { ...CURRENT_TASK, ...payload };
-  await renderGridView();
-  openTaskDetail(CURRENT_TASK.id);
-}
-
-async function deleteCurrentTask() {
-  if (!CURRENT_TASK) return;
-  if (!window.confirm(`Xóa công việc "${CURRENT_TASK.title}"? Toàn bộ báo giá đính kèm cũng sẽ bị xóa.`)) return;
-  await sb.from("tank_tasks").delete().eq("id", CURRENT_TASK.id);
-  document.getElementById("taskDetailModal").classList.remove("open");
-  await renderGridView();
-}
-
-/* Bind sự kiện cho khối modal Công việc — gọi 1 lần khi trang khởi tạo */
-function bindTaskEvents() {
-  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => {
+  wrap.querySelectorAll(".debt-card-head").forEach(el => {
     el.addEventListener("click", () => {
-      TASK_TYPE = el.dataset.tasktype;
-      document.querySelectorAll("#taskModal [data-tasktype]").forEach(x => x.classList.remove("active"));
-      el.classList.add("active");
+      document.getElementById(`debtBody-${el.dataset.idx}`).classList.toggle("open");
     });
   });
-  document.getElementById("taskModalClose").addEventListener("click", () => document.getElementById("taskModal").classList.remove("open"));
-  document.getElementById("taskCancelBtn").addEventListener("click", () => document.getElementById("taskModal").classList.remove("open"));
-  document.getElementById("taskSaveBtn").addEventListener("click", saveTask);
+  wrap.querySelectorAll(".order-row-clickable").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showOrderDetail(el.dataset.orderId);
+    });
+  });
+}
 
-  document.getElementById("taskDetailClose").addEventListener("click", () => document.getElementById("taskDetailModal").classList.remove("open"));
-  document.getElementById("addQuoteItemBtn").addEventListener("click", addQuoteItemRow);
-  document.getElementById("markTaskDoneBtn").addEventListener("click", toggleTaskDone);
-  document.getElementById("deleteTaskBtn").addEventListener("click", deleteCurrentTask);
+function openPayModal(customerId) {
+  PAY_CUSTOMER = DEBT_LIST.find(x => x.customer.id === customerId);
+  if (!PAY_CUSTOMER) return;
+  document.getElementById("payModalTitle").textContent = "Ghi nhận thanh toán — " + PAY_CUSTOMER.customer.name;
+  document.getElementById("payCurrentDebt").textContent = formatVND(PAY_CUSTOMER.totalDebt);
+  document.getElementById("pay_cash").value = 0;
+  document.getElementById("pay_transfer").value = 0;
+  document.getElementById("pay_note").value = "";
+  updatePaySummary();
+  document.getElementById("payModal").classList.add("open");
+}
+function closePayModal() { document.getElementById("payModal").classList.remove("open"); }
+
+function updatePaySummary() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  const remaining = Math.max(PAY_CUSTOMER.totalDebt - cash - transfer, 0);
+  document.getElementById("payRemaining").textContent = formatVND(remaining);
+}
+
+async function submitPayment() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  let remaining = cash + transfer;
+
+  if (remaining <= 0) { alert("Vui lòng nhập số tiền thanh toán."); return; }
+
+  const saveBtn = document.getElementById("paySaveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const note = document.getElementById("pay_note").value.trim();
+
+  let cashLeft = cash, transferLeft = transfer;
+  for (const o of PAY_CUSTOMER.orders) {
+    if (remaining <= 0) break;
+    const applyToOrder = Math.min(o.debt, remaining);
+    if (applyToOrder <= 0) continue;
+
+    const newPaid = Number(o.paid_amount) + applyToOrder;
+    await sb.from("orders").update({ paid_amount: newPaid }).eq("id", o.id);
+
+    let applyCash = Math.min(cashLeft, applyToOrder);
+    let applyTransfer = applyToOrder - applyCash;
+    cashLeft -= applyCash;
+    transferLeft -= applyTransfer;
+
+    if (applyCash > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyCash,
+        method: "cash", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+    if (applyTransfer > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyTransfer,
+        method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+
+    remaining -= applyToOrder;
+  }
+
+  const totalCashCollected = cash - cashLeft;
+  const totalTransferCollected = transfer - transferLeft;
+  if (totalCashCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "cash", category: "Thu nợ khách", amount: totalCashCollected,
+      note: `Thu nợ tiền mặt từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (totalTransferCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "transfer", category: "Thu nợ khách", amount: totalTransferCollected,
+      note: `Thu nợ chuyển khoản từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Ghi nhận";
+  closePayModal();
+  await loadDebts();
+  alert("Đã ghi nhận thanh toán thành công!");
+}
+
+/* ================= DÙNG CHUNG: CHI TIẾT ĐƠN HÀNG ================= */
+async function showOrderDetail(orderId) {
+  const modal = document.getElementById("orderDetailModal");
+  const body = document.getElementById("orderDetailBody");
+  document.getElementById("orderDetailTitle").textContent = "Chi tiết đơn hàng";
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: order, error: orderErr } = await sb
+    .from("orders")
+    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
+    .eq("id", orderId)
+    .single();
+
+  const { data: items } = await sb
+    .from("order_items")
+    .select("quantity, unit_price, subtotal, products(name, unit)")
+    .eq("order_id", orderId);
+
+  const { data: payments } = await sb
+    .from("customer_payments")
+    .select("amount, method")
+    .eq("order_id", orderId);
+
+  if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
+
+  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const debt = Number(order.total_amount) - Number(order.paid_amount);
+
+  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  body.innerHTML = `
+    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
+    <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
+    <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
+
+    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <tbody>
+      ${(items || []).map(i => `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.quantity} ${i.products?.unit || ''}</td>
+        <td>${formatVND(i.unit_price)}</td>
+        <td>${formatVND(i.subtotal)}</td>
+      </tr>`).join("")}
+    </tbody></table>
+
+    <div style="margin-top:14px;">
+      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
+      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
+      ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
+      ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
+      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+    </div>
+  `;
 }
 </script>
 </body>
