@@ -34,6 +34,29 @@
 .reading-input-row { display:grid; grid-template-columns:1fr 100px; gap:10px; align-items:center; padding:6px 0; }
 .back-link { font-size:13.5px; color:var(--text-mute); cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-bottom:14px; }
 .back-link:hover { color:var(--ink); }
+.tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
+.week-nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap; }
+.week-nav-label { font-family:var(--font-display); font-size:16px; font-weight:600; color:var(--ink); }
+.week-grid { display:grid; grid-template-columns:repeat(7, minmax(150px, 1fr)); gap:10px; overflow-x:auto; }
+@media (max-width: 1000px) { .week-grid { grid-template-columns:repeat(7, 220px); } }
+.day-col { border:1px solid var(--border); border-radius:10px; background:#fbfcfd; min-height:140px; }
+.day-col.today { border-color:var(--teal); background:#f0fdfa; }
+.day-col-head { padding:10px 12px; border-bottom:1px solid var(--border); font-size:12.5px; font-weight:700; color:var(--ink); text-align:center; }
+.day-col-head .dnum { font-size:11px; font-weight:400; color:var(--text-mute); }
+.day-col-body { padding:8px; display:flex; flex-direction:column; gap:6px; }
+.sched-item { border-radius:8px; padding:8px 10px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:#fff; }
+.sched-item:hover { border-color:var(--teal); }
+.sched-item.done { opacity:0.55; text-decoration:line-through; }
+.sched-item .si-time { font-weight:700; font-size:10.5px; padding:1px 7px; border-radius:10px; display:inline-block; margin-bottom:3px; }
+.sched-item .si-time.sang { background:#fff7ed; color:#c2410c; }
+.sched-item .si-time.chieu { background:#eff6ff; color:#1d4ed8; }
+.sched-item .si-time.toi { background:#f5f3ff; color:#6d28d9; }
+.sched-item .si-name { font-weight:600; color:var(--ink); }
+.sched-item .si-staff { color:var(--text-mute); font-size:11px; margin-top:2px; }
+.day-add-btn { text-align:center; padding:6px; font-size:11.5px; color:var(--text-mute); cursor:pointer; border-top:1px dashed var(--border); }
+.day-add-btn:hover { color:var(--teal-deep); }
 </style>
 </head>
 <body>
@@ -65,8 +88,50 @@ let EDIT_TANK_ID = null;
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div id="tankListView"></div>
-    <div id="tankDetailView" style="display:none;"></div>
+    <div class="tabs-row">
+      <div class="tab-btn active" data-tab="tanks">Danh sách bể</div>
+      <div class="tab-btn" data-tab="schedule">Lịch chăm sóc</div>
+    </div>
+
+    <div id="tanksTab">
+      <div id="tankListView"></div>
+      <div id="tankDetailView" style="display:none;"></div>
+    </div>
+
+    <div id="scheduleTab" style="display:none;"></div>
+
+    <div class="modal-overlay" id="schedModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3 id="schedModalTitle">Thêm lịch chăm sóc</h3><span class="modal-close" id="schedModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Ngày *</label><input id="sc_date" type="date" required></div>
+          <div class="field"><label>Buổi</label>
+            <div class="type-toggle" style="display:flex; gap:6px;">
+              <div class="type-btn active" data-slot="sang" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;">Sáng</div>
+              <div class="type-btn" data-slot="chieu" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;">Chiều</div>
+              <div class="type-btn" data-slot="toi" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;">Tối</div>
+            </div>
+          </div>
+          <div class="field"><label>Bể (nếu đã có trong hệ thống)</label>
+            <select id="sc_tank"><option value="">— Chưa có bể, tự nhập tên khách bên dưới —</option></select>
+          </div>
+          <div class="field"><label>Tên khách / bể *</label><input id="sc_customerName" placeholder="VD: Anh Sơn, Chị Linh..." required></div>
+          <div class="field"><label>Nhân viên phụ trách</label><select id="sc_assignedTo"><option value="">— Chưa phân công —</option></select></div>
+          <div class="field"><label>Ghi chú</label><input id="sc_note" placeholder="Không bắt buộc"></div>
+          <div class="field" style="display:flex; align-items:center; gap:8px;" id="sc_doneRow">
+            <input type="checkbox" id="sc_done" style="width:auto;">
+            <label for="sc_done" style="margin-bottom:0; cursor:pointer;">✅ Đã hoàn thành</label>
+          </div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:space-between;">
+            <span class="btn btn-danger btn-mini" id="schedDeleteBtn" style="display:none;">Xóa</span>
+            <div class="flex gap-8">
+              <button type="button" class="btn btn-secondary" id="schedCancelBtn">Hủy</button>
+              <button type="button" class="btn btn-primary" id="schedSaveBtn">Lưu</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="modal-overlay" id="tankModal">
       <div class="modal-box">
@@ -147,9 +212,14 @@ let EDIT_TANK_ID = null;
     </div>
   `;
 
-  await Promise.all([loadTanks(), loadCustomersForTank()]);
+  await Promise.all([loadTanks(), loadCustomersForTank(), loadStaffList()]);
   bindGlobalEvents();
+  bindScheduleEvents();
   renderTankListView();
+
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => {
+    el.addEventListener("click", () => switchMainTab(el.dataset.tab));
+  });
 })();
 
 function nowLocalDatetime() {
@@ -578,6 +648,196 @@ function renderCharts() {
       }
     });
   });
+}
+
+/* ============================================================
+   TAB CHUNG + LỊCH CHĂM SÓC
+   ============================================================ */
+let ALL_STAFF = [];
+let WEEK_OFFSET = 0; // 0 = tuần này, 1 = tuần sau, -1 = tuần trước...
+let ALL_SCHEDULE = [];
+let SCHED_SLOT = "sang";
+let EDIT_SCHED_ID = null;
+
+function switchMainTab(tab) {
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+  document.getElementById("tanksTab").style.display = tab === "tanks" ? "block" : "none";
+  document.getElementById("scheduleTab").style.display = tab === "schedule" ? "block" : "none";
+  if (tab === "schedule") renderScheduleView();
+}
+
+async function loadStaffList() {
+  const { data } = await sb.from("profiles").select("id, full_name, role").order("full_name");
+  ALL_STAFF = data || [];
+  const sel = document.getElementById("sc_assignedTo");
+  if (sel) {
+    sel.innerHTML = `<option value="">— Chưa phân công —</option>` +
+      ALL_STAFF.map(s => `<option value="${s.id}">${s.full_name || (s.role === 'owner' ? 'Chủ cửa hàng' : 'Nhân viên')}</option>`).join("");
+  }
+}
+
+function getWeekDates(offset) {
+  const now = new Date();
+  const day = now.getDay(); // 0 = CN, 1 = T2...
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday + offset * 7);
+  monday.setHours(0, 0, 0, 0);
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+}
+
+function toDateKey(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+async function renderScheduleView() {
+  const wrap = document.getElementById("scheduleTab");
+  const weekDates = getWeekDates(WEEK_OFFSET);
+  const weekLabel = `${weekDates[0].toLocaleDateString("vi-VN")} — ${weekDates[6].toLocaleDateString("vi-VN")}`;
+
+  wrap.innerHTML = `
+    <div class="week-nav">
+      <button class="btn btn-secondary btn-mini" id="weekPrevBtn">← Tuần trước</button>
+      <div class="week-nav-label">${WEEK_OFFSET === 0 ? "Tuần này" : WEEK_OFFSET === 1 ? "Tuần sau" : WEEK_OFFSET === -1 ? "Tuần trước" : (WEEK_OFFSET > 0 ? WEEK_OFFSET + " tuần sau" : Math.abs(WEEK_OFFSET) + " tuần trước")} · ${weekLabel}</div>
+      <button class="btn btn-secondary btn-mini" id="weekNextBtn">Tuần sau →</button>
+    </div>
+    <div class="week-grid" id="weekGrid"></div>
+  `;
+
+  document.getElementById("weekPrevBtn").addEventListener("click", () => { WEEK_OFFSET--; renderScheduleView(); });
+  document.getElementById("weekNextBtn").addEventListener("click", () => { WEEK_OFFSET++; renderScheduleView(); });
+
+  const fromDate = toDateKey(weekDates[0]);
+  const toDate = toDateKey(weekDates[6]);
+  const { data } = await sb
+    .from("tank_schedule")
+    .select("*, tanks(name), staff:assigned_to(full_name)")
+    .gte("scheduled_date", fromDate)
+    .lte("scheduled_date", toDate)
+    .order("scheduled_date").order("time_slot");
+  ALL_SCHEDULE = data || [];
+
+  const dayNames = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"];
+  const todayKey = toDateKey(new Date());
+  const slotOrder = { sang: 0, chieu: 1, toi: 2 };
+  const slotLabel = { sang: "Sáng", chieu: "Chiều", toi: "Tối" };
+
+  const grid = document.getElementById("weekGrid");
+  grid.innerHTML = weekDates.map((d, idx) => {
+    const dateKey = toDateKey(d);
+    const isToday = dateKey === todayKey;
+    const dayItems = ALL_SCHEDULE.filter(s => s.scheduled_date === dateKey)
+      .sort((a, b) => slotOrder[a.time_slot] - slotOrder[b.time_slot]);
+
+    return `<div class="day-col ${isToday ? 'today' : ''}">
+      <div class="day-col-head">${dayNames[idx]}<br><span class="dnum">${d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}</span></div>
+      <div class="day-col-body">
+        ${dayItems.map(item => `
+          <div class="sched-item ${item.status === 'done' ? 'done' : ''}" data-id="${item.id}">
+            <span class="si-time ${item.time_slot}">${slotLabel[item.time_slot]}</span>
+            <div class="si-name">${item.customer_name || item.tanks?.name || 'Không rõ'}</div>
+            ${item.staff?.full_name ? `<div class="si-staff">👤 ${item.staff.full_name}</div>` : ""}
+          </div>
+        `).join("")}
+      </div>
+      <div class="day-add-btn" data-date="${dateKey}">+ Thêm lịch</div>
+    </div>`;
+  }).join("");
+
+  grid.querySelectorAll(".sched-item").forEach(el => {
+    el.addEventListener("click", () => openSchedModal(el.dataset.id));
+  });
+  grid.querySelectorAll(".day-add-btn").forEach(el => {
+    el.addEventListener("click", () => openSchedModal(null, el.dataset.date));
+  });
+}
+
+function bindScheduleEvents() {
+  document.querySelectorAll("#schedModal [data-slot]").forEach(el => {
+    el.addEventListener("click", () => {
+      SCHED_SLOT = el.dataset.slot;
+      document.querySelectorAll("#schedModal [data-slot]").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+    });
+  });
+  document.getElementById("schedModalClose").addEventListener("click", closeSchedModal);
+  document.getElementById("schedCancelBtn").addEventListener("click", closeSchedModal);
+  document.getElementById("schedSaveBtn").addEventListener("click", saveSchedule);
+  document.getElementById("schedDeleteBtn").addEventListener("click", deleteSchedule);
+}
+
+function openSchedModal(scheduleId, presetDate) {
+  EDIT_SCHED_ID = scheduleId || null;
+  const item = scheduleId ? ALL_SCHEDULE.find(s => s.id === scheduleId) : null;
+
+  document.getElementById("schedModalTitle").textContent = item ? "Sửa lịch chăm sóc" : "Thêm lịch chăm sóc";
+  document.getElementById("sc_date").value = item?.scheduled_date || presetDate || toDateKey(new Date());
+  document.getElementById("sc_customerName").value = item?.customer_name || "";
+  document.getElementById("sc_tank").value = item?.tank_id || "";
+  document.getElementById("sc_assignedTo").value = item?.assigned_to || "";
+  document.getElementById("sc_note").value = item?.note || "";
+  document.getElementById("sc_done").checked = item?.status === "done";
+  document.getElementById("sc_doneRow").style.display = item ? "flex" : "none";
+  document.getElementById("schedDeleteBtn").style.display = item ? "inline-block" : "none";
+
+  SCHED_SLOT = item?.time_slot || "sang";
+  document.querySelectorAll("#schedModal [data-slot]").forEach(x => x.classList.toggle("active", x.dataset.slot === SCHED_SLOT));
+
+  const tankSel = document.getElementById("sc_tank");
+  tankSel.innerHTML = `<option value="">— Chưa có bể, tự nhập tên khách bên dưới —</option>` +
+    ALL_TANKS.map(t => `<option value="${t.id}" ${t.id === item?.tank_id ? 'selected' : ''}>${t.name}</option>`).join("");
+  tankSel.onchange = () => {
+    const t = ALL_TANKS.find(x => x.id === tankSel.value);
+    if (t) document.getElementById("sc_customerName").value = t.customers?.name || t.name;
+  };
+
+  document.getElementById("schedModal").classList.add("open");
+}
+function closeSchedModal() { document.getElementById("schedModal").classList.remove("open"); }
+
+async function saveSchedule() {
+  const date = document.getElementById("sc_date").value;
+  const customerName = document.getElementById("sc_customerName").value.trim();
+  if (!date || !customerName) { alert("Vui lòng nhập đủ ngày và tên khách/bể."); return; }
+
+  const payload = {
+    scheduled_date: date,
+    time_slot: SCHED_SLOT,
+    tank_id: document.getElementById("sc_tank").value || null,
+    customer_name: customerName,
+    assigned_to: document.getElementById("sc_assignedTo").value || null,
+    note: document.getElementById("sc_note").value.trim() || null,
+  };
+  if (EDIT_SCHED_ID) payload.status = document.getElementById("sc_done").checked ? "done" : "planned";
+
+  const btn = document.getElementById("schedSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  let error;
+  if (EDIT_SCHED_ID) {
+    ({ error } = await sb.from("tank_schedule").update(payload).eq("id", EDIT_SCHED_ID));
+  } else {
+    ({ error } = await sb.from("tank_schedule").insert({ ...payload, created_by: CURRENT_PROFILE.id }));
+  }
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+  closeSchedModal();
+  renderScheduleView();
+}
+
+async function deleteSchedule() {
+  if (!EDIT_SCHED_ID) return;
+  if (!window.confirm("Xóa lịch chăm sóc này?")) return;
+  await sb.from("tank_schedule").delete().eq("id", EDIT_SCHED_ID);
+  closeSchedModal();
+  renderScheduleView();
 }
 </script>
 </body>
