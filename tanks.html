@@ -29,16 +29,34 @@
 .back-link { font-size:13.5px; color:var(--text-mute); cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin-bottom:14px; }
 .back-link:hover { color:var(--ink); }
 
-.sched-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; background:#fff; }
-.sched-table { width:100%; border-collapse:collapse; min-width:820px; }
-.sched-table th, .sched-table td { border:1px solid var(--border); vertical-align:top; }
-.sched-table th { background:#f8fafc; font-size:12.5px; padding:10px 8px; text-align:center; color:var(--ink); }
-.sched-table .slot-label-cell { background:#f8fafc; font-weight:700; font-size:12.5px; color:var(--ink); text-align:center; padding:14px 8px; width:80px; }
-.sched-cell { padding:8px; min-width:110px; }
-.name-chip { display:block; background:#ecfdf5; color:var(--teal-deep); font-weight:600; font-size:12.5px; padding:5px 9px; border-radius:7px; margin-bottom:5px; cursor:pointer; }
-.name-chip:hover { background:#d1fae5; }
-.cell-add-btn { font-size:11px; color:var(--text-mute); cursor:pointer; text-align:center; padding:3px; border-radius:6px; }
-.cell-add-btn:hover { background:#f1f5f9; color:var(--teal-deep); }
+.sched-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:14px; background:#fff; box-shadow:var(--shadow); }
+.sched-table { width:100%; border-collapse:collapse; min-width:760px; }
+.sched-table th, .sched-table td { border:1px solid #eef1f5; vertical-align:top; }
+.sched-table thead th {
+  background:var(--ink); color:#fff; font-size:12.5px; font-weight:600;
+  padding:12px 8px; text-align:center; letter-spacing:0.02em;
+}
+.sched-table thead th:first-child { background:var(--ink); }
+.sched-table thead th.weekend { background:#1b3a5c; }
+.sched-table .slot-label-cell {
+  font-weight:700; font-size:13px; text-align:center; padding:16px 8px; width:90px;
+}
+.sched-table .slot-label-cell.sang { background:#fff7ed; color:#c2410c; }
+.sched-table .slot-label-cell.chieu { background:#eff6ff; color:#1d4ed8; }
+.sched-cell { padding:10px; min-width:120px; background:#fff; transition:background .12s; }
+.sched-cell.weekend { background:#fbfcfe; }
+.sched-cell:hover { background:#f6fdfb; }
+.name-chip {
+  display:block; font-weight:600; font-size:12.5px; padding:6px 10px; border-radius:8px;
+  margin-bottom:6px; cursor:pointer; border-left:3px solid var(--teal-deep);
+  background:#ecfdf5; color:#0f5e52; transition:transform .08s, box-shadow .12s;
+}
+.name-chip:hover { background:#d1fae5; transform:translateX(2px); box-shadow:0 2px 6px rgba(0,168,150,0.18); }
+.cell-add-btn {
+  font-size:11px; color:#b8c0cc; cursor:pointer; text-align:center; padding:5px; border-radius:6px;
+  border:1px dashed transparent;
+}
+.cell-add-btn:hover { background:#f0fdfa; color:var(--teal-deep); border-color:var(--teal); }
 .unscheduled-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .unscheduled-chip { background:#fff; border:1px dashed var(--border); color:var(--text-mute); font-size:12.5px; padding:6px 12px; border-radius:20px; cursor:pointer; }
 .unscheduled-chip:hover { border-color:var(--teal); color:var(--teal-deep); }
@@ -65,7 +83,7 @@ let ADD_SLOT_DAY = 0;
 let ADD_SLOT_TIME = "sang";
 
 const DAY_NAMES = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"];
-const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều" }, { key: "toi", label: "Tối" }];
+const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều" }];
 
 (async () => {
   const auth = await requireAuth();
@@ -216,14 +234,14 @@ function renderGridView() {
   wrap.innerHTML = `
     <div class="sched-table-wrap">
       <table class="sched-table">
-        <thead><tr><th></th>${DAY_NAMES.map(d => `<th>${d}</th>`).join("")}</tr></thead>
+        <thead><tr><th></th>${DAY_NAMES.map((d, i) => `<th class="${i >= 5 ? 'weekend' : ''}">${d}</th>`).join("")}</tr></thead>
         <tbody>
           ${SLOTS.map(slot => `
             <tr>
-              <td class="slot-label-cell">${slot.label}</td>
+              <td class="slot-label-cell ${slot.key}">${slot.label}</td>
               ${DAY_NAMES.map((_, dayIdx) => {
                 const items = ALL_CARE_SCHEDULE.filter(s => s.day_of_week === dayIdx && s.time_slot === slot.key);
-                return `<td class="sched-cell">
+                return `<td class="sched-cell ${dayIdx >= 5 ? 'weekend' : ''}">
                   ${items.map(it => `<span class="name-chip" data-tank-id="${it.tank_id}">${it.tanks?.name || '—'}</span>`).join("")}
                   <div class="cell-add-btn" data-day="${dayIdx}" data-slot="${slot.key}">+ Thêm</div>
                 </td>`;
