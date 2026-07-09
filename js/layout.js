@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { key: "cash", label: "Quỹ tiền mặt", href: "cash.html", icon: "💰", ownerOnly: false },
   { key: "dashboard", label: "Dashboard", href: "index.html", icon: "◱", ownerOnly: false },
   { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
-  { key: "customer-debt", label: "Công nợ khách hàng", href: "customer-debt.html", icon: "📗", ownerOnly: false },
   { key: "tanks", label: "Quản lý bể", href: "tanks.html", icon: "🪸", ownerOnly: false },
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
 ];
@@ -37,11 +36,10 @@ function renderLayout({ activePage, profile, title, subtitle }) {
         <div class="topnav-brand"><span class="dot"></span> 2D Aquatic</div>
         <div class="topnav-items" id="topnavItems">${navHtml}</div>
         <div class="topnav-user">
-          ${isOwner ? `
           <div class="notif-bell-wrap" id="notifBellWrap">
             <span class="notif-bell" id="notifBell">🔔<span class="notif-badge" id="notifBadge" style="display:none;">0</span></span>
             <div class="notif-dropdown" id="notifDropdown"></div>
-          </div>` : ""}
+          </div>
           <span class="role-badge">${isOwner ? "Chủ cửa hàng" : "Nhân viên"}</span>
           <span class="topnav-username">${profile.full_name || "Người dùng"}</span>
           <span class="logout-btn" id="logoutBtn">Đăng xuất →</span>
@@ -57,7 +55,7 @@ function renderLayout({ activePage, profile, title, subtitle }) {
 
   document.getElementById("logoutBtn").addEventListener("click", doLogout);
 
-  if (isOwner) setupNotifications();
+  setupNotifications(profile, isOwner);
 
   // Tự cuộn tới mục đang chọn nếu bị tràn ngoài vùng nhìn thấy (hữu ích trên mobile)
   const activeEl = document.querySelector(".topnav-item.active");
@@ -65,20 +63,30 @@ function renderLayout({ activePage, profile, title, subtitle }) {
 }
 
 /* ============================================================
-   THÔNG BÁO — chỉ dành cho Chủ cửa hàng
+   THÔNG BÁO — mọi tài khoản đều nhận được (Chủ nhận theo vai trò,
+   nhân viên nhận thông báo gửi đích danh cho mình)
    ============================================================ */
-async function setupNotifications() {
+async function setupNotifications(profile, isOwner) {
   const bell = document.getElementById("notifBell");
   const dropdown = document.getElementById("notifDropdown");
   const badge = document.getElementById("notifBadge");
 
   async function loadNotifications() {
-    const { data } = await sb.from("notifications")
-      .select("*")
-      .in("target_role", ["owner", "all"])
-      .order("created_at", { ascending: false })
-      .limit(20);
+    let query = sb.from("notifications").select("*").order("created_at", { ascending: false }).limit(20);
+    if (isOwner) {
+      query = query.or(`target_role.eq.owner,target_role.eq.all,target_user_id.eq.${profile.id}`);
+    } else {
+      query = query.or(`target_role.eq.all,target_user_id.eq.${profile.id}`);
+    }
+    const { data } = await query;
     return data || [];
+  }
+
+  function matchesMe(n) {
+    if (n.target_user_id === profile.id) return true;
+    if (n.target_role === "all") return true;
+    if (n.target_role === "owner" && isOwner) return true;
+    return false;
   }
 
   function renderDropdown(list) {
@@ -125,7 +133,7 @@ async function setupNotifications() {
   sb.channel("notifications-channel")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, (payload) => {
       const n = payload.new;
-      if (n.target_role !== "owner" && n.target_role !== "all") return;
+      if (!matchesMe(n)) return;
       cachedList = [n, ...cachedList].slice(0, 20);
       renderDropdown(cachedList);
       bell.classList.add("pulse");
