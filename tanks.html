@@ -60,6 +60,7 @@
 .unscheduled-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .unscheduled-chip { background:#fff; border:1px dashed var(--border); color:var(--text-mute); font-size:12.5px; padding:6px 12px; border-radius:20px; cursor:pointer; }
 .unscheduled-chip:hover { border-color:var(--teal); color:var(--teal-deep); }
+.type-btn.active { background:var(--ink); color:#fff; border-color:var(--ink) !important; }
 </style>
 </head>
 <body>
@@ -197,10 +198,62 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="taskModal">
+      <div class="modal-box">
+        <div class="modal-header"><h3>Thêm công việc</h3><span class="modal-close" id="taskModalClose">✕</span></div>
+        <div class="modal-body">
+          <div class="field"><label>Loại công việc</label>
+            <div class="flex gap-6">
+              <div class="type-btn active" data-tasktype="setup" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">🔧 Setup bể</div>
+              <div class="type-btn" data-tasktype="ban_giao" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">📦 Bàn giao</div>
+              <div class="type-btn" data-tasktype="khac" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">Khác</div>
+            </div>
+          </div>
+          <div class="field"><label>Tiêu đề *</label><input id="tk_task_title" placeholder="VD: Setup bể mới cho anh Long" required></div>
+          <div class="field"><label>Ngày thực hiện *</label><input id="tk_task_date" type="date" required></div>
+          <div class="field"><label>Bể liên quan (không bắt buộc)</label>
+            <select id="tk_task_tank"><option value="">— Không liên kết —</option></select>
+          </div>
+          <div class="field"><label>Tên khách (nếu chưa có bể trong hệ thống)</label><input id="tk_task_customer" placeholder="Không bắt buộc"></div>
+          <div class="field"><label>Ghi chú</label><input id="tk_task_note" placeholder="Không bắt buộc"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="taskCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="taskSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="taskDetailModal">
+      <div class="modal-box wide">
+        <div class="modal-header"><h3 id="taskDetailTitle">Chi tiết công việc</h3><span class="modal-close" id="taskDetailClose">✕</span></div>
+        <div class="modal-body">
+          <div id="taskDetailInfo"></div>
+
+          <div style="margin-top:18px;">
+            <div class="flex" style="justify-content:space-between; align-items:center;">
+              <strong style="font-size:13.5px;">Báo giá / Bảng kê</strong>
+              <span class="btn btn-secondary btn-mini" id="addQuoteItemBtn">+ Thêm dòng</span>
+            </div>
+            <table style="margin-top:8px;"><thead><tr><th>Tên mục</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th><th></th></tr></thead>
+              <tbody id="quoteItemsTbody"></tbody>
+            </table>
+            <div class="summary-row total" style="margin-top:10px;"><span>Tổng cộng</span><span id="quoteTotal">0₫</span></div>
+          </div>
+
+          <div class="flex gap-8" style="margin-top:18px; justify-content:space-between;">
+            <span class="btn btn-danger btn-mini" id="deleteTaskBtn">Xóa công việc</span>
+            <button class="btn btn-primary" id="markTaskDoneBtn">✅ Đánh dấu đã hoàn thành</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   await Promise.all([loadTanks(), loadCustomersForTank(), loadCareSchedule()]);
   bindGlobalEvents();
+  bindTaskEvents();
   renderGridView();
 })();
 
@@ -223,7 +276,7 @@ async function loadCareSchedule() {
   ALL_CARE_SCHEDULE = data || [];
 }
 
-function renderGridView() {
+async function renderGridView() {
   document.getElementById("gridView").style.display = "block";
   document.getElementById("tankDetailView").style.display = "none";
 
@@ -263,7 +316,17 @@ function renderGridView() {
     <div style="margin-top:20px;">
       <span class="unscheduled-chip" id="addNewTankChip" style="border-style:solid; color:var(--teal-deep); border-color:var(--teal);">+ Thêm bể mới (chưa xếp lịch)</span>
     </div>`}
+
+    <div class="panel" style="margin-top:24px;">
+      <div class="panel-header flex" style="justify-content:space-between;">
+        <h2>Công việc (Setup, Bàn giao bể...)</h2>
+        <button class="btn btn-primary btn-mini" id="addTaskBtn">+ Thêm công việc</button>
+      </div>
+      <div class="panel-body" id="taskListWrap"></div>
+    </div>
   `;
+
+  await renderTaskList();
 
   wrap.querySelectorAll(".name-chip").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
   wrap.querySelectorAll(".unscheduled-chip[data-tank-id]").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
@@ -738,6 +801,189 @@ function renderCharts() {
       }
     });
   });
+}
+
+/* ============================================================
+   CÔNG VIỆC (Setup, Bàn giao...) — ghi theo ngày thực tế,
+   không lặp lại như lịch chăm sóc, kèm báo giá/bảng kê
+   ============================================================ */
+let ALL_TASKS = [];
+let TASK_TYPE = "setup";
+let EDIT_TASK_ID = null;
+let CURRENT_TASK = null;
+let CURRENT_QUOTE_ITEMS = [];
+const TASK_TYPE_LABEL = { setup: "🔧 Setup bể", ban_giao: "📦 Bàn giao", khac: "Khác" };
+
+async function loadTasks() {
+  const { data } = await sb.from("tank_tasks").select("*, tanks(name)").order("task_date", { ascending: false }).limit(100);
+  ALL_TASKS = data || [];
+}
+
+async function renderTaskList() {
+  await loadTasks();
+  const wrap = document.getElementById("taskListWrap");
+  if (!wrap) return;
+
+  document.getElementById("addTaskBtn").addEventListener("click", openTaskModal);
+
+  if (ALL_TASKS.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Chưa có công việc nào. Bấm "+ Thêm công việc" để bắt đầu ghi (VD: Setup bể mới, Bàn giao bể cho khách...).</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table><thead><tr><th>Ngày</th><th>Loại</th><th>Tiêu đề</th><th>Bể/Khách</th><th>Trạng thái</th></tr></thead><tbody>
+    ${ALL_TASKS.map(t => `<tr class="order-row-clickable" data-task-id="${t.id}" style="cursor:pointer;">
+      <td>${formatDate(t.task_date)}</td>
+      <td>${TASK_TYPE_LABEL[t.task_type] || t.task_type}</td>
+      <td>${t.title}</td>
+      <td>${t.tanks?.name || t.customer_name || '—'}</td>
+      <td><span class="badge ${t.status === 'done' ? 'paid' : 'debt'}">${t.status === 'done' ? 'Đã xong' : 'Đang chờ'}</span></td>
+    </tr>`).join("")}
+  </tbody></table>`;
+
+  wrap.querySelectorAll("[data-task-id]").forEach(el => {
+    el.addEventListener("click", () => openTaskDetail(el.dataset.taskId));
+  });
+}
+
+function openTaskModal() {
+  EDIT_TASK_ID = null;
+  TASK_TYPE = "setup";
+  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => el.classList.toggle("active", el.dataset.tasktype === "setup"));
+  document.getElementById("tk_task_title").value = "";
+  document.getElementById("tk_task_date").value = new Date().toISOString().slice(0, 10);
+  document.getElementById("tk_task_tank").innerHTML = `<option value="">— Không liên kết —</option>` + ALL_TANKS.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+  document.getElementById("tk_task_customer").value = "";
+  document.getElementById("tk_task_note").value = "";
+  document.getElementById("taskModal").classList.add("open");
+}
+
+async function saveTask() {
+  const title = document.getElementById("tk_task_title").value.trim();
+  const date = document.getElementById("tk_task_date").value;
+  if (!title || !date) { alert("Vui lòng nhập tiêu đề và ngày thực hiện."); return; }
+
+  const payload = {
+    title, task_type: TASK_TYPE, task_date: date,
+    tank_id: document.getElementById("tk_task_tank").value || null,
+    customer_name: document.getElementById("tk_task_customer").value.trim() || null,
+    note: document.getElementById("tk_task_note").value.trim() || null,
+  };
+
+  const btn = document.getElementById("taskSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+  const { error } = await sb.from("tank_tasks").insert({ ...payload, created_by: CURRENT_PROFILE.id });
+  btn.disabled = false; btn.textContent = "Lưu";
+
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("taskModal").classList.remove("open");
+  await renderGridView();
+}
+
+async function openTaskDetail(taskId) {
+  CURRENT_TASK = ALL_TASKS.find(t => t.id === taskId);
+  if (!CURRENT_TASK) return;
+
+  document.getElementById("taskDetailTitle").textContent = CURRENT_TASK.title;
+  document.getElementById("taskDetailInfo").innerHTML = `
+    <div class="summary-row"><span>Loại</span><span>${TASK_TYPE_LABEL[CURRENT_TASK.task_type] || CURRENT_TASK.task_type}</span></div>
+    <div class="summary-row"><span>Ngày thực hiện</span><span>${formatDate(CURRENT_TASK.task_date)}</span></div>
+    ${CURRENT_TASK.tanks?.name ? `<div class="summary-row"><span>Bể liên quan</span><span>${CURRENT_TASK.tanks.name}</span></div>` : ""}
+    ${CURRENT_TASK.customer_name ? `<div class="summary-row"><span>Khách hàng</span><span>${CURRENT_TASK.customer_name}</span></div>` : ""}
+    ${CURRENT_TASK.note ? `<div class="summary-row"><span>Ghi chú</span><span>${CURRENT_TASK.note}</span></div>` : ""}
+    <div class="summary-row"><span>Trạng thái</span><span class="badge ${CURRENT_TASK.status === 'done' ? 'paid' : 'debt'}">${CURRENT_TASK.status === 'done' ? 'Đã hoàn thành' : 'Đang chờ'}</span></div>
+    ${CURRENT_TASK.status === 'done' && CURRENT_TASK.completed_at ? `<div class="summary-row"><span>Hoàn thành lúc</span><span>${formatDateTime(CURRENT_TASK.completed_at)}</span></div>` : ""}
+  `;
+
+  const markBtn = document.getElementById("markTaskDoneBtn");
+  markBtn.textContent = CURRENT_TASK.status === 'done' ? "↺ Bỏ đánh dấu hoàn thành" : "✅ Đánh dấu đã hoàn thành";
+
+  await loadQuoteItems(taskId);
+  document.getElementById("taskDetailModal").classList.add("open");
+}
+
+async function loadQuoteItems(taskId) {
+  const { data } = await sb.from("tank_task_quote_items").select("*").eq("task_id", taskId).order("created_at");
+  CURRENT_QUOTE_ITEMS = data || [];
+  renderQuoteItems();
+}
+
+function renderQuoteItems() {
+  const tbody = document.getElementById("quoteItemsTbody");
+  if (CURRENT_QUOTE_ITEMS.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-mute" style="text-align:center; padding:14px;">Chưa có dòng báo giá nào.</td></tr>`;
+  } else {
+    tbody.innerHTML = CURRENT_QUOTE_ITEMS.map(i => `<tr>
+      <td>${i.item_name}</td>
+      <td>${i.quantity}</td>
+      <td>${formatVND(i.unit_price)}</td>
+      <td>${formatVND(i.quantity * i.unit_price)}</td>
+      <td><span class="p-remove" data-qid="${i.id}">✕</span></td>
+    </tr>`).join("");
+    tbody.querySelectorAll(".p-remove").forEach(el => el.addEventListener("click", () => removeQuoteItem(el.dataset.qid)));
+  }
+  const total = CURRENT_QUOTE_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
+  document.getElementById("quoteTotal").textContent = formatVND(total);
+}
+
+async function addQuoteItemRow() {
+  const name = window.prompt("Tên mục (VD: Bể kính 60x40x40, San hô SPS, Công lắp đặt...):");
+  if (!name || !name.trim()) return;
+  const qtyStr = window.prompt("Số lượng:", "1");
+  const qty = Number(qtyStr);
+  if (isNaN(qty) || qty <= 0) { alert("Số lượng không hợp lệ."); return; }
+  const priceStr = window.prompt("Đơn giá (đ):", "0");
+  const price = Number(priceStr);
+  if (isNaN(price) || price < 0) { alert("Đơn giá không hợp lệ."); return; }
+
+  const { error } = await sb.from("tank_task_quote_items").insert({
+    task_id: CURRENT_TASK.id, item_name: name.trim(), quantity: qty, unit_price: price
+  });
+  if (error) { alert("Lỗi: " + error.message); return; }
+  await loadQuoteItems(CURRENT_TASK.id);
+}
+
+async function removeQuoteItem(id) {
+  if (!window.confirm("Xóa dòng này khỏi báo giá?")) return;
+  await sb.from("tank_task_quote_items").delete().eq("id", id);
+  await loadQuoteItems(CURRENT_TASK.id);
+}
+
+async function toggleTaskDone() {
+  if (!CURRENT_TASK) return;
+  const newStatus = CURRENT_TASK.status === 'done' ? 'planned' : 'done';
+  const payload = { status: newStatus, completed_at: newStatus === 'done' ? new Date().toISOString() : null };
+  await sb.from("tank_tasks").update(payload).eq("id", CURRENT_TASK.id);
+  CURRENT_TASK = { ...CURRENT_TASK, ...payload };
+  await renderGridView();
+  openTaskDetail(CURRENT_TASK.id);
+}
+
+async function deleteCurrentTask() {
+  if (!CURRENT_TASK) return;
+  if (!window.confirm(`Xóa công việc "${CURRENT_TASK.title}"? Toàn bộ báo giá đính kèm cũng sẽ bị xóa.`)) return;
+  await sb.from("tank_tasks").delete().eq("id", CURRENT_TASK.id);
+  document.getElementById("taskDetailModal").classList.remove("open");
+  await renderGridView();
+}
+
+/* Bind sự kiện cho khối modal Công việc — gọi 1 lần khi trang khởi tạo */
+function bindTaskEvents() {
+  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => {
+    el.addEventListener("click", () => {
+      TASK_TYPE = el.dataset.tasktype;
+      document.querySelectorAll("#taskModal [data-tasktype]").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+    });
+  });
+  document.getElementById("taskModalClose").addEventListener("click", () => document.getElementById("taskModal").classList.remove("open"));
+  document.getElementById("taskCancelBtn").addEventListener("click", () => document.getElementById("taskModal").classList.remove("open"));
+  document.getElementById("taskSaveBtn").addEventListener("click", saveTask);
+
+  document.getElementById("taskDetailClose").addEventListener("click", () => document.getElementById("taskDetailModal").classList.remove("open"));
+  document.getElementById("addQuoteItemBtn").addEventListener("click", addQuoteItemRow);
+  document.getElementById("markTaskDoneBtn").addEventListener("click", toggleTaskDone);
+  document.getElementById("deleteTaskBtn").addEventListener("click", deleteCurrentTask);
 }
 </script>
 </body>
