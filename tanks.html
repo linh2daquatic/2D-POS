@@ -67,6 +67,8 @@
 .unscheduled-chip { background:#fff; border:1px dashed var(--border); color:var(--text-mute); font-size:12.5px; padding:6px 12px; border-radius:20px; cursor:pointer; }
 .unscheduled-chip:hover { border-color:var(--teal); color:var(--teal-deep); }
 .type-btn.active { background:var(--ink); color:#fff; border-color:var(--ink) !important; }
+.week-nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:10px; flex-wrap:wrap; }
+.settings-link { font-size:11.5px; color:var(--teal-deep); text-decoration:underline; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -289,18 +291,19 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
 })();
 
 let WEEK_TASKS = [];
+let WEEK_OFFSET = 0; // 0 = tuần này, +1 = tuần sau, -1 = tuần trước...
 
-function getMondayOfCurrentWeek() {
+function getMondayOfWeek(offset) {
   const now = new Date();
   const day = now.getDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday);
+  monday.setDate(now.getDate() + diffToMonday + offset * 7);
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
 function getDateForWeekday(dayIdx) {
-  const monday = getMondayOfCurrentWeek();
+  const monday = getMondayOfWeek(WEEK_OFFSET);
   const d = new Date(monday);
   d.setDate(monday.getDate() + dayIdx);
   return d;
@@ -310,7 +313,7 @@ function toDateKey(d) {
   return `${y}-${m}-${day}`;
 }
 async function loadWeekTasks() {
-  const monday = getMondayOfCurrentWeek();
+  const monday = getMondayOfWeek(WEEK_OFFSET);
   const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
   const { data } = await sb.from("tank_tasks").select("*, tanks(name)")
     .gte("task_date", toDateKey(monday)).lte("task_date", toDateKey(sunday))
@@ -347,7 +350,21 @@ async function renderGridView() {
   const unscheduled = ALL_TANKS.filter(t => !scheduledTankIds.has(t.id));
 
   const wrap = document.getElementById("gridView");
+  const weekDates = [getDateForWeekday(0), getDateForWeekday(6)];
+  const weekRangeLabel = `${weekDates[0].toLocaleDateString("vi-VN")} — ${weekDates[1].toLocaleDateString("vi-VN")}`;
+  const weekTitleLabel = WEEK_OFFSET === 0 ? "Tuần này" : WEEK_OFFSET === 1 ? "Tuần sau" : WEEK_OFFSET === -1 ? "Tuần trước"
+    : (WEEK_OFFSET > 0 ? WEEK_OFFSET + " tuần sau" : Math.abs(WEEK_OFFSET) + " tuần trước");
+
   wrap.innerHTML = `
+    <div class="week-nav">
+      <button class="btn btn-secondary btn-mini" id="weekPrevBtn">← Tuần trước</button>
+      <div style="text-align:center;">
+        <div style="font-family:var(--font-display); font-size:16px; font-weight:600; color:var(--ink);">${weekTitleLabel}</div>
+        <div class="text-mute" style="font-size:12px;">${weekRangeLabel}</div>
+        ${WEEK_OFFSET !== 0 ? `<span class="settings-link" id="weekTodayBtn">Về tuần này</span>` : ""}
+      </div>
+      <button class="btn btn-secondary btn-mini" id="weekNextBtn">Tuần sau →</button>
+    </div>
     <div class="sched-table-wrap">
       <table class="sched-table">
         <thead><tr><th></th>${DAY_NAMES.map((d, i) => `<th class="${i >= 5 ? 'weekend' : ''}">${d}<br><span style="font-weight:400; opacity:0.75;">${getDateForWeekday(i).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}</span></th>`).join("")}</tr></thead>
@@ -396,6 +413,10 @@ async function renderGridView() {
 
   wrap.querySelectorAll(".name-chip").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
   wrap.querySelectorAll(".task-chip").forEach(el => el.addEventListener("click", () => openTaskDetail(el.dataset.taskId)));
+
+  document.getElementById("weekPrevBtn").addEventListener("click", () => { WEEK_OFFSET--; renderGridView(); });
+  document.getElementById("weekNextBtn").addEventListener("click", () => { WEEK_OFFSET++; renderGridView(); });
+  document.getElementById("weekTodayBtn")?.addEventListener("click", () => { WEEK_OFFSET = 0; renderGridView(); });
   wrap.querySelectorAll(".unscheduled-chip[data-tank-id]").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
   wrap.querySelectorAll(".cell-add-btn").forEach(el => el.addEventListener("click", () => openAddSlotModal(Number(el.dataset.day), el.dataset.slot)));
   document.getElementById("addNewTankChip")?.addEventListener("click", () => openTankModal());
@@ -940,8 +961,11 @@ const TASK_TYPE_LABEL = { setup: "🔧 Setup bể", ban_giao: "📦 Bàn giao", 
 const TASK_TYPE_ICON = { setup: "🔧", ban_giao: "📦", khac: "🧾" };
 
 async function loadTasks() {
-  const { data } = await sb.from("tank_tasks").select("*, tanks(name)").order("task_date", { ascending: false }).limit(100);
-  ALL_TASKS = data || [];
+  const { data } = await sb.from("tank_tasks").select("*, tanks(name)").limit(200);
+  ALL_TASKS = (data || []).sort((a, b) => {
+    if (a.status !== b.status) return a.status === "done" ? 1 : -1;
+    return new Date(a.task_date) - new Date(b.task_date);
+  });
 }
 
 async function renderTaskList() {
