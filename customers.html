@@ -34,6 +34,20 @@
 .sort-chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
 .no-purchase { color:var(--text-mute); font-style:italic; }
 .vip-tag { font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600; }
+.tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
+.tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
+.pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.debt-card { border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+.debt-card-head { padding:14px 16px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:#fff; flex-wrap:wrap; gap:10px; }
+.debt-card-head:hover { background:#f8fafc; }
+.debt-card-name { font-weight:600; font-size:14.5px; }
+.debt-card-sub { font-size:12px; color:var(--text-mute); margin-top:2px; }
+.debt-card-amount { font-family:var(--font-display); font-weight:700; font-size:17px; color:var(--danger); }
+.debt-card-body { display:none; border-top:1px solid var(--border); padding:12px 16px; background:#fbfcfd; }
+.debt-card-body.open { display:block; }
+.debt-order-row { display:flex; justify-content:space-between; padding:7px 0; font-size:13px; border-bottom:1px dashed var(--border); }
+.debt-order-row:last-child { border-bottom:none; }
 </style>
 </head>
 <body>
@@ -43,10 +57,12 @@
 <script>
 let CURRENT_PROFILE = null;
 let ALL_CUSTOMERS = [];
-let CUSTOMER_STATS = {}; // { customer_id: { orderCount, totalSpent, lastOrderDate } }
+let CUSTOMER_STATS = {};
 let EDIT_ID = null;
 let FORM_TYPE = "retail";
 let SORT_MODE = "name";
+let DEBT_LIST = [];
+let PAY_CUSTOMER = null;
 
 (async () => {
   const auth = await requireAuth();
@@ -57,23 +73,36 @@ let SORT_MODE = "name";
     activePage: "customers",
     profile: CURRENT_PROFILE,
     title: "Khách hàng",
-    subtitle: "Danh sách khách hàng buôn/lẻ"
+    subtitle: "Danh sách khách hàng và công nợ"
   });
 
   document.getElementById("pageContent").innerHTML = `
-    <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
-      <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
-      <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
+    <div class="tabs-row">
+      <div class="tab-btn active" data-tab="customers">Khách hàng</div>
+      <div class="tab-btn" data-tab="debt">Công nợ khách hàng</div>
     </div>
-    <div class="sort-chips" id="sortChips">
-      <div class="sort-chip active" data-sort="name">Tên A-Z</div>
-      <div class="sort-chip" data-sort="spend">Chi tiêu cao nhất</div>
-      <div class="sort-chip" data-sort="recent">Mua gần đây nhất</div>
-    </div>
-    <div class="panel">
-      <div class="panel-body" id="tableWrap">
-        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+
+    <div id="customersTab">
+      <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
+        <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
+        <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
       </div>
+      <div class="sort-chips" id="sortChips">
+        <div class="sort-chip active" data-sort="name">Tên A-Z</div>
+        <div class="sort-chip" data-sort="spend">Chi tiêu cao nhất</div>
+        <div class="sort-chip" data-sort="recent">Mua gần đây nhất</div>
+      </div>
+      <div class="panel">
+        <div class="panel-body" id="tableWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="debtTab" style="display:none;">
+      <div class="stat-grid" id="statGrid"></div>
+      <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm khách hàng..." style="margin-bottom:16px;">
+      <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
     </div>
 
     <div class="modal-overlay" id="modalOverlay">
@@ -116,6 +145,30 @@ let SORT_MODE = "name";
       </div>
     </div>
 
+    <div class="modal-overlay" id="payModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="payModalTitle">Ghi nhận thanh toán</h3>
+          <span class="modal-close" id="payModalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <div class="summary-row total" style="margin-bottom:14px;">
+            <span>Đang nợ</span><span id="payCurrentDebt">0₫</span>
+          </div>
+          <div class="pay-method-row">
+            <div class="field"><label>Tiền mặt</label><input id="pay_cash" type="number" step="any" value="0"></div>
+            <div class="field"><label>Chuyển khoản</label><input id="pay_transfer" type="number" step="any" value="0"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="pay_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total"><span>Còn nợ sau khi trả</span><span id="payRemaining">0₫</span></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="payCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="paySaveBtn">Ghi nhận</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="orderDetailModal">
       <div class="modal-box wide">
         <div class="modal-header">
@@ -127,7 +180,11 @@ let SORT_MODE = "name";
     </div>
   `;
 
-  await loadCustomers();
+  await Promise.all([loadCustomers(), loadDebts()]);
+
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => {
+    el.addEventListener("click", () => switchMainTab(el.dataset.tab));
+  });
 
   document.getElementById("searchInput").addEventListener("input", (e) => renderTable(e.target.value));
   document.getElementById("addBtn").addEventListener("click", () => openModal());
@@ -148,7 +205,20 @@ let SORT_MODE = "name";
 
   document.getElementById("ordersHistoryClose").addEventListener("click", () => document.getElementById("ordersHistoryModal").classList.remove("open"));
   document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
+
+  document.getElementById("debtSearchInput").addEventListener("input", (e) => renderDebtList(e.target.value));
+  document.getElementById("payModalClose").addEventListener("click", closePayModal);
+  document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
+  document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
+  document.getElementById("pay_transfer").addEventListener("input", updatePaySummary);
+  document.getElementById("paySaveBtn").addEventListener("click", submitPayment);
 })();
+
+function switchMainTab(tab) {
+  document.querySelectorAll(".tabs-row .tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+  document.getElementById("customersTab").style.display = tab === "customers" ? "block" : "none";
+  document.getElementById("debtTab").style.display = tab === "debt" ? "block" : "none";
+}
 
 function setFormType(t) {
   FORM_TYPE = t;
@@ -156,6 +226,7 @@ function setFormType(t) {
   document.getElementById("typeWholesaleBtn").classList.toggle("active", t === "wholesale");
 }
 
+/* ================= TAB: KHÁCH HÀNG ================= */
 async function loadCustomers() {
   const { data, error } = await sb.from("customers").select("*").order("name");
   if (error) { console.error(error); return; }
@@ -275,7 +346,6 @@ async function saveCustomer(e) {
   await loadCustomers();
 }
 
-/* ---------- Lịch sử đơn hàng của khách ---------- */
 async function openOrdersHistory(customerId) {
   const customer = ALL_CUSTOMERS.find(c => c.id === customerId);
   if (!customer) return;
@@ -317,6 +387,184 @@ async function openOrdersHistory(customerId) {
   });
 }
 
+/* ================= TAB: CÔNG NỢ KHÁCH HÀNG ================= */
+async function loadDebts() {
+  const { data: customers } = await sb.from("customers").select("*");
+  const { data: orders } = await sb.from("orders")
+    .select("id, order_code, type, total_amount, paid_amount, created_at, customer_id")
+    .eq("status", "completed")
+    .not("customer_id", "is", null)
+    .order("created_at", { ascending: true });
+
+  const byCustomer = {};
+  (orders || []).forEach(o => {
+    const debt = Number(o.total_amount) - Number(o.paid_amount);
+    if (debt <= 0) return;
+    if (!byCustomer[o.customer_id]) byCustomer[o.customer_id] = [];
+    byCustomer[o.customer_id].push({ ...o, debt });
+  });
+
+  DEBT_LIST = Object.keys(byCustomer).map(custId => {
+    const customer = (customers || []).find(c => c.id === custId);
+    const ordersForCustomer = byCustomer[custId];
+    const totalDebt = ordersForCustomer.reduce((s, o) => s + o.debt, 0);
+    return { customer, orders: ordersForCustomer, totalDebt };
+  }).filter(x => x.customer).sort((a, b) => b.totalDebt - a.totalDebt);
+
+  renderDebtStats();
+  renderDebtList("");
+}
+
+function renderDebtStats() {
+  const total = DEBT_LIST.reduce((s, x) => s + x.totalDebt, 0);
+  document.getElementById("statGrid").innerHTML = `
+    <div class="stat-card danger-card">
+      <div class="label">Tổng công nợ khách hàng</div>
+      <div class="value">${formatVND(total)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Số khách đang nợ</div>
+      <div class="value">${DEBT_LIST.length}</div>
+    </div>
+  `;
+}
+
+function renderDebtList(filter) {
+  const wrap = document.getElementById("debtListWrap");
+  const f = (filter || "").trim().toLowerCase();
+  const list = DEBT_LIST.filter(x => !f || x.customer.name.toLowerCase().includes(f) || (x.customer.phone || "").includes(f));
+
+  if (list.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>
+      ${DEBT_LIST.length === 0 ? 'Không có khách hàng nào đang nợ. Tuyệt vời!' : 'Không tìm thấy khách hàng phù hợp.'}
+    </div>`;
+    return;
+  }
+
+  wrap.innerHTML = list.map((x, idx) => `
+    <div class="debt-card">
+      <div class="debt-card-head" data-idx="${idx}">
+        <div>
+          <div class="debt-card-name">${x.customer.name}</div>
+          <div class="debt-card-sub">${x.customer.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa thanh toán hết</div>
+        </div>
+        <div class="flex gap-12">
+          <div class="debt-card-amount">${formatVND(x.totalDebt)}</div>
+          <button class="btn btn-primary btn-mini" style="padding:7px 12px;" onclick="event.stopPropagation(); openPayModal('${x.customer.id}')">Ghi nhận trả nợ</button>
+        </div>
+      </div>
+      <div class="debt-card-body" id="debtBody-${idx}">
+        ${x.orders.map(o => `
+          <div class="debt-order-row order-row-clickable" data-order-id="${o.id}" style="border-radius:6px; padding:7px 6px;">
+            <span>${o.order_code} · ${formatDateTime(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
+            <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".debt-card-head").forEach(el => {
+    el.addEventListener("click", () => {
+      document.getElementById(`debtBody-${el.dataset.idx}`).classList.toggle("open");
+    });
+  });
+  wrap.querySelectorAll(".order-row-clickable").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showOrderDetail(el.dataset.orderId);
+    });
+  });
+}
+
+function openPayModal(customerId) {
+  PAY_CUSTOMER = DEBT_LIST.find(x => x.customer.id === customerId);
+  if (!PAY_CUSTOMER) return;
+  document.getElementById("payModalTitle").textContent = "Ghi nhận thanh toán — " + PAY_CUSTOMER.customer.name;
+  document.getElementById("payCurrentDebt").textContent = formatVND(PAY_CUSTOMER.totalDebt);
+  document.getElementById("pay_cash").value = 0;
+  document.getElementById("pay_transfer").value = 0;
+  document.getElementById("pay_note").value = "";
+  updatePaySummary();
+  document.getElementById("payModal").classList.add("open");
+}
+function closePayModal() { document.getElementById("payModal").classList.remove("open"); }
+
+function updatePaySummary() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  const remaining = Math.max(PAY_CUSTOMER.totalDebt - cash - transfer, 0);
+  document.getElementById("payRemaining").textContent = formatVND(remaining);
+}
+
+async function submitPayment() {
+  if (!PAY_CUSTOMER) return;
+  const cash = Number(document.getElementById("pay_cash").value || 0);
+  const transfer = Number(document.getElementById("pay_transfer").value || 0);
+  let remaining = cash + transfer;
+
+  if (remaining <= 0) { alert("Vui lòng nhập số tiền thanh toán."); return; }
+
+  const saveBtn = document.getElementById("paySaveBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
+
+  const note = document.getElementById("pay_note").value.trim();
+
+  let cashLeft = cash, transferLeft = transfer;
+  for (const o of PAY_CUSTOMER.orders) {
+    if (remaining <= 0) break;
+    const applyToOrder = Math.min(o.debt, remaining);
+    if (applyToOrder <= 0) continue;
+
+    const newPaid = Number(o.paid_amount) + applyToOrder;
+    await sb.from("orders").update({ paid_amount: newPaid }).eq("id", o.id);
+
+    let applyCash = Math.min(cashLeft, applyToOrder);
+    let applyTransfer = applyToOrder - applyCash;
+    cashLeft -= applyCash;
+    transferLeft -= applyTransfer;
+
+    if (applyCash > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyCash,
+        method: "cash", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+    if (applyTransfer > 0) {
+      await sb.from("customer_payments").insert({
+        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyTransfer,
+        method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id
+      });
+    }
+
+    remaining -= applyToOrder;
+  }
+
+  const totalCashCollected = cash - cashLeft;
+  const totalTransferCollected = transfer - transferLeft;
+  if (totalCashCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "cash", category: "Thu nợ khách", amount: totalCashCollected,
+      note: `Thu nợ tiền mặt từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (totalTransferCollected > 0) {
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "transfer", category: "Thu nợ khách", amount: totalTransferCollected,
+      note: `Thu nợ chuyển khoản từ ${PAY_CUSTOMER.customer.name}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Ghi nhận";
+  closePayModal();
+  await loadDebts();
+  alert("Đã ghi nhận thanh toán thành công!");
+}
+
+/* ================= DÙNG CHUNG: CHI TIẾT ĐƠN HÀNG ================= */
 async function showOrderDetail(orderId) {
   const modal = document.getElementById("orderDetailModal");
   const body = document.getElementById("orderDetailBody");
