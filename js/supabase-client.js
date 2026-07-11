@@ -60,6 +60,17 @@ function formatDateTime(dateStr) {
   return `${datePart} ${timePart}`;
 }
 
+// Chuẩn hóa SĐT (bỏ khoảng trắng, dấu chấm, gạch ngang...) để tìm kiếm không bị lệch do cách gõ khác nhau
+function normalizePhone(str) {
+  return (str || "").replace(/[^0-9+]/g, "");
+}
+function phoneOrNameMatches(name, phone, filter) {
+  if (!filter) return true;
+  if ((name || "").toLowerCase().includes(filter)) return true;
+  const normF = normalizePhone(filter);
+  return normF.length > 0 && normalizePhone(phone).includes(normF);
+}
+
 // Kiểm tra sản phẩm có phải sinh vật (cá/san hô) không — dùng để bỏ cảnh báo hết hàng/sắp hết cho nhóm này
 function isLivestockCategory(category) {
   const c = (category || "").trim().toLowerCase();
