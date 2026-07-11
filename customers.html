@@ -257,7 +257,7 @@ async function loadCustomers() {
 function renderTable(filter) {
   const wrap = document.getElementById("tableWrap");
   const f = (filter || "").trim().toLowerCase();
-  let list = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+  let list = ALL_CUSTOMERS.filter(c => phoneOrNameMatches(c.name, c.phone, f));
 
   const statsOf = (id) => CUSTOMER_STATS[id] || { orderCount: 0, totalSpent: 0, lastOrderDate: null };
 
@@ -432,7 +432,7 @@ function renderDebtStats() {
 function renderDebtList(filter) {
   const wrap = document.getElementById("debtListWrap");
   const f = (filter || "").trim().toLowerCase();
-  const list = DEBT_LIST.filter(x => !f || x.customer.name.toLowerCase().includes(f) || (x.customer.phone || "").includes(f));
+  const list = DEBT_LIST.filter(x => phoneOrNameMatches(x.customer.name, x.customer.phone, f));
 
   if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>
