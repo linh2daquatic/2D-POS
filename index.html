@@ -108,12 +108,12 @@ async function loadDashboard(isOwner) {
     if (bucket) bucket.total += Number(o.total_amount || 0);
   });
 
-  // Sản phẩm sắp hết hàng
+  // Sản phẩm sắp hết hàng (không tính cá, san hô — số lượng nhóm này dao động liên tục, không cần cảnh báo)
   const { data: products } = await sb
     .from("products")
-    .select("id, name, quantity, low_stock_threshold, unit")
+    .select("id, name, quantity, low_stock_threshold, unit, category")
     .order("quantity", { ascending: true });
-  const lowStock = (products || []).filter(p => Number(p.quantity) <= Number(p.low_stock_threshold));
+  const lowStock = (products || []).filter(p => Number(p.quantity) <= Number(p.low_stock_threshold) && !isLivestockCategory(p.category));
 
   let cards = `
     <div class="stat-card accent">
