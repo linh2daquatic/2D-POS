@@ -391,7 +391,7 @@ function renderTable(filter) {
     </tr></thead>
     <tbody>
       ${list.map(p => {
-        const low = Number(p.quantity) <= Number(p.low_stock_threshold);
+        const low = Number(p.quantity) <= Number(p.low_stock_threshold) && !isLivestockCategory(p.category);
         const noCost = !p.cost_price || Number(p.cost_price) <= 0;
         return `<tr>
           <td>${p.name}</td>
