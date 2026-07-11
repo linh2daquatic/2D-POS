@@ -629,6 +629,10 @@ function calcDiscount(subtotal) {
 }
 
 /* ---------- Khách hàng ---------- */
+function customerMatchesQuery(c, f) {
+  return phoneOrNameMatches(c.name, c.phone, f);
+}
+
 function renderCustomerPicker() {
   if (CART.length > 0) saveDraft();
   const wrap = document.getElementById("customerPickerWrap");
@@ -655,10 +659,10 @@ function renderCustomerPicker() {
       e.preventDefault();
       const val = custInput.value.trim();
       if (!val) return;
-      const exactPhone = ALL_CUSTOMERS.find(c => c.phone && c.phone.replace(/\s/g, "") === val.replace(/\s/g, ""));
+      const exactPhone = ALL_CUSTOMERS.find(c => c.phone && normalizePhone(c.phone) === normalizePhone(val));
       if (exactPhone) { SELECTED_CUSTOMER = exactPhone; setOrderType(exactPhone.type); renderCustomerPicker(); return; }
       const f = val.toLowerCase();
-      const matches = ALL_CUSTOMERS.filter(c => c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+      const matches = ALL_CUSTOMERS.filter(c => customerMatchesQuery(c, f));
       if (matches.length === 1) {
         SELECTED_CUSTOMER = matches[0];
         setOrderType(matches[0].type);
@@ -680,7 +684,7 @@ function renderCustomerList(filter) {
   const list = document.getElementById("customerList");
   if (!list) return;
   const f = (filter || "").trim().toLowerCase();
-  const matches = ALL_CUSTOMERS.filter(c => !f || c.name.toLowerCase().includes(f) || (c.phone || "").includes(f));
+  const matches = ALL_CUSTOMERS.filter(c => customerMatchesQuery(c, f));
 
   list.innerHTML = matches.slice(0, 8).map(c =>
     `<div class="autocomplete-item" data-id="${c.id}">${c.name} <span class="sub">${c.phone || ''} · ${c.type === 'wholesale' ? 'Buôn' : 'Lẻ'}${c.address ? ' · ' + c.address : ''}</span></div>`
