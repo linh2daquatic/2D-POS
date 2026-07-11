@@ -167,7 +167,7 @@ async function loadSuppliers() {
 function renderSupplierList(filter) {
   const wrap = document.getElementById("supplierListWrap");
   const f = (filter || "").trim().toLowerCase();
-  const list = ALL_SUPPLIERS.filter(s => !f || s.name.toLowerCase().includes(f) || (s.phone || "").includes(f));
+  const list = ALL_SUPPLIERS.filter(s => phoneOrNameMatches(s.name, s.phone, f));
 
   if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">🚚</div>${ALL_SUPPLIERS.length === 0 ? 'Chưa có nhà cung cấp nào.' : 'Không tìm thấy.'}</div>`;
