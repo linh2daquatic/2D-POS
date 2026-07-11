@@ -60,10 +60,16 @@ function formatDateTime(dateStr) {
   return `${datePart} ${timePart}`;
 }
 
-// Gửi thông báo cho Chủ cửa hàng (chỉ gọi khi người thực hiện là nhân viên, tránh tự báo cho chính mình)
-async function pushNotification(type, title, message, link) {
+// Kiểm tra sản phẩm có phải sinh vật (cá/san hô) không — dùng để bỏ cảnh báo hết hàng/sắp hết cho nhóm này
+function isLivestockCategory(category) {
+  const c = (category || "").trim().toLowerCase();
+  return ["cá", "ca", "san hô", "san ho"].includes(c);
+}
+
+// Gửi thông báo. targetRole: 'owner' (mặc định) hoặc 'all'. targetUserId: nếu có, gửi đích danh cho đúng 1 người đó.
+async function pushNotification(type, title, message, link, targetRole = "owner", targetUserId = null) {
   try {
-    await sb.from("notifications").insert({ type, title, message, link, target_role: "owner" });
+    await sb.from("notifications").insert({ type, title, message, link, target_role: targetRole, target_user_id: targetUserId });
   } catch (e) {
     console.error("Không gửi được thông báo:", e);
   }
