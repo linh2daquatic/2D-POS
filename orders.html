@@ -758,7 +758,7 @@ function renderProductGrid(filter) {
   grid.innerHTML = visibleList.map(p => {
     const inCart = CART.find(i => i.product_id === p.id);
     const price = ORDER_TYPE === "wholesale" ? p.wholesale_price : p.retail_price;
-    const outOfStock = Number(p.quantity) <= 0;
+    const outOfStock = Number(p.quantity) <= 0 && !isLivestockCategory(p.category);
     return `<div class="product-card ${outOfStock ? 'out-of-stock' : ''}" data-id="${p.id}">
       ${inCart ? `<div class="cart-badge">${inCart.quantity}</div>` : ""}
       <div class="pname">${p.name}</div>
@@ -935,7 +935,7 @@ async function submitOrder() {
 
   for (const item of CART) {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
-    if (p && item.quantity > Number(p.quantity)) {
+    if (p && item.quantity > Number(p.quantity) && !isLivestockCategory(p.category)) {
       alert(`Sản phẩm "${item.name}" chỉ còn ${p.quantity} ${p.unit || ''} trong kho.`);
       return;
     }
