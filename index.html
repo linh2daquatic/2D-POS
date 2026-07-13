@@ -7,6 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
+<style>
+.show-more-row {
+  text-align:center; padding:12px; margin-top:10px; border:1px dashed var(--border); border-radius:10px;
+  color:var(--text-mute); font-size:13px; font-weight:600; cursor:pointer; background:#fff;
+}
+.show-more-row:hover { border-color:var(--teal); color:var(--teal-deep); }
+</style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -362,40 +369,60 @@ async function loadDashboard(isOwner) {
     }).join("")}
   </div>`;
 
+  function renderExpandableTable(bodyEl, headerHtml, rows, rowFn, emptyHtml, limit = 3) {
+    if (!rows || rows.length === 0) {
+      bodyEl.innerHTML = emptyHtml;
+      return;
+    }
+    const remaining = rows.length - limit;
+    bodyEl.innerHTML = `<table><thead><tr>${headerHtml}</tr></thead><tbody>
+      ${rows.slice(0, limit).map(rowFn).join("")}
+    </tbody></table>
+    ${remaining > 0 ? `<div class="show-more-row">▼ Xem thêm ${remaining} dòng</div>` : ""}`;
+
+    const moreBtn = bodyEl.querySelector(".show-more-row");
+    if (moreBtn) {
+      moreBtn.addEventListener("click", () => {
+        bodyEl.querySelector("tbody").innerHTML = rows.map(rowFn).join("");
+        moreBtn.remove();
+      });
+    }
+  }
+
   // Bảng tồn kho thấp
   const lowStockBody = document.getElementById("lowStockBody");
-  if (lowStock.length === 0) {
-    lowStockBody.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Chưa có sản phẩm nào sắp hết hàng.</div>`;
-  } else {
-    lowStockBody.innerHTML = `<table><thead><tr><th>Sản phẩm</th><th>Tồn kho</th><th>Ngưỡng cảnh báo</th></tr></thead><tbody>
-      ${lowStock.map(p => `<tr><td>${p.name}</td><td>${p.quantity} ${p.unit||''}</td><td>${p.low_stock_threshold}</td></tr>`).join("")}
-    </tbody></table>`;
-  }
+  renderExpandableTable(
+    lowStockBody,
+    `<th>Sản phẩm</th><th>Tồn kho</th><th>Ngưỡng cảnh báo</th>`,
+    lowStock,
+    p => `<tr><td>${p.name}</td><td>${p.quantity} ${p.unit||''}</td><td>${p.low_stock_threshold}</td></tr>`,
+    `<div class="empty-state"><div class="icon">✅</div>Chưa có sản phẩm nào sắp hết hàng.</div>`
+  );
 
   // Đơn hàng gần đây
   const { data: recent } = await sb
     .from("orders")
     .select("order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
     .order("created_at", { ascending: false })
-    .limit(8);
+    .limit(30);
 
   const recentBody = document.getElementById("recentOrdersBody");
-  if (!recent || recent.length === 0) {
-    recentBody.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Chưa có đơn hàng nào. <br>Hãy tạo đơn hàng đầu tiên ở mục "Đơn hàng".</div>`;
-  } else {
-    recentBody.innerHTML = `<table><thead><tr><th>Mã đơn</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th></tr></thead><tbody>
-      ${recent.map(o => {
-        const debt = Number(o.total_amount) - Number(o.paid_amount);
-        return `<tr>
-          <td>${o.order_code}</td>
-          <td>${o.customers?.name || "Khách lẻ"}</td>
-          <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
-          <td>${formatVND(o.total_amount)}</td>
-          <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
-        </tr>`;
-      }).join("")}
-    </tbody></table>`;
-  }
+  renderExpandableTable(
+    recentBody,
+    `<th>Mã đơn</th><th>Khách hàng</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th>`,
+    recent,
+    o => {
+      const debt = Number(o.total_amount) - Number(o.paid_amount);
+      return `<tr>
+        <td>${o.order_code}</td>
+        <td>${o.customers?.name || "Khách lẻ"}</td>
+        <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
+        <td>${formatVND(o.total_amount)}</td>
+        <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
+      </tr>`;
+    },
+    `<div class="empty-state"><div class="icon">🧾</div>Chưa có đơn hàng nào. <br>Hãy tạo đơn hàng đầu tiên ở mục "Đơn hàng".</div>`
+  );
 }
 </script>
 </body>
