@@ -13,6 +13,21 @@
   color:var(--text-mute); font-size:13px; font-weight:600; cursor:pointer; background:#fff;
 }
 .show-more-row:hover { border-color:var(--teal); color:var(--teal-deep); }
+
+.cost-col { border:1px solid var(--border); border-radius:12px; padding:18px 20px; background:#fff; }
+.cost-col h3 { font-family:var(--font-display); font-size:15px; font-weight:600; color:var(--ink); margin-bottom:3px; }
+.cost-col .cost-desc { font-size:11.5px; color:var(--text-mute); margin-bottom:14px; }
+.cost-total { font-family:var(--font-display); font-size:26px; font-weight:700; color:var(--ink); padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--border); }
+.cost-total.danger { color:var(--danger); }
+.cost-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+.cost-row:last-child { border-bottom:none; }
+.cost-row .cr-label { color:var(--ink); }
+.cost-row .cr-value { font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+.cost-subblock { margin:14px 0; padding:14px; background:#f8fafc; border-radius:10px; }
+.cost-subblock-title { font-size:11px; font-weight:700; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px; }
+.cost-detail-title { font-size:11px; font-weight:700; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.03em; margin:14px 0 4px; }
+.cost-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width: 720px) { .cost-grid { grid-template-columns:1fr; } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -374,28 +389,30 @@ async function loadDashboard(isOwner, selectedMonth) {
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
     expenseBody.innerHTML = `
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
-        <div>
-          <h3 style="font-size:14px; margin-bottom:4px;">Chi phí cố định</h3>
-          <div class="text-mute" style="font-size:11.5px; margin-bottom:10px;">Điện nước, lương, thuê nhà... (ghi ở Quỹ tiền mặt)</div>
-          <div class="summary-row total"><span>Tổng</span><span>${formatVND(fixedCostTotal)}</span></div>
-          ${Object.keys(fixedByCategory).length === 0 ? `<div class="empty-state" style="padding:14px;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
-            Object.entries(fixedByCategory).map(([cat, val]) => `<div class="summary-row"><span>${cat}</span><span>${formatVND(val)}</span></div>`).join("")}
+      <div class="cost-grid">
+        <div class="cost-col">
+          <h3>Chi phí cố định</h3>
+          <div class="cost-desc">Điện nước, lương, thuê nhà... (ghi ở Quỹ tiền mặt)</div>
+          <div class="cost-total">${formatVND(fixedCostTotal)}</div>
+          ${Object.keys(fixedByCategory).length === 0 ? `<div class="empty-state" style="padding:14px 0;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
+            Object.entries(fixedByCategory).sort((a,b) => b[1]-a[1]).map(([cat, val]) => `<div class="cost-row"><span class="cr-label">${cat}</span><span class="cr-value">${formatVND(val)}</span></div>`).join("")}
         </div>
-        <div>
-          <h3 style="font-size:14px; margin-bottom:4px;">Chi phí biến đổi</h3>
-          <div class="text-mute" style="font-size:11.5px; margin-bottom:10px;">Giá vốn hàng hao hụt / dùng nội bộ (đơn 0đ + ghi ở Kho hàng)</div>
-          <div class="summary-row total"><span>Tổng</span><span>${formatVND(variableCostTotal)}</span></div>
-          <div style="margin-top:10px; margin-bottom:10px; padding:10px; background:#f8fafc; border-radius:8px;">
-            <div style="font-size:11.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Theo nhóm hàng</div>
+        <div class="cost-col">
+          <h3>Chi phí biến đổi</h3>
+          <div class="cost-desc">Giá vốn hàng hao hụt / dùng nội bộ (đơn 0đ + ghi ở Kho hàng)</div>
+          <div class="cost-total ${variableCostTotal > 0 ? 'danger' : ''}">${formatVND(variableCostTotal)}</div>
+
+          <div class="cost-subblock">
+            <div class="cost-subblock-title">Theo nhóm hàng</div>
             ${Object.keys(variableByGroup || {}).length === 0 ? `<div class="text-mute" style="font-size:12.5px;">Chưa có dữ liệu.</div>` :
               ["🐟 Cá", "🪸 San hô", "🧪 Vi sinh & Hóa chất", "📦 Đóng gói & Vận chuyển", "Khác"]
                 .filter(g => variableByGroup[g] > 0)
-                .map(g => `<div class="summary-row"><span>${g}</span><span>${formatVND(variableByGroup[g])}</span></div>`).join("")}
+                .map(g => `<div class="cost-row"><span class="cr-label">${g}</span><span class="cr-value">${formatVND(variableByGroup[g])}</span></div>`).join("")}
           </div>
-          <div style="font-size:11.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Chi tiết từng lần</div>
-          ${variableRows.length === 0 ? `<div class="empty-state" style="padding:14px;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
-            variableRows.slice(0, 20).map(r => `<div class="summary-row"><span>${formatDate(r.date)} · ${r.label}</span><span>${formatVND(r.value)}</span></div>`).join("")}
+
+          <div class="cost-detail-title">Chi tiết từng lần</div>
+          ${variableRows.length === 0 ? `<div class="empty-state" style="padding:14px 0;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
+            variableRows.slice(0, 20).map(r => `<div class="cost-row"><span class="cr-label">${formatDate(r.date)} · ${r.label}</span><span class="cr-value">${formatVND(r.value)}</span></div>`).join("")}
         </div>
       </div>`;
   }
