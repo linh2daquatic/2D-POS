@@ -46,6 +46,13 @@ let PAYMENT_BREAKDOWN = {};
   });
 
   document.getElementById("pageContent").innerHTML = `
+    <div class="flex gap-8" style="flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+      <div class="field" style="margin-bottom:0; max-width:170px;"><label>Từ ngày</label><input id="filterFromDate" type="date"></div>
+      <div class="field" style="margin-bottom:0; max-width:170px;"><label>Đến ngày</label><input id="filterToDate" type="date"></div>
+      <select id="quickMonthPicker" style="max-width:190px;"></select>
+      <span class="btn btn-secondary btn-mini" id="applyDateFilterBtn">Lọc</span>
+      <span class="btn btn-secondary btn-mini" id="resetDateFilterBtn">Xem tất cả (200 gần nhất)</span>
+    </div>
     <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo mã đơn hoặc tên khách...">
     <div class="panel">
       <div class="panel-body" id="orderListWrap">
@@ -95,7 +102,28 @@ let PAYMENT_BREAKDOWN = {};
 
   await loadOrders();
 
+  buildQuickMonthPicker();
   document.getElementById("searchInput").addEventListener("input", (e) => renderList(e.target.value));
+  document.getElementById("applyDateFilterBtn").addEventListener("click", () => {
+    const from = document.getElementById("filterFromDate").value;
+    const to = document.getElementById("filterToDate").value;
+    loadOrders(from ? new Date(from).toISOString() : null, to ? new Date(to + "T23:59:59").toISOString() : null);
+  });
+  document.getElementById("resetDateFilterBtn").addEventListener("click", () => {
+    document.getElementById("filterFromDate").value = "";
+    document.getElementById("filterToDate").value = "";
+    document.getElementById("quickMonthPicker").value = "";
+    loadOrders();
+  });
+  document.getElementById("quickMonthPicker").addEventListener("change", (e) => {
+    if (!e.target.value) return;
+    const [y, m] = e.target.value.split("-").map(Number);
+    const from = new Date(y, m - 1, 1);
+    const to = new Date(y, m, 0, 23, 59, 59);
+    document.getElementById("filterFromDate").value = from.toISOString().slice(0, 10);
+    document.getElementById("filterToDate").value = to.toISOString().slice(0, 10);
+    loadOrders(from.toISOString(), to.toISOString());
+  });
   document.getElementById("orderDetailClose").addEventListener("click", () => document.getElementById("orderDetailModal").classList.remove("open"));
 
   document.getElementById("cancelOrderModalClose").addEventListener("click", () => document.getElementById("cancelOrderModal").classList.remove("open"));
@@ -114,12 +142,32 @@ let PAYMENT_BREAKDOWN = {};
   });
 })();
 
-async function loadOrders() {
-  const { data, error } = await sb
+function buildQuickMonthPicker() {
+  const sel = document.getElementById("quickMonthPicker");
+  const now = new Date();
+  let options = `<option value="">— Chọn nhanh theo tháng —</option>`;
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = i === 0 ? `Tháng này (${d.getMonth() + 1}/${d.getFullYear()})` : `Tháng ${d.getMonth() + 1}/${d.getFullYear()}`;
+    options += `<option value="${val}">${label}</option>`;
+  }
+  sel.innerHTML = options;
+}
+
+async function loadOrders(fromDate, toDate) {
+  document.getElementById("orderListWrap").innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+
+  let query = sb
     .from("orders")
     .select("id, order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
-    .order("created_at", { ascending: false })
-    .limit(200);
+    .order("created_at", { ascending: false });
+
+  if (fromDate) query = query.gte("created_at", fromDate);
+  if (toDate) query = query.lte("created_at", toDate);
+  if (!fromDate && !toDate) query = query.limit(200); // Không lọc gì -> chỉ lấy 200 đơn gần nhất cho nhẹ
+
+  const { data, error } = await query;
 
   if (error) {
     document.getElementById("orderListWrap").innerHTML = `<div class="empty-state">Lỗi tải đơn hàng: ${error.message}</div>`;
