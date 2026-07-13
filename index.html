@@ -47,6 +47,10 @@
       <div class="panel-body" id="staffStatsBody">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
+    </div>
+    <div class="panel" id="expenseDetailPanel" style="display:none;">
+      <div class="panel-header"><h2>Chi tiết chi phí tháng này</h2></div>
+      <div class="panel-body" id="expenseDetailBody"></div>
     </div>` : ""}
     <div class="panel">
       <div class="panel-header"><h2>Đơn hàng gần đây</h2></div>
@@ -158,6 +162,50 @@ async function loadDashboard(isOwner) {
     });
     const profitMonth = monthItemRevenue - monthCost;
 
+    // ============================================================
+    // CHI PHÍ THÁNG NÀY = Chi phí cố định + Chi phí biến đổi
+    // ============================================================
+    // Chi phí cố định = các khoản "Chi" do người dùng tự ghi ở Quỹ tiền mặt (điện nước, lương, thuê nhà...)
+    // LOẠI TRỪ: "Hủy đơn hàng" (chỉ là bút toán đảo ngược khi hủy đơn, không phải chi phí thật),
+    // "Nhập hàng"/"Trả nợ NCC" (là giá vốn hàng hóa, đã tính trong Lãi gộp rồi, không tính lại ở đây),
+    // "Điều chỉnh kiểm quỹ" (chỉ là sửa sai số đếm tiền, không phải chi phí)
+    const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ"];
+    const { data: expenseTx } = await sb
+      .from("cash_transactions")
+      .select("category, amount, note, created_at")
+      .eq("type", "expense")
+      .gte("created_at", monthStart.toISOString());
+    const fixedExpenses = (expenseTx || []).filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category));
+    const fixedCostTotal = fixedExpenses.reduce((s, t) => s + Number(t.amount), 0);
+    const fixedByCategory = {};
+    fixedExpenses.forEach(t => { fixedByCategory[t.category || "Khác"] = (fixedByCategory[t.category || "Khác"] || 0) + Number(t.amount); });
+
+    // Chi phí biến đổi = giá vốn của các đơn bán 0đ (hao hụt/dùng nội bộ ghi qua Bán hàng)
+    // + các khoản ghi qua nút "Hao hụt" nhanh ở Kho hàng
+    const { data: zeroOrders } = await sb
+      .from("orders")
+      .select("id, order_code, created_at")
+      .eq("status", "completed")
+      .eq("total_amount", 0)
+      .gte("created_at", monthStart.toISOString());
+    const zeroOrderIds = (zeroOrders || []).map(o => o.id);
+    let zeroOrderItems = [];
+    if (zeroOrderIds.length > 0) {
+      const { data } = await sb.from("order_items").select("order_id, quantity, cost_price_at_sale, products(name)").in("order_id", zeroOrderIds);
+      zeroOrderItems = data || [];
+    }
+    const zeroOrderCost = zeroOrderItems.reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price_at_sale || 0), 0);
+
+    const { data: writeOffs } = await sb
+      .from("stock_adjustments")
+      .select("quantity, reason, cost_value, note, created_at, products(name, unit)")
+      .gte("created_at", monthStart.toISOString())
+      .order("created_at", { ascending: false });
+    const writeOffTotal = (writeOffs || []).reduce((s, w) => s + Number(w.cost_value || 0), 0);
+
+    const variableCostTotal = zeroOrderCost + writeOffTotal;
+    const totalOperatingCost = fixedCostTotal + variableCostTotal;
+
     // Doanh số theo từng nhân viên (tháng này) — tách riêng sinh vật (Cá/San hô) để tính lương %
     // Tính theo GIÁ TRỊ THỰC TẾ khách thanh toán: dùng giá đã sửa (order_items.unit_price) và
     // phân bổ phần giảm giá của đơn theo đúng tỷ lệ sinh vật/còn lại trong đơn đó.
@@ -234,10 +282,50 @@ async function loadDashboard(isOwner) {
         <div class="label">Lãi gộp tháng này</div>
         <div class="value">${formatVND(profitMonth)}</div>
         <div class="delta text-mute" style="font-size:11px;">*Tính theo giá vốn tại thời điểm bán</div>
+      </div>
+      <div class="stat-card" id="expenseToggleCard" style="cursor:pointer;">
+        <div class="label">Chi phí tháng này ▾</div>
+        <div class="value">${formatVND(totalOperatingCost)}</div>
+        <div class="delta text-mute" style="font-size:11px;">Bấm để xem chi tiết</div>
       </div>`;
+
+    window.__EXPENSE_DATA__ = { fixedCostTotal, fixedByCategory, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal };
   }
 
   statGrid.innerHTML = cards;
+
+  if (isOwner) {
+    const expensePanel = document.getElementById("expenseDetailPanel");
+    const expenseBody = document.getElementById("expenseDetailBody");
+    const { fixedCostTotal, fixedByCategory, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal } = window.__EXPENSE_DATA__ || {};
+    document.getElementById("expenseToggleCard").addEventListener("click", () => {
+      expensePanel.style.display = expensePanel.style.display === "none" ? "block" : "none";
+    });
+
+    const REASON_LABEL = { hao_hut_sinh_vat: "🐟 Sinh vật chết", su_dung_noi_bo: "🧪 Dùng cho bể shop", hong_hoc: "🔧 Hỏng hóc", khac: "Khác" };
+    const variableRows = [
+      ...(zeroOrders || []).map(o => ({ date: o.created_at, label: `Đơn 0đ · ${o.order_code}`, value: (zeroOrderItems || []).filter(i => i.order_id === o.id).reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price_at_sale || 0), 0) })),
+      ...(writeOffs || []).map(w => ({ date: w.created_at, label: `${REASON_LABEL[w.reason] || w.reason} · ${w.products?.name || '—'}`, value: Number(w.cost_value || 0) }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    expenseBody.innerHTML = `
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+        <div>
+          <h3 style="font-size:14px; margin-bottom:4px;">Chi phí cố định</h3>
+          <div class="text-mute" style="font-size:11.5px; margin-bottom:10px;">Điện nước, lương, thuê nhà... (ghi ở Quỹ tiền mặt)</div>
+          <div class="summary-row total"><span>Tổng</span><span>${formatVND(fixedCostTotal)}</span></div>
+          ${Object.keys(fixedByCategory).length === 0 ? `<div class="empty-state" style="padding:14px;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
+            Object.entries(fixedByCategory).map(([cat, val]) => `<div class="summary-row"><span>${cat}</span><span>${formatVND(val)}</span></div>`).join("")}
+        </div>
+        <div>
+          <h3 style="font-size:14px; margin-bottom:4px;">Chi phí biến đổi</h3>
+          <div class="text-mute" style="font-size:11.5px; margin-bottom:10px;">Giá vốn hàng hao hụt / dùng nội bộ (đơn 0đ + ghi ở Kho hàng)</div>
+          <div class="summary-row total"><span>Tổng</span><span>${formatVND(variableCostTotal)}</span></div>
+          ${variableRows.length === 0 ? `<div class="empty-state" style="padding:14px;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
+            variableRows.slice(0, 20).map(r => `<div class="summary-row"><span>${formatDate(r.date)} · ${r.label}</span><span>${formatVND(r.value)}</span></div>`).join("")}
+        </div>
+      </div>`;
+  }
 
   if (isOwner) {
     const staffBody = document.getElementById("staffStatsBody");
@@ -257,6 +345,39 @@ async function loadDashboard(isOwner) {
         </tr>`).join("")}
       </tbody></table>
       <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.</p>`;
+    }
+
+    // Hao hụt & sử dụng nội bộ tháng này
+    const { data: writeOffs } = await sb
+      .from("stock_adjustments")
+      .select("quantity, reason, cost_value, note, created_at, products(name, unit)")
+      .gte("created_at", monthStart.toISOString())
+      .order("created_at", { ascending: false });
+
+    const woBody = document.getElementById("writeOffBody");
+    const REASON_LABEL = { hao_hut_sinh_vat: "🐟 Sinh vật chết", su_dung_noi_bo: "🧪 Dùng cho bể shop", hong_hoc: "🔧 Hỏng hóc", khac: "Khác" };
+    if (!writeOffs || writeOffs.length === 0) {
+      woBody.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Chưa ghi nhận hao hụt nào trong tháng này.</div>`;
+    } else {
+      const totalValue = writeOffs.reduce((s, w) => s + Number(w.cost_value || 0), 0);
+      const byReason = {};
+      writeOffs.forEach(w => { byReason[w.reason] = (byReason[w.reason] || 0) + Number(w.cost_value || 0); });
+
+      woBody.innerHTML = `
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-card accent"><div class="label">Tổng giá trị hao hụt tháng này</div><div class="value">${formatVND(totalValue)}</div></div>
+          ${Object.entries(byReason).map(([reason, val]) => `<div class="stat-card"><div class="label">${REASON_LABEL[reason] || reason}</div><div class="value" style="font-size:18px;">${formatVND(val)}</div></div>`).join("")}
+        </div>
+        <table><thead><tr><th>Ngày</th><th>Sản phẩm</th><th>SL</th><th>Lý do</th><th>Giá trị mất</th><th>Ghi chú</th></tr></thead><tbody>
+          ${writeOffs.map(w => `<tr>
+            <td>${formatDateTime(w.created_at)}</td>
+            <td>${w.products?.name || '—'}</td>
+            <td>${w.quantity} ${w.products?.unit || ''}</td>
+            <td>${REASON_LABEL[w.reason] || w.reason}</td>
+            <td style="color:var(--danger); font-weight:600;">${formatVND(w.cost_value)}</td>
+            <td>${w.note || '—'}</td>
+          </tr>`).join("")}
+        </tbody></table>`;
     }
   }
 
