@@ -273,6 +273,7 @@ async function loadDashboard(isOwner, selectedMonth) {
 
     const variableCostTotal = zeroOrderCost + writeOffTotal;
     const totalOperatingCost = fixedCostTotal + variableCostTotal;
+    const netProfitMonth = profitMonth - totalOperatingCost;
 
     // Phân loại chi phí biến đổi theo nhóm hàng hóa (Cá / San hô / Vi sinh & Hóa chất / Đóng gói & Vận chuyển / Khác)
     const variableByGroup = {};
@@ -367,6 +368,11 @@ async function loadDashboard(isOwner, selectedMonth) {
         <div class="label">Chi phí ${monthLabel} ▾</div>
         <div class="value">${formatVND(totalOperatingCost)}</div>
         <div class="delta text-mute" style="font-size:11px;">Bấm để xem chi tiết</div>
+      </div>
+      <div class="stat-card ${netProfitMonth >= 0 ? 'accent' : 'danger-card'}">
+        <div class="label">Lợi nhuận thuần ${monthLabel}</div>
+        <div class="value">${formatVND(netProfitMonth)}</div>
+        <div class="delta text-mute" style="font-size:11px;">*Lãi gộp − Chi phí (đã trừ hết vận hành)</div>
       </div>`;
 
     window.__EXPENSE_DATA__ = { fixedCostTotal, fixedByCategory, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal, variableByGroup };
