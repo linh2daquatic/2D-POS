@@ -35,7 +35,14 @@
   });
 
   const content = document.getElementById("pageContent");
-  content.innerHTML = `<div class="stat-grid" id="statGrid"></div>
+  content.innerHTML = `
+    <div class="flex gap-8" style="align-items:flex-end; margin-bottom:14px; flex-wrap:wrap;">
+      <div class="field" style="margin-bottom:0; max-width:220px;">
+        <label>Xem dữ liệu theo tháng</label>
+        <select id="monthPicker"></select>
+      </div>
+    </div>
+    <div class="stat-grid" id="statGrid"></div>
     <div class="panel">
       <div class="panel-header"><h2>Doanh thu 7 ngày gần nhất</h2></div>
       <div class="panel-body" id="chartBody">
@@ -50,31 +57,51 @@
     </div>
     ${isOwner ? `
     <div class="panel">
-      <div class="panel-header"><h2>Doanh số theo nhân viên (tháng này)</h2></div>
+      <div class="panel-header"><h2 id="staffStatsTitle">Doanh số theo nhân viên (tháng này)</h2></div>
       <div class="panel-body" id="staffStatsBody">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>
     <div class="panel" id="expenseDetailPanel" style="display:none;">
-      <div class="panel-header"><h2>Chi tiết chi phí tháng này</h2></div>
+      <div class="panel-header"><h2>Chi tiết chi phí</h2></div>
       <div class="panel-body" id="expenseDetailBody"></div>
     </div>` : ""}
     <div class="panel">
-      <div class="panel-header"><h2>Đơn hàng gần đây</h2></div>
+      <div class="panel-header"><h2 id="recentOrdersTitle">Đơn hàng gần đây</h2></div>
       <div class="panel-body" id="recentOrdersBody">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>`;
 
-  loadDashboard(isOwner);
+  buildMonthPicker();
+  document.getElementById("monthPicker").addEventListener("change", (e) => {
+    const [y, m] = e.target.value.split("-").map(Number);
+    loadDashboard(isOwner, new Date(y, m - 1, 1));
+  });
+
+  loadDashboard(isOwner, null);
 })();
 
-async function loadDashboard(isOwner) {
+function buildMonthPicker() {
+  const sel = document.getElementById("monthPicker");
+  const now = new Date();
+  let options = "";
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = i === 0 ? `Tháng này (${d.getMonth() + 1}/${d.getFullYear()})` : `Tháng ${d.getMonth() + 1}/${d.getFullYear()}`;
+    options += `<option value="${val}">${label}</option>`;
+  }
+  sel.innerHTML = options;
+}
+
+async function loadDashboard(isOwner, selectedMonth) {
   const statGrid = document.getElementById("statGrid");
   const todayStart = new Date();
   todayStart.setHours(0,0,0,0);
+  const now = new Date();
 
-  // Doanh thu + đơn hàng hôm nay
+  // Doanh thu + đơn hàng hôm nay (luôn là ngày thực tế hiện tại, không đổi theo bộ lọc tháng)
   const { data: todayOrders } = await sb
     .from("orders")
     .select("total_amount, paid_amount, status, created_at")
@@ -91,13 +118,19 @@ async function loadDashboard(isOwner) {
     .eq("status", "completed");
   const totalCustomerDebt = (allOrders || []).reduce((s, o) => s + (Number(o.total_amount||0) - Number(o.paid_amount||0)), 0);
 
-  // Doanh thu tháng này
-  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+  // Tháng đang xem — mặc định tháng hiện tại nếu không chọn
+  const monthStart = selectedMonth ? new Date(selectedMonth) : new Date(now.getFullYear(), now.getMonth(), 1);
+  monthStart.setHours(0,0,0,0);
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59);
+  const isCurrentMonth = monthStart.getFullYear() === now.getFullYear() && monthStart.getMonth() === now.getMonth();
+  const monthLabel = isCurrentMonth ? "tháng này" : `tháng ${monthStart.getMonth() + 1}/${monthStart.getFullYear()}`;
+
   const { data: monthOrders } = await sb
     .from("orders")
     .select("total_amount, created_at")
     .eq("status", "completed")
-    .gte("created_at", monthStart.toISOString());
+    .gte("created_at", monthStart.toISOString())
+    .lte("created_at", monthEnd.toISOString());
   const revenueMonth = (monthOrders || []).reduce((s, o) => s + Number(o.total_amount || 0), 0);
 
   // Dữ liệu biểu đồ 7 ngày gần nhất
@@ -132,7 +165,7 @@ async function loadDashboard(isOwner) {
       <div class="value">${formatVND(revenueToday)}</div>
     </div>
     <div class="stat-card accent">
-      <div class="label">Doanh thu tháng này</div>
+      <div class="label">Doanh thu ${monthLabel}</div>
       <div class="value">${formatVND(revenueMonth)}</div>
     </div>
     <div class="stat-card">
@@ -160,7 +193,8 @@ async function loadDashboard(isOwner) {
       .from("order_items")
       .select("quantity, unit_price, cost_price_at_sale, orders!inner(created_at,status)")
       .eq("orders.status", "completed")
-      .gte("orders.created_at", monthStart.toISOString());
+      .gte("orders.created_at", monthStart.toISOString())
+      .lte("orders.created_at", monthEnd.toISOString());
 
     let monthCost = 0, monthItemRevenue = 0;
     (monthItems || []).forEach(i => {
@@ -181,7 +215,8 @@ async function loadDashboard(isOwner) {
       .from("cash_transactions")
       .select("category, amount, note, created_at")
       .eq("type", "expense")
-      .gte("created_at", monthStart.toISOString());
+      .gte("created_at", monthStart.toISOString())
+      .lte("created_at", monthEnd.toISOString());
     const fixedExpenses = (expenseTx || []).filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category));
     const fixedCostTotal = fixedExpenses.reduce((s, t) => s + Number(t.amount), 0);
     const fixedByCategory = {};
@@ -194,7 +229,8 @@ async function loadDashboard(isOwner) {
       .select("id, order_code, created_at")
       .eq("status", "completed")
       .eq("total_amount", 0)
-      .gte("created_at", monthStart.toISOString());
+      .gte("created_at", monthStart.toISOString())
+      .lte("created_at", monthEnd.toISOString());
     const zeroOrderIds = (zeroOrders || []).map(o => o.id);
     let zeroOrderItems = [];
     if (zeroOrderIds.length > 0) {
@@ -207,6 +243,7 @@ async function loadDashboard(isOwner) {
       .from("stock_adjustments")
       .select("quantity, reason, cost_value, note, created_at, products(name, unit)")
       .gte("created_at", monthStart.toISOString())
+      .lte("created_at", monthEnd.toISOString())
       .order("created_at", { ascending: false });
     const writeOffTotal = (writeOffs || []).reduce((s, w) => s + Number(w.cost_value || 0), 0);
 
@@ -220,7 +257,8 @@ async function loadDashboard(isOwner) {
       .from("orders")
       .select("id, total_amount, created_by")
       .eq("status", "completed")
-      .gte("created_at", monthStart.toISOString());
+      .gte("created_at", monthStart.toISOString())
+      .lte("created_at", monthEnd.toISOString());
     const { data: allProfiles } = await sb.from("profiles").select("id, full_name, role");
 
     const orderIds = (staffOrders || []).map(o => o.id);
@@ -286,12 +324,12 @@ async function loadDashboard(isOwner) {
         <div class="value">${formatVND(cashBalance)}</div>
       </div>
       <div class="stat-card ${profitMonth >= 0 ? 'accent' : 'danger-card'}">
-        <div class="label">Lãi gộp tháng này</div>
+        <div class="label">Lãi gộp ${monthLabel}</div>
         <div class="value">${formatVND(profitMonth)}</div>
         <div class="delta text-mute" style="font-size:11px;">*Tính theo giá vốn tại thời điểm bán</div>
       </div>
       <div class="stat-card" id="expenseToggleCard" style="cursor:pointer;">
-        <div class="label">Chi phí tháng này ▾</div>
+        <div class="label">Chi phí ${monthLabel} ▾</div>
         <div class="value">${formatVND(totalOperatingCost)}</div>
         <div class="delta text-mute" style="font-size:11px;">Bấm để xem chi tiết</div>
       </div>`;
@@ -335,10 +373,11 @@ async function loadDashboard(isOwner) {
   }
 
   if (isOwner) {
+    document.getElementById("staffStatsTitle").textContent = `Doanh số theo nhân viên (${monthLabel})`;
     const staffBody = document.getElementById("staffStatsBody");
     const stats = window.__STAFF_STATS__ || [];
     if (stats.length === 0) {
-      staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong tháng này.</div>`;
+      staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`;
     } else {
       const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
       staffBody.innerHTML = `<table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th><th>DT còn lại</th><th>Tổng doanh thu</th></tr></thead><tbody>
@@ -399,12 +438,15 @@ async function loadDashboard(isOwner) {
     `<div class="empty-state"><div class="icon">✅</div>Chưa có sản phẩm nào sắp hết hàng.</div>`
   );
 
-  // Đơn hàng gần đây
+  // Đơn hàng trong tháng đang xem
+  document.getElementById("recentOrdersTitle").textContent = isCurrentMonth ? "Đơn hàng gần đây" : `Đơn hàng ${monthLabel}`;
   const { data: recent } = await sb
     .from("orders")
     .select("order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
+    .gte("created_at", monthStart.toISOString())
+    .lte("created_at", monthEnd.toISOString())
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(500);
 
   const recentBody = document.getElementById("recentOrdersBody");
   renderExpandableTable(
