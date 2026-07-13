@@ -346,39 +346,6 @@ async function loadDashboard(isOwner) {
       </tbody></table>
       <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.</p>`;
     }
-
-    // Hao hụt & sử dụng nội bộ tháng này
-    const { data: writeOffs } = await sb
-      .from("stock_adjustments")
-      .select("quantity, reason, cost_value, note, created_at, products(name, unit)")
-      .gte("created_at", monthStart.toISOString())
-      .order("created_at", { ascending: false });
-
-    const woBody = document.getElementById("writeOffBody");
-    const REASON_LABEL = { hao_hut_sinh_vat: "🐟 Sinh vật chết", su_dung_noi_bo: "🧪 Dùng cho bể shop", hong_hoc: "🔧 Hỏng hóc", khac: "Khác" };
-    if (!writeOffs || writeOffs.length === 0) {
-      woBody.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Chưa ghi nhận hao hụt nào trong tháng này.</div>`;
-    } else {
-      const totalValue = writeOffs.reduce((s, w) => s + Number(w.cost_value || 0), 0);
-      const byReason = {};
-      writeOffs.forEach(w => { byReason[w.reason] = (byReason[w.reason] || 0) + Number(w.cost_value || 0); });
-
-      woBody.innerHTML = `
-        <div class="stat-grid" style="margin-bottom:16px;">
-          <div class="stat-card accent"><div class="label">Tổng giá trị hao hụt tháng này</div><div class="value">${formatVND(totalValue)}</div></div>
-          ${Object.entries(byReason).map(([reason, val]) => `<div class="stat-card"><div class="label">${REASON_LABEL[reason] || reason}</div><div class="value" style="font-size:18px;">${formatVND(val)}</div></div>`).join("")}
-        </div>
-        <table><thead><tr><th>Ngày</th><th>Sản phẩm</th><th>SL</th><th>Lý do</th><th>Giá trị mất</th><th>Ghi chú</th></tr></thead><tbody>
-          ${writeOffs.map(w => `<tr>
-            <td>${formatDateTime(w.created_at)}</td>
-            <td>${w.products?.name || '—'}</td>
-            <td>${w.quantity} ${w.products?.unit || ''}</td>
-            <td>${REASON_LABEL[w.reason] || w.reason}</td>
-            <td style="color:var(--danger); font-weight:600;">${formatVND(w.cost_value)}</td>
-            <td>${w.note || '—'}</td>
-          </tr>`).join("")}
-        </tbody></table>`;
-    }
   }
 
   // Biểu đồ doanh thu 7 ngày
