@@ -238,7 +238,7 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
 
     <div class="modal-overlay" id="taskModal">
       <div class="modal-box">
-        <div class="modal-header"><h3>Thêm công việc</h3><span class="modal-close" id="taskModalClose">✕</span></div>
+        <div class="modal-header"><h3 id="taskModalTitle">Thêm công việc</h3><span class="modal-close" id="taskModalClose">✕</span></div>
         <div class="modal-body">
           <div class="field"><label>Loại công việc</label>
             <div class="flex gap-6">
@@ -284,7 +284,10 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
 
           <div class="flex gap-8" style="margin-top:18px; justify-content:space-between;">
             <span class="btn btn-danger btn-mini" id="deleteTaskBtn">Xóa công việc</span>
-            <button class="btn btn-primary" id="markTaskDoneBtn">✅ Đánh dấu đã hoàn thành</button>
+            <div class="flex gap-8">
+              <span class="btn btn-secondary btn-mini" id="editTaskBtn">✎ Sửa thông tin</span>
+              <button class="btn btn-primary" id="markTaskDoneBtn">✅ Đánh dấu đã hoàn thành</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1012,17 +1015,20 @@ async function renderTaskList() {
   });
 }
 
-function openTaskModal() {
-  EDIT_TASK_ID = null;
-  TASK_TYPE = "setup";
-  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => el.classList.toggle("active", el.dataset.tasktype === "setup"));
-  document.getElementById("tk_task_title").value = "";
-  document.getElementById("tk_task_date").value = new Date().toISOString().slice(0, 10);
-  document.getElementById("tk_task_tank").innerHTML = `<option value="">— Không liên kết —</option>` + ALL_TANKS.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
-  document.getElementById("tk_task_customer").value = "";
-  document.getElementById("tk_task_deposit").value = "";
-  document.getElementById("tk_task_total").value = "";
-  document.getElementById("tk_task_note").value = "";
+function openTaskModal(taskId) {
+  EDIT_TASK_ID = taskId || null;
+  const t = taskId ? (ALL_TASKS.find(x => x.id === taskId) || WEEK_TASKS.find(x => x.id === taskId)) : null;
+
+  document.getElementById("taskModalTitle").textContent = t ? "Sửa công việc" : "Thêm công việc";
+  TASK_TYPE = t?.task_type || "setup";
+  document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => el.classList.toggle("active", el.dataset.tasktype === TASK_TYPE));
+  document.getElementById("tk_task_title").value = t?.title || "";
+  document.getElementById("tk_task_date").value = t?.task_date || new Date().toISOString().slice(0, 10);
+  document.getElementById("tk_task_tank").innerHTML = `<option value="">— Không liên kết —</option>` + ALL_TANKS.map(x => `<option value="${x.id}" ${x.id === t?.tank_id ? 'selected' : ''}>${x.name}</option>`).join("");
+  document.getElementById("tk_task_customer").value = t?.customer_name || "";
+  document.getElementById("tk_task_deposit").value = t?.deposit_amount || "";
+  document.getElementById("tk_task_total").value = t?.expected_total || "";
+  document.getElementById("tk_task_note").value = t?.note || "";
   document.getElementById("taskModal").classList.add("open");
 }
 
@@ -1042,12 +1048,21 @@ async function saveTask() {
 
   const btn = document.getElementById("taskSaveBtn");
   btn.disabled = true; btn.textContent = "Đang lưu...";
-  const { error } = await sb.from("tank_tasks").insert({ ...payload, created_by: CURRENT_PROFILE.id });
+
+  let error;
+  if (EDIT_TASK_ID) {
+    ({ error } = await sb.from("tank_tasks").update(payload).eq("id", EDIT_TASK_ID));
+  } else {
+    ({ error } = await sb.from("tank_tasks").insert({ ...payload, created_by: CURRENT_PROFILE.id }));
+  }
+
   btn.disabled = false; btn.textContent = "Lưu";
 
   if (error) { alert("Lỗi: " + error.message); return; }
   document.getElementById("taskModal").classList.remove("open");
+  const wasEditingId = EDIT_TASK_ID;
   await renderGridView();
+  if (wasEditingId) await openTaskDetail(wasEditingId);
 }
 
 async function openTaskDetail(taskId) {
@@ -1157,6 +1172,7 @@ function bindTaskEvents() {
   document.getElementById("taskDetailClose").addEventListener("click", () => document.getElementById("taskDetailModal").classList.remove("open"));
   document.getElementById("addQuoteItemBtn").addEventListener("click", addQuoteItemRow);
   document.getElementById("markTaskDoneBtn").addEventListener("click", toggleTaskDone);
+  document.getElementById("editTaskBtn").addEventListener("click", () => openTaskModal(CURRENT_TASK.id));
   document.getElementById("deleteTaskBtn").addEventListener("click", deleteCurrentTask);
 }
 </script>
