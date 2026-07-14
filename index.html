@@ -431,7 +431,7 @@ async function loadDashboard(isOwner, selectedMonth) {
       staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`;
     } else {
       const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
-      staffBody.innerHTML = `<table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th><th>DT còn lại</th><th>Tổng doanh thu</th></tr></thead><tbody>
+      staffBody.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th><th>DT còn lại</th><th>Tổng doanh thu</th></tr></thead><tbody>
         ${stats.map(s => `<tr>
           <td>${s.name}${s.revenue === maxRevenue && s.revenue > 0 ? ' <span class="vip-tag" style="font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600;">🏆 Top</span>' : ''}</td>
           <td>${s.role === 'owner' ? 'Chủ' : 'Nhân viên'}</td>
@@ -440,7 +440,7 @@ async function loadDashboard(isOwner, selectedMonth) {
           <td>${formatVND(s.otherRevenue)}</td>
           <td style="font-weight:600;">${formatVND(s.revenue)}</td>
         </tr>`).join("")}
-      </tbody></table>
+      </tbody></table></div>
       <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.</p>`;
     }
   }
@@ -465,9 +465,9 @@ async function loadDashboard(isOwner, selectedMonth) {
       return;
     }
     const remaining = rows.length - limit;
-    bodyEl.innerHTML = `<table><thead><tr>${headerHtml}</tr></thead><tbody>
+    bodyEl.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr>${headerHtml}</tr></thead><tbody>
       ${rows.slice(0, limit).map(rowFn).join("")}
-    </tbody></table>
+    </tbody></table></div>
     ${remaining > 0 ? `<div class="show-more-row">▼ Xem thêm ${remaining} dòng</div>` : ""}`;
 
     const moreBtn = bodyEl.querySelector(".show-more-row");
