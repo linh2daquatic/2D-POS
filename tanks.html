@@ -1060,9 +1060,7 @@ async function saveTask() {
 
   if (error) { alert("Lỗi: " + error.message); return; }
   document.getElementById("taskModal").classList.remove("open");
-  const wasEditingId = EDIT_TASK_ID;
   await renderGridView();
-  if (wasEditingId) await openTaskDetail(wasEditingId);
 }
 
 async function openTaskDetail(taskId) {
