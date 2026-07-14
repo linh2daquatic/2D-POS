@@ -1172,7 +1172,10 @@ function bindTaskEvents() {
   document.getElementById("taskDetailClose").addEventListener("click", () => document.getElementById("taskDetailModal").classList.remove("open"));
   document.getElementById("addQuoteItemBtn").addEventListener("click", addQuoteItemRow);
   document.getElementById("markTaskDoneBtn").addEventListener("click", toggleTaskDone);
-  document.getElementById("editTaskBtn").addEventListener("click", () => openTaskModal(CURRENT_TASK.id));
+  document.getElementById("editTaskBtn").addEventListener("click", () => {
+    document.getElementById("taskDetailModal").classList.remove("open");
+    openTaskModal(CURRENT_TASK.id);
+  });
   document.getElementById("deleteTaskBtn").addEventListener("click", deleteCurrentTask);
 }
 </script>
