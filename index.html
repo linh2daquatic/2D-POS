@@ -26,6 +26,16 @@
 .cost-subblock { margin:14px 0; padding:14px; background:#f8fafc; border-radius:10px; }
 .cost-subblock-title { font-size:11px; font-weight:700; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px; }
 .cost-detail-title { font-size:11px; font-weight:700; color:var(--text-mute); text-transform:uppercase; letter-spacing:0.03em; margin:14px 0 4px; }
+.cost-details { border-bottom:1px solid #f1f5f9; }
+.cost-details:last-child { border-bottom:none; }
+.cost-details summary { list-style:none; cursor:pointer; }
+.cost-details summary::-webkit-details-marker { display:none; }
+.cost-details summary.cost-row { border-bottom:none; padding:8px 0; }
+.cost-details summary .cr-label::before { content:"▸ "; color:var(--text-mute); font-size:10px; }
+.cost-details[open] summary .cr-label::before { content:"▾ "; }
+.cost-subrows { padding:2px 0 6px 16px; }
+.cost-row.sub { font-size:12px; color:var(--text-mute); padding:5px 0; }
+.cost-row.sub .cr-value { font-weight:500; color:var(--text-mute); }
 .cost-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 @media (max-width: 720px) { .cost-grid { grid-template-columns:1fr; } }
 </style>
@@ -286,6 +296,23 @@ async function loadDashboard(isOwner, selectedMonth) {
       variableByGroup[g] = (variableByGroup[g] || 0) + Number(w.cost_value || 0);
     });
 
+    // Danh sách chi tiết từng dòng chi phí biến đổi, có gắn nhóm hàng để lọc khi bấm xem chi tiết
+    const REASON_LABEL_MAP = { hao_hut_sinh_vat: "🐟 Sinh vật chết", su_dung_noi_bo: "🧪 Dùng cho bể shop", hong_hoc: "🔧 Hỏng hóc", khac: "Khác" };
+    const variableDetailRows = [
+      ...zeroOrderItems.map(i => ({
+        date: (zeroOrders.find(o => o.id === i.order_id) || {}).created_at,
+        label: `Đơn 0đ · ${(zeroOrders.find(o => o.id === i.order_id) || {}).order_code || ''} · ${i.products?.name || ''}`,
+        value: Number(i.quantity) * Number(i.cost_price_at_sale || 0),
+        group: classifyVariableCostGroup(i.products?.category)
+      })),
+      ...(writeOffs || []).map(w => ({
+        date: w.created_at,
+        label: `${REASON_LABEL_MAP[w.reason] || w.reason} · ${w.products?.name || '—'}`,
+        value: Number(w.cost_value || 0),
+        group: classifyVariableCostGroup(w.products?.category)
+      }))
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
     // Doanh số theo từng nhân viên (tháng này) — tách riêng sinh vật (Cá/San hô) để tính lương %
     // Tính theo GIÁ TRỊ THỰC TẾ khách thanh toán: dùng giá đã sửa (order_items.unit_price) và
     // phân bổ phần giảm giá của đơn theo đúng tỷ lệ sinh vật/còn lại trong đơn đó.
@@ -375,7 +402,7 @@ async function loadDashboard(isOwner, selectedMonth) {
         <div class="delta text-mute" style="font-size:11px;">*Lãi gộp − Chi phí (đã trừ hết vận hành)</div>
       </div>`;
 
-    window.__EXPENSE_DATA__ = { fixedCostTotal, fixedByCategory, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal, variableByGroup };
+    window.__EXPENSE_DATA__ = { fixedCostTotal, fixedByCategory, fixedExpenses, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal, variableByGroup, variableDetailRows };
   }
 
   statGrid.innerHTML = cards;
@@ -383,25 +410,34 @@ async function loadDashboard(isOwner, selectedMonth) {
   if (isOwner) {
     const expensePanel = document.getElementById("expenseDetailPanel");
     const expenseBody = document.getElementById("expenseDetailBody");
-    const { fixedCostTotal, fixedByCategory, zeroOrders, zeroOrderItems, writeOffs, variableCostTotal, variableByGroup } = window.__EXPENSE_DATA__ || {};
+    const { fixedCostTotal, fixedByCategory, fixedExpenses, variableCostTotal, variableByGroup, variableDetailRows } = window.__EXPENSE_DATA__ || {};
     document.getElementById("expenseToggleCard").addEventListener("click", () => {
       expensePanel.style.display = expensePanel.style.display === "none" ? "block" : "none";
     });
 
-    const REASON_LABEL = { hao_hut_sinh_vat: "🐟 Sinh vật chết", su_dung_noi_bo: "🧪 Dùng cho bể shop", hong_hoc: "🔧 Hỏng hóc", khac: "Khác" };
-    const variableRows = [
-      ...(zeroOrders || []).map(o => ({ date: o.created_at, label: `Đơn 0đ · ${o.order_code}`, value: (zeroOrderItems || []).filter(i => i.order_id === o.id).reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price_at_sale || 0), 0) })),
-      ...(writeOffs || []).map(w => ({ date: w.created_at, label: `${REASON_LABEL[w.reason] || w.reason} · ${w.products?.name || '—'}`, value: Number(w.cost_value || 0) }))
-    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const fixedByCategoryDetail = {};
+    (fixedExpenses || []).forEach(t => {
+      const cat = t.category || "Khác";
+      (fixedByCategoryDetail[cat] = fixedByCategoryDetail[cat] || []).push(t);
+    });
 
     expenseBody.innerHTML = `
       <div class="cost-grid">
         <div class="cost-col">
           <h3>Chi phí cố định</h3>
-          <div class="cost-desc">Điện nước, lương, thuê nhà... (ghi ở Quỹ tiền mặt)</div>
+          <div class="cost-desc">Điện nước, lương, thuê nhà... (ghi ở Quỹ tiền mặt) — bấm vào từng khoản để xem chi tiết</div>
           <div class="cost-total">${formatVND(fixedCostTotal)}</div>
           ${Object.keys(fixedByCategory).length === 0 ? `<div class="empty-state" style="padding:14px 0;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
-            Object.entries(fixedByCategory).sort((a,b) => b[1]-a[1]).map(([cat, val]) => `<div class="cost-row"><span class="cr-label">${cat}</span><span class="cr-value">${formatVND(val)}</span></div>`).join("")}
+            Object.entries(fixedByCategory).sort((a,b) => b[1]-a[1]).map(([cat, val]) => `
+              <details class="cost-details">
+                <summary class="cost-row"><span class="cr-label">${cat}</span><span class="cr-value">${formatVND(val)}</span></summary>
+                <div class="cost-subrows">
+                  ${(fixedByCategoryDetail[cat] || []).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(t => `
+                    <div class="cost-row sub"><span class="cr-label">${formatDate(t.created_at)}${t.note ? ' · ' + t.note : ''}</span><span class="cr-value">${formatVND(t.amount)}</span></div>
+                  `).join("")}
+                </div>
+              </details>
+            `).join("")}
         </div>
         <div class="cost-col">
           <h3>Chi phí biến đổi</h3>
@@ -409,16 +445,25 @@ async function loadDashboard(isOwner, selectedMonth) {
           <div class="cost-total ${variableCostTotal > 0 ? 'danger' : ''}">${formatVND(variableCostTotal)}</div>
 
           <div class="cost-subblock">
-            <div class="cost-subblock-title">Theo nhóm hàng</div>
+            <div class="cost-subblock-title">Theo nhóm hàng — bấm vào để xem chi tiết</div>
             ${Object.keys(variableByGroup || {}).length === 0 ? `<div class="text-mute" style="font-size:12.5px;">Chưa có dữ liệu.</div>` :
               ["🐟 Cá", "🪸 San hô", "🧪 Vi sinh & Hóa chất", "📦 Đóng gói & Vận chuyển", "Khác"]
                 .filter(g => variableByGroup[g] > 0)
-                .map(g => `<div class="cost-row"><span class="cr-label">${g}</span><span class="cr-value">${formatVND(variableByGroup[g])}</span></div>`).join("")}
+                .map(g => `
+                  <details class="cost-details">
+                    <summary class="cost-row"><span class="cr-label">${g}</span><span class="cr-value">${formatVND(variableByGroup[g])}</span></summary>
+                    <div class="cost-subrows">
+                      ${variableDetailRows.filter(r => r.group === g).map(r => `
+                        <div class="cost-row sub"><span class="cr-label">${formatDate(r.date)} · ${r.label}</span><span class="cr-value">${formatVND(r.value)}</span></div>
+                      `).join("")}
+                    </div>
+                  </details>
+                `).join("")}
           </div>
 
           <div class="cost-detail-title">Chi tiết từng lần</div>
-          ${variableRows.length === 0 ? `<div class="empty-state" style="padding:14px 0;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
-            variableRows.slice(0, 20).map(r => `<div class="cost-row"><span class="cr-label">${formatDate(r.date)} · ${r.label}</span><span class="cr-value">${formatVND(r.value)}</span></div>`).join("")}
+          ${variableDetailRows.length === 0 ? `<div class="empty-state" style="padding:14px 0;"><div class="icon">✅</div>Chưa ghi khoản nào tháng này.</div>` :
+            variableDetailRows.slice(0, 20).map(r => `<div class="cost-row"><span class="cr-label">${formatDate(r.date)} · ${r.label}</span><span class="cr-value">${formatVND(r.value)}</span></div>`).join("")}
         </div>
       </div>`;
   }
