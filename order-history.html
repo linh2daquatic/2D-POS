@@ -18,6 +18,7 @@
 .modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
 .search-bar { max-width:320px; margin-bottom:16px; }
 .summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
+.settings-link { font-size:12px; color:var(--teal-deep); text-decoration:underline; cursor:pointer; font-weight:600; }
 .summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
 .pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .order-row-clickable { cursor:pointer; }
@@ -98,6 +99,25 @@ let PAYMENT_BREAKDOWN = {};
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="editCustomerModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Sửa thông tin khách hàng</h3>
+          <span class="modal-close" id="editCustomerModalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <p class="text-mute" style="font-size:12px; margin-bottom:14px;">Sửa ở đây sẽ cập nhật cho khách này ở mọi nơi trong hệ thống (không chỉ riêng đơn này).</p>
+          <div class="field"><label>Tên khách hàng *</label><input id="ec_name" required></div>
+          <div class="field"><label>Số điện thoại</label><input id="ec_phone"></div>
+          <div class="field"><label>Địa chỉ</label><input id="ec_address"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="editCustomerCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="editCustomerSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   await loadOrders();
@@ -128,6 +148,9 @@ let PAYMENT_BREAKDOWN = {};
 
   document.getElementById("cancelOrderModalClose").addEventListener("click", () => document.getElementById("cancelOrderModal").classList.remove("open"));
   document.getElementById("cancelOrderModalCancelBtn").addEventListener("click", () => document.getElementById("cancelOrderModal").classList.remove("open"));
+  document.getElementById("editCustomerModalClose").addEventListener("click", () => document.getElementById("editCustomerModal").classList.remove("open"));
+  document.getElementById("editCustomerCancelBtn").addEventListener("click", () => document.getElementById("editCustomerModal").classList.remove("open"));
+  document.getElementById("editCustomerSaveBtn").addEventListener("click", saveEditedCustomer);
   document.getElementById("refund_cash").addEventListener("input", checkRefundMismatch);
   document.getElementById("refund_transfer").addEventListener("input", checkRefundMismatch);
   document.getElementById("cancelOrderConfirmBtn").addEventListener("click", async () => {
@@ -244,7 +267,7 @@ async function showOrderDetail(orderId) {
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, status, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
+    .select("order_code, type, status, total_amount, paid_amount, discount_amount, created_at, customer_id, customers(id, name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -266,6 +289,37 @@ async function showOrderDetail(orderId) {
   renderOrderDetailBody(payments || []);
 }
 
+function openEditCustomerModal(customer) {
+  if (!customer?.id) return;
+  document.getElementById("ec_name").value = customer.name || "";
+  document.getElementById("ec_phone").value = customer.phone || "";
+  document.getElementById("ec_address").value = customer.address || "";
+  document.getElementById("editCustomerModal").dataset.customerId = customer.id;
+  document.getElementById("editCustomerModal").classList.add("open");
+}
+
+async function saveEditedCustomer() {
+  const customerId = document.getElementById("editCustomerModal").dataset.customerId;
+  const name = document.getElementById("ec_name").value.trim();
+  if (!name) { alert("Vui lòng nhập tên khách hàng."); return; }
+
+  const btn = document.getElementById("editCustomerSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const { error } = await sb.from("customers").update({
+    name,
+    phone: document.getElementById("ec_phone").value.trim() || null,
+    address: document.getElementById("ec_address").value.trim() || null,
+  }).eq("id", customerId);
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+
+  document.getElementById("editCustomerModal").classList.remove("open");
+  await loadOrders();
+  if (CURRENT_DETAIL_ORDER) await showOrderDetail(CURRENT_DETAIL_ORDER.id);
+}
+
 function renderOrderDetailBody(payments) {
   const order = CURRENT_DETAIL_ORDER;
   const items = CURRENT_DETAIL_ITEMS;
@@ -280,7 +334,7 @@ function renderOrderDetailBody(payments) {
   document.getElementById("orderDetailTitle").textContent = order.order_code + (isCancelled ? " (Đã hủy)" : "");
   body.innerHTML = `
     ${isCancelled ? `<div class="empty-state" style="padding:14px; margin-bottom:14px; background:#fef2f2; border-radius:8px;"><div style="color:var(--danger); font-weight:600;">⚠️ Đơn hàng này đã bị hủy — không tính vào doanh thu, kho và quỹ.</div></div>` : ""}
-    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
+    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"} ${order.customers?.id ? `<span class="settings-link" id="editOrderCustomerBtn" style="margin-left:8px;">✎ Sửa</span>` : ""}</span></div>
     ${order.customers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${order.customers.phone}</span></div>` : ""}
     ${order.customers?.address ? `<div class="summary-row"><span>Địa chỉ</span><span>${order.customers.address}</span></div>` : ""}
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
@@ -332,6 +386,9 @@ function renderOrderDetailBody(payments) {
     ${EDIT_PRICE_MODE ? `<button class="btn btn-primary" id="savePriceBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;">💾 Lưu giá đã sửa</button>` : ""}
     ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:10px;" onclick="cancelOrder('${order.id}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
   `;
+
+  const editCustomerBtn = document.getElementById("editOrderCustomerBtn");
+  if (editCustomerBtn) editCustomerBtn.addEventListener("click", () => openEditCustomerModal(order.customers));
 
   const editBtn = document.getElementById("editPriceBtn");
   if (editBtn) editBtn.addEventListener("click", () => {
