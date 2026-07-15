@@ -19,6 +19,10 @@
 .search-bar { max-width:320px; margin-bottom:16px; }
 .summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
 .settings-link { font-size:12px; color:var(--teal-deep); text-decoration:underline; cursor:pointer; font-weight:600; }
+.ac-result-item { padding:9px 10px; border:1px solid var(--border); border-radius:8px; margin-top:6px; cursor:pointer; font-size:13px; }
+.ac-result-item:hover { border-color:var(--teal); background:#f0fdfa; }
+.ac-result-item .ac-name { font-weight:600; color:var(--ink); }
+.ac-result-item .ac-phone { color:var(--text-mute); font-size:12px; margin-left:6px; }
 .summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
 .pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .order-row-clickable { cursor:pointer; }
@@ -118,6 +122,27 @@ let PAYMENT_BREAKDOWN = {};
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="assignCustomerModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Gán khách hàng cho đơn</h3>
+          <span class="modal-close" id="assignCustomerModalClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <div class="field"><label>Tìm khách hàng có sẵn</label><input id="ac_search" placeholder="Gõ tên hoặc SĐT..." autocomplete="off"></div>
+          <div id="ac_searchResults"></div>
+          <div style="text-align:center; color:var(--text-mute); font-size:12px; margin:16px 0;">— hoặc tạo khách mới —</div>
+          <div class="field"><label>Tên khách hàng mới</label><input id="ac_newName" placeholder="Bỏ trống nếu chọn khách có sẵn ở trên"></div>
+          <div class="field"><label>Số điện thoại</label><input id="ac_newPhone"></div>
+          <div class="field"><label>Địa chỉ</label><input id="ac_newAddress"></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="assignCustomerCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="assignCustomerSaveBtn">Tạo & Gán khách mới</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   await loadOrders();
@@ -151,6 +176,11 @@ let PAYMENT_BREAKDOWN = {};
   document.getElementById("editCustomerModalClose").addEventListener("click", () => document.getElementById("editCustomerModal").classList.remove("open"));
   document.getElementById("editCustomerCancelBtn").addEventListener("click", () => document.getElementById("editCustomerModal").classList.remove("open"));
   document.getElementById("editCustomerSaveBtn").addEventListener("click", saveEditedCustomer);
+  document.getElementById("assignCustomerModalClose").addEventListener("click", () => document.getElementById("assignCustomerModal").classList.remove("open"));
+  document.getElementById("assignCustomerCancelBtn").addEventListener("click", () => document.getElementById("assignCustomerModal").classList.remove("open"));
+  document.getElementById("assignCustomerSaveBtn").addEventListener("click", createAndAssignCustomer);
+  document.getElementById("ac_search").addEventListener("input", renderCustomerSearchResults);
+  await loadAllCustomersForAssign();
   document.getElementById("refund_cash").addEventListener("input", checkRefundMismatch);
   document.getElementById("refund_transfer").addEventListener("input", checkRefundMismatch);
   document.getElementById("cancelOrderConfirmBtn").addEventListener("click", async () => {
@@ -289,6 +319,76 @@ async function showOrderDetail(orderId) {
   renderOrderDetailBody(payments || []);
 }
 
+let ALL_CUSTOMERS_FOR_ASSIGN = [];
+
+async function loadAllCustomersForAssign() {
+  const { data } = await sb.from("customers").select("id, name, phone, address").order("name");
+  ALL_CUSTOMERS_FOR_ASSIGN = data || [];
+}
+
+function openAssignCustomerModal() {
+  document.getElementById("ac_search").value = "";
+  document.getElementById("ac_searchResults").innerHTML = "";
+  document.getElementById("ac_newName").value = "";
+  document.getElementById("ac_newPhone").value = "";
+  document.getElementById("ac_newAddress").value = "";
+  document.getElementById("assignCustomerModal").classList.add("open");
+}
+
+function renderCustomerSearchResults() {
+  const f = document.getElementById("ac_search").value.trim().toLowerCase();
+  const wrap = document.getElementById("ac_searchResults");
+  if (!f) { wrap.innerHTML = ""; return; }
+
+  const matches = ALL_CUSTOMERS_FOR_ASSIGN.filter(c => phoneOrNameMatches(c.name, c.phone, f)).slice(0, 8);
+  if (matches.length === 0) { wrap.innerHTML = `<div class="text-mute" style="font-size:12.5px; margin-top:6px;">Không tìm thấy khách nào khớp.</div>`; return; }
+
+  wrap.innerHTML = matches.map(c => `<div class="ac-result-item" data-id="${c.id}"><span class="ac-name">${c.name}</span>${c.phone ? `<span class="ac-phone">${c.phone}</span>` : ""}</div>`).join("");
+  wrap.querySelectorAll(".ac-result-item").forEach(el => {
+    el.addEventListener("click", () => assignExistingCustomer(el.dataset.id));
+  });
+}
+
+async function assignExistingCustomer(customerId) {
+  const btn = document.getElementById("assignCustomerSaveBtn");
+  btn.disabled = true;
+
+  const { error } = await sb.from("orders").update({ customer_id: customerId }).eq("id", CURRENT_DETAIL_ORDER.id);
+
+  btn.disabled = false;
+  if (error) { alert("Lỗi: " + error.message); return; }
+
+  document.getElementById("assignCustomerModal").classList.remove("open");
+  await loadOrders();
+  await showOrderDetail(CURRENT_DETAIL_ORDER.id);
+}
+
+async function createAndAssignCustomer() {
+  const name = document.getElementById("ac_newName").value.trim();
+  if (!name) { alert("Vui lòng nhập tên khách hàng mới, hoặc chọn 1 khách có sẵn ở trên."); return; }
+
+  const btn = document.getElementById("assignCustomerSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const { data: newCustomer, error: custErr } = await sb.from("customers").insert({
+    name,
+    phone: document.getElementById("ac_newPhone").value.trim() || null,
+    address: document.getElementById("ac_newAddress").value.trim() || null,
+  }).select().single();
+
+  if (custErr) { alert("Lỗi khi tạo khách hàng: " + custErr.message); btn.disabled = false; btn.textContent = "Tạo & Gán khách mới"; return; }
+
+  const { error: orderErr } = await sb.from("orders").update({ customer_id: newCustomer.id }).eq("id", CURRENT_DETAIL_ORDER.id);
+
+  btn.disabled = false; btn.textContent = "Tạo & Gán khách mới";
+  if (orderErr) { alert("Lỗi khi gán khách vào đơn: " + orderErr.message); return; }
+
+  document.getElementById("assignCustomerModal").classList.remove("open");
+  await loadAllCustomersForAssign();
+  await loadOrders();
+  await showOrderDetail(CURRENT_DETAIL_ORDER.id);
+}
+
 function openEditCustomerModal(customer) {
   if (!customer?.id) return;
   document.getElementById("ec_name").value = customer.name || "";
@@ -334,7 +434,10 @@ function renderOrderDetailBody(payments) {
   document.getElementById("orderDetailTitle").textContent = order.order_code + (isCancelled ? " (Đã hủy)" : "");
   body.innerHTML = `
     ${isCancelled ? `<div class="empty-state" style="padding:14px; margin-bottom:14px; background:#fef2f2; border-radius:8px;"><div style="color:var(--danger); font-weight:600;">⚠️ Đơn hàng này đã bị hủy — không tính vào doanh thu, kho và quỹ.</div></div>` : ""}
-    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"} ${order.customers?.id ? `<span class="settings-link" id="editOrderCustomerBtn" style="margin-left:8px;">✎ Sửa</span>` : ""}</span></div>
+    <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"} ${order.customers?.id
+      ? `<span class="settings-link" id="editOrderCustomerBtn" style="margin-left:8px;">✎ Sửa</span>`
+      : `<span class="settings-link" id="assignOrderCustomerBtn" style="margin-left:8px;">✎ Gán khách hàng</span>`
+    }</span></div>
     ${order.customers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${order.customers.phone}</span></div>` : ""}
     ${order.customers?.address ? `<div class="summary-row"><span>Địa chỉ</span><span>${order.customers.address}</span></div>` : ""}
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
@@ -389,6 +492,8 @@ function renderOrderDetailBody(payments) {
 
   const editCustomerBtn = document.getElementById("editOrderCustomerBtn");
   if (editCustomerBtn) editCustomerBtn.addEventListener("click", () => openEditCustomerModal(order.customers));
+  const assignCustomerBtn = document.getElementById("assignOrderCustomerBtn");
+  if (assignCustomerBtn) assignCustomerBtn.addEventListener("click", openAssignCustomerModal);
 
   const editBtn = document.getElementById("editPriceBtn");
   if (editBtn) editBtn.addEventListener("click", () => {
