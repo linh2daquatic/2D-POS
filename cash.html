@@ -50,6 +50,7 @@
 <script>
 let CURRENT_PROFILE = null;
 let ALL_TX = [];
+let CASH_BALANCE_ACCURATE = 0;
 let ALL_RECON = [];
 let FORM_TYPE = "income";
 let FORM_METHOD = "cash";
@@ -191,13 +192,22 @@ async function loadTx() {
   const { data, error } = await sb.from("cash_transactions").select("*").order("created_at", { ascending: false }).limit(150);
   if (error) { document.getElementById("txListWrap").innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
   ALL_TX = data || [];
+
+  // Số dư quỹ PHẢI tính trên TOÀN BỘ lịch sử, không giới hạn 150 dòng như danh sách hiển thị
+  // (nếu chỉ tính trên 150 dòng gần nhất, số dư sẽ sai/nhảy lung tung khi giao dịch tích lũy nhiều)
+  const { data: allTxForBalance, error: balErr } = await sb.from("cash_transactions").select("type, method, amount");
+  if (!balErr) {
+    CASH_BALANCE_ACCURATE = (allTxForBalance || [])
+      .filter(t => (t.method || "cash") === "cash")
+      .reduce((s, t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
+  }
+
   renderStats();
   renderList();
 }
 
 function cashBalance() {
-  return ALL_TX.filter(t => (t.method || "cash") === "cash")
-    .reduce((s, t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
+  return CASH_BALANCE_ACCURATE;
 }
 
 function renderStats() {
