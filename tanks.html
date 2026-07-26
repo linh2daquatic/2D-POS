@@ -987,7 +987,7 @@ async function renderTaskList() {
   const wrap = document.getElementById("taskListWrap");
   if (!wrap) return;
 
-  document.getElementById("addTaskBtn").addEventListener("click", openTaskModal);
+  document.getElementById("addTaskBtn").addEventListener("click", () => openTaskModal());
 
   if (ALL_TASKS.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">🧾</div>Chưa có công việc nào. Bấm "+ Thêm công việc" để bắt đầu ghi (VD: Setup bể mới, Bàn giao bể cho khách...).</div>`;
