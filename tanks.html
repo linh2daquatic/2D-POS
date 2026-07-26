@@ -249,6 +249,12 @@ const SLOTS = [{ key: "sang", label: "Sáng" }, { key: "chieu", label: "Chiều"
           </div>
           <div class="field"><label>Tiêu đề *</label><input id="tk_task_title" placeholder="VD: Setup bể mới cho anh Long" required></div>
           <div class="field"><label>Ngày thực hiện / dự kiến bàn giao *</label><input id="tk_task_date" type="date" required></div>
+          <div class="field"><label>Buổi</label>
+            <div class="flex gap-6">
+              <div class="type-btn active" data-tkslot="sang" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;">Sáng</div>
+              <div class="type-btn" data-tkslot="chieu" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;">Chiều</div>
+            </div>
+          </div>
           <div class="field"><label>Bể liên quan (không bắt buộc)</label>
             <select id="tk_task_tank"><option value="">— Không liên kết —</option></select>
           </div>
@@ -968,6 +974,7 @@ function renderCharts() {
    ============================================================ */
 let ALL_TASKS = [];
 let TASK_TYPE = "setup";
+let TASK_TIME_SLOT = "sang";
 let EDIT_TASK_ID = null;
 let CURRENT_TASK = null;
 let CURRENT_QUOTE_ITEMS = [];
@@ -1022,6 +1029,8 @@ function openTaskModal(taskId) {
   document.getElementById("taskModalTitle").textContent = t ? "Sửa công việc" : "Thêm công việc";
   TASK_TYPE = t?.task_type || "setup";
   document.querySelectorAll("#taskModal [data-tasktype]").forEach(el => el.classList.toggle("active", el.dataset.tasktype === TASK_TYPE));
+  TASK_TIME_SLOT = t?.time_slot || "sang";
+  document.querySelectorAll("#taskModal [data-tkslot]").forEach(el => el.classList.toggle("active", el.dataset.tkslot === TASK_TIME_SLOT));
   document.getElementById("tk_task_title").value = t?.title || "";
   document.getElementById("tk_task_date").value = t?.task_date || new Date().toISOString().slice(0, 10);
   document.getElementById("tk_task_tank").innerHTML = `<option value="">— Không liên kết —</option>` + ALL_TANKS.map(x => `<option value="${x.id}" ${x.id === t?.tank_id ? 'selected' : ''}>${x.name}</option>`).join("");
@@ -1038,7 +1047,7 @@ async function saveTask() {
   if (!title || !date) { alert("Vui lòng nhập tiêu đề và ngày thực hiện."); return; }
 
   const payload = {
-    title, task_type: TASK_TYPE, task_date: date,
+    title, task_type: TASK_TYPE, task_date: date, time_slot: TASK_TIME_SLOT,
     tank_id: document.getElementById("tk_task_tank").value || null,
     customer_name: document.getElementById("tk_task_customer").value.trim() || null,
     deposit_amount: Number(document.getElementById("tk_task_deposit").value || 0),
@@ -1160,6 +1169,13 @@ function bindTaskEvents() {
     el.addEventListener("click", () => {
       TASK_TYPE = el.dataset.tasktype;
       document.querySelectorAll("#taskModal [data-tasktype]").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+    });
+  });
+  document.querySelectorAll("#taskModal [data-tkslot]").forEach(el => {
+    el.addEventListener("click", () => {
+      TASK_TIME_SLOT = el.dataset.tkslot;
+      document.querySelectorAll("#taskModal [data-tkslot]").forEach(x => x.classList.remove("active"));
       el.classList.add("active");
     });
   });
