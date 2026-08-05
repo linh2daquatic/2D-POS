@@ -46,6 +46,10 @@
 .pay-custom-link { font-size:12px; color:var(--text-mute); text-decoration:underline; cursor:pointer; margin-top:8px; display:inline-block; }
 .summary-row { display:flex; justify-content:space-between; padding:6px 0; font-size:14px; max-width:420px; }
 .summary-row.total { font-weight:700; font-size:16px; border-top:1px solid var(--border); margin-top:6px; padding-top:12px; }
+.ac-result-item { padding:9px 10px; border:1px solid var(--border); border-radius:8px; margin-top:6px; cursor:pointer; font-size:13px; }
+.ac-result-item:hover { border-color:var(--teal); background:#f0fdfa; }
+.ac-result-item .ac-name { font-weight:600; color:var(--ink); }
+.type-btn.active { background:var(--ink); color:#fff; border-color:var(--ink) !important; }
 .rc-product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -98,11 +102,10 @@ let RC_ACTIVE_CATEGORY = "";
   });
 
   document.getElementById("pageContent").innerHTML = `
-    ${isOwner ? `
     <div class="tabs-row">
       <div class="tab-btn active" data-tab="list">Danh sách sản phẩm</div>
       <div class="tab-btn" data-tab="receive">Nhập hàng</div>
-    </div>` : ""}
+    </div>
 
     <div id="listTab">
       <div class="flex" style="justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
@@ -127,7 +130,6 @@ let RC_ACTIVE_CATEGORY = "";
       </div>
     </div>
 
-    ${isOwner ? `
     <div id="receiveTab" style="display:none;">
       <div class="panel">
         <div class="panel-header"><h2>Ghi nhận nhập hàng</h2></div>
@@ -145,6 +147,7 @@ let RC_ACTIVE_CATEGORY = "";
           <div class="rc-product-grid" id="rc_productGrid"></div>
 
           <div id="rc_cartItems" style="margin-top:14px;"></div>
+          <p class="text-mute" style="font-size:11.5px;">Không biết giá vốn thì cứ để 0 hoặc để nguyên — Chủ cửa hàng có thể vào sửa lại phiếu sau.</p>
 
           <div class="summary-row total"><span>Tổng tiền nhập</span><span id="rc_sumTotal">0₫</span></div>
 
@@ -175,7 +178,7 @@ let RC_ACTIVE_CATEGORY = "";
           <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
-    </div>` : ""}
+    </div>
 
     <div class="modal-overlay" id="poDetailModal">
       <div class="modal-box" style="max-width:560px;">
@@ -221,6 +224,34 @@ let RC_ACTIVE_CATEGORY = "";
         </div>
       </div>
     </div>
+
+    <div class="modal-overlay" id="writeOffModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Ghi nhận hao hụt / sử dụng nội bộ</h3>
+          <span class="modal-close" id="woClose">✕</span>
+        </div>
+        <div class="modal-body">
+          <div class="summary-row"><span>Sản phẩm</span><span id="wo_productName">—</span></div>
+          <div class="summary-row"><span>Tồn kho hiện tại</span><span id="wo_currentStock">0</span></div>
+          <div class="field" style="margin-top:12px;"><label>Số lượng bị mất *</label><input id="wo_quantity" type="number" step="any" min="0.01" required></div>
+          <div class="field"><label>Lý do</label>
+            <div class="flex gap-6" style="flex-wrap:wrap;">
+              <div class="type-btn active" data-reason="hao_hut_sinh_vat" style="flex:1 1 45%; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">🐟 Sinh vật chết</div>
+              <div class="type-btn" data-reason="su_dung_noi_bo" style="flex:1 1 45%; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">🧪 Dùng cho bể shop</div>
+              <div class="type-btn" data-reason="hong_hoc" style="flex:1 1 45%; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">🔧 Hỏng hóc</div>
+              <div class="type-btn" data-reason="khac" style="flex:1 1 45%; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12px;">Khác</div>
+            </div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="wo_note" placeholder="Không bắt buộc"></div>
+          <div class="summary-row total" id="wo_valueRow" style="display:none;"><span>Giá trị bị mất (ước tính)</span><span id="wo_value">0₫</span></div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" id="woCancelBtn">Hủy</button>
+            <button type="button" class="btn btn-primary" id="woSaveBtn">Lưu</button>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 
   await loadProducts();
@@ -234,16 +265,26 @@ let RC_ACTIVE_CATEGORY = "";
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("productForm").addEventListener("submit", saveProduct);
 
-  if (isOwner) {
-    document.querySelectorAll(".tab-btn").forEach(el => {
-      el.addEventListener("click", () => switchTab(el.dataset.tab));
+  document.getElementById("woClose").addEventListener("click", () => document.getElementById("writeOffModal").classList.remove("open"));
+  document.getElementById("woCancelBtn").addEventListener("click", () => document.getElementById("writeOffModal").classList.remove("open"));
+  document.getElementById("woSaveBtn").addEventListener("click", saveWriteOff);
+  document.getElementById("wo_quantity").addEventListener("input", updateWriteOffValue);
+  document.querySelectorAll("#writeOffModal [data-reason]").forEach(el => {
+    el.addEventListener("click", () => {
+      WO_REASON = el.dataset.reason;
+      document.querySelectorAll("#writeOffModal [data-reason]").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
     });
-    await loadSuppliersForReceive();
-    bindReceiveEvents();
-    resetReceiveForm();
-    await loadReceiveHistory();
-    document.getElementById("poDetailClose").addEventListener("click", () => document.getElementById("poDetailModal").classList.remove("open"));
-  }
+  });
+
+  document.querySelectorAll(".tab-btn").forEach(el => {
+    el.addEventListener("click", () => switchTab(el.dataset.tab));
+  });
+  await loadSuppliersForReceive();
+  bindReceiveEvents();
+  resetReceiveForm();
+  await loadReceiveHistory();
+  document.getElementById("poDetailClose").addEventListener("click", () => document.getElementById("poDetailModal").classList.remove("open"));
 })();
 
 function switchTab(tab) {
@@ -393,8 +434,9 @@ function renderTable(filter) {
       ${list.map(p => {
         const low = Number(p.quantity) <= Number(p.low_stock_threshold) && !isLivestockCategory(p.category);
         const noCost = !p.cost_price || Number(p.cost_price) <= 0;
-        return `<tr>
-          <td>${p.name}</td>
+        const inactive = p.is_active === false;
+        return `<tr style="${inactive ? 'opacity:0.5;' : ''}">
+          <td>${p.name} ${inactive ? '<span class="badge" style="background:#f1f5f9; color:var(--text-mute);">Ngừng bán</span>' : ''}</td>
           <td>${p.sku || "—"}</td>
           <td>${p.category || "—"}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
@@ -403,8 +445,13 @@ function renderTable(filter) {
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
             <span class="btn btn-secondary btn-mini" onclick="quickAdjust('${p.id}')" title="Nhập/Xuất kho nhanh">±Kho</span>
+            <span class="btn btn-secondary btn-mini" onclick="openWriteOffModal('${p.id}')" title="Ghi nhận hao hụt / sử dụng nội bộ">🗑️ Hao hụt</span>
             <span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>
-            ${isOwner ? `<span class="btn btn-danger btn-mini" onclick="deleteProduct('${p.id}','${p.name.replace(/'/g,"\\'")}')">Xóa</span>` : ""}
+            ${isOwner ? (inactive
+              ? `<span class="btn btn-secondary btn-mini" onclick="toggleProductActive('${p.id}', true)">↺ Bán lại</span>`
+              : `<span class="btn btn-secondary btn-mini" onclick="toggleProductActive('${p.id}', false)">⛔ Ngừng bán</span>
+                 <span class="btn btn-danger btn-mini" onclick="deleteProduct('${p.id}','${p.name.replace(/'/g,"\\'")}')">Xóa</span>`
+            ) : ""}
           </div></td>
         </tr>`;
       }).join("")}
@@ -438,10 +485,91 @@ async function quickAdjust(id) {
   await loadProducts();
 }
 
+/* ============================================================
+   HAO HỤT / SỬ DỤNG NỘI BỘ — trừ kho + tính giá trị bị mất,
+   không phải bán hàng, không phải chi tiền mặt
+   ============================================================ */
+let WO_PRODUCT_ID = null;
+let WO_REASON = "hao_hut_sinh_vat";
+
+function openWriteOffModal(id) {
+  WO_PRODUCT_ID = id;
+  WO_REASON = "hao_hut_sinh_vat";
+  const p = ALL_PRODUCTS.find(x => x.id === id);
+  document.getElementById("wo_productName").textContent = p.name;
+  document.getElementById("wo_currentStock").textContent = `${p.quantity} ${p.unit || ''}`;
+  document.getElementById("wo_quantity").value = "";
+  document.getElementById("wo_note").value = "";
+  document.querySelectorAll("#writeOffModal [data-reason]").forEach(el => el.classList.toggle("active", el.dataset.reason === "hao_hut_sinh_vat"));
+  document.getElementById("wo_valueRow").style.display = "none";
+  document.getElementById("writeOffModal").classList.add("open");
+}
+
+function updateWriteOffValue() {
+  const p = ALL_PRODUCTS.find(x => x.id === WO_PRODUCT_ID);
+  const qty = Number(document.getElementById("wo_quantity").value || 0);
+  const valueRow = document.getElementById("wo_valueRow");
+  if (qty > 0 && p?.cost_price) {
+    valueRow.style.display = "flex";
+    document.getElementById("wo_value").textContent = formatVND(qty * Number(p.cost_price));
+  } else {
+    valueRow.style.display = "none";
+  }
+}
+
+async function saveWriteOff() {
+  const p = ALL_PRODUCTS.find(x => x.id === WO_PRODUCT_ID);
+  const qty = Number(document.getElementById("wo_quantity").value || 0);
+  if (!qty || qty <= 0) { alert("Vui lòng nhập số lượng bị mất hợp lệ."); return; }
+
+  const newQty = Number(p.quantity) - qty;
+  if (newQty < 0 && !isLivestockCategory(p.category)) {
+    alert(`Tồn kho chỉ còn ${p.quantity}, không đủ để trừ ${qty}.`);
+    return;
+  }
+
+  const costValue = qty * Number(p.cost_price || 0);
+  const note = document.getElementById("wo_note").value.trim() || null;
+
+  const btn = document.getElementById("woSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  await sb.from("products").update({ quantity: Math.max(newQty, 0) }).eq("id", WO_PRODUCT_ID);
+  await sb.from("inventory_log").insert({
+    product_id: WO_PRODUCT_ID, change_qty: -qty, reason: "write_off",
+    created_by: CURRENT_PROFILE.id
+  });
+  const { error } = await sb.from("stock_adjustments").insert({
+    product_id: WO_PRODUCT_ID, quantity: qty, reason: WO_REASON, cost_value: costValue, note,
+    created_by: CURRENT_PROFILE.id
+  });
+
+  btn.disabled = false; btn.textContent = "Lưu";
+  if (error) { alert("Lỗi: " + error.message); return; }
+
+  document.getElementById("writeOffModal").classList.remove("open");
+  await loadProducts();
+  alert("Đã ghi nhận hao hụt / sử dụng nội bộ.");
+}
+
 async function deleteProduct(id, name) {
-  if (!window.confirm(`Xóa sản phẩm "${name}"? Hành động này không thể hoàn tác.`)) return;
+  if (!window.confirm(`Xóa hẳn sản phẩm "${name}"? Hành động này không thể hoàn tác.`)) return;
   const { error } = await sb.from("products").delete().eq("id", id);
-  if (error) { alert("Lỗi khi xóa: " + error.message + "\n(Có thể sản phẩm này đã có trong đơn hàng, không xóa được.)"); return; }
+
+  if (error) {
+    // Không xóa được vì sản phẩm đã có trong đơn hàng/lịch sử -> đề xuất Ngừng bán thay thế
+    if (window.confirm(`Không xóa hẳn được vì "${name}" đã có trong lịch sử đơn hàng/nhập kho (xóa sẽ làm hỏng báo cáo cũ).\n\nBạn có muốn NGỪNG BÁN sản phẩm này thay vì xóa không? (Ẩn khỏi màn Bán hàng, vẫn giữ nguyên lịch sử và có thể "Bán lại" sau này)`)) {
+      await sb.from("products").update({ is_active: false }).eq("id", id);
+      await loadProducts();
+      alert(`Đã ngừng bán "${name}". Sản phẩm này sẽ không còn hiện trong màn Bán hàng nữa.`);
+    }
+    return;
+  }
+  await loadProducts();
+}
+
+async function toggleProductActive(id, active) {
+  await sb.from("products").update({ is_active: active }).eq("id", id);
   await loadProducts();
 }
 
@@ -812,22 +940,29 @@ async function loadReceiveHistory() {
   });
 }
 
+let PO_EDIT_MODE = false;
+let CURRENT_PO_ID = null;
+let CURRENT_PO_ORIGINAL_ITEMS = []; // bản gốc từ DB, dùng để tính chênh lệch khi lưu
+let CURRENT_PO_ITEMS = []; // bản đang chỉnh sửa trên màn hình
+
 async function showPODetail(poId) {
   const modal = document.getElementById("poDetailModal");
   const body = document.getElementById("poDetailBody");
   document.getElementById("poDetailTitle").textContent = "Chi tiết phiếu nhập";
   body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   modal.classList.add("open");
+  PO_EDIT_MODE = false;
+  CURRENT_PO_ID = poId;
 
   const { data: po, error } = await sb
     .from("purchase_orders")
-    .select("po_code, total_amount, paid_amount, created_at, suppliers(name, phone)")
+    .select("po_code, total_amount, paid_amount, created_at, supplier_id, suppliers(name, phone)")
     .eq("id", poId)
     .single();
 
   const { data: items } = await sb
     .from("purchase_order_items")
-    .select("quantity, unit_cost, subtotal, products(name, unit)")
+    .select("id, product_id, quantity, unit_cost, subtotal, products(name, unit)")
     .eq("purchase_order_id", poId);
 
   const { data: payments } = await sb
@@ -837,33 +972,166 @@ async function showPODetail(poId) {
 
   if (error || !po) { body.innerHTML = `<div class="empty-state">Không tải được phiếu nhập.</div>`; return; }
 
-  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
-  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
-  const debt = Number(po.total_amount) - Number(po.paid_amount);
+  CURRENT_PO_ORIGINAL_ITEMS = (items || []).map(i => ({ ...i, name: i.products?.name, unit: i.products?.unit }));
+  CURRENT_PO_ITEMS = CURRENT_PO_ORIGINAL_ITEMS.map(i => ({ ...i }));
 
+  window.__PO_DETAIL__ = { po, payments: payments || [] };
   document.getElementById("poDetailTitle").textContent = po.po_code;
+  renderPODetailBody();
+}
+
+function renderPODetailBody() {
+  const { po, payments } = window.__PO_DETAIL__;
+  const body = document.getElementById("poDetailBody");
+  const isOwner = CURRENT_PROFILE.role === "owner";
+
+  const cashPaid = payments.filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = payments.filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  const debt = Number(po.total_amount) - Number(po.paid_amount);
+  const liveTotal = CURRENT_PO_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_cost), 0);
+
   body.innerHTML = `
     <div class="summary-row"><span>Nhà cung cấp</span><span>${po.suppliers?.name || '—'}</span></div>
     ${po.suppliers?.phone ? `<div class="summary-row"><span>SĐT</span><span>${po.suppliers.phone}</span></div>` : ""}
     <div class="summary-row"><span>Ngày giờ</span><span>${formatDateTime(po.created_at)}</span></div>
 
-    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL nhập</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <div class="flex" style="justify-content:space-between; align-items:center; margin-top:12px;">
+      <strong style="font-size:13.5px;">Sản phẩm</strong>
+      ${isOwner ? (PO_EDIT_MODE
+        ? `<span class="btn btn-secondary btn-mini" id="poCancelEditBtn">Hủy sửa</span>`
+        : `<span class="btn btn-secondary btn-mini" id="poEditBtn">✎ Sửa phiếu nhập</span>`
+      ) : ""}
+    </div>
+
+    <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL nhập</th><th>Đơn giá</th><th>Thành tiền</th>${PO_EDIT_MODE ? "<th></th>" : ""}</tr></thead>
     <tbody>
-      ${(items || []).map(i => `<tr>
-        <td>${i.products?.name || '—'}</td>
-        <td>${i.quantity} ${i.products?.unit || ''}</td>
-        <td>${formatVND(i.unit_cost)}</td>
-        <td>${formatVND(i.subtotal)}</td>
+      ${CURRENT_PO_ITEMS.map((i, idx) => `<tr>
+        <td>${i.name || '—'}</td>
+        <td>${PO_EDIT_MODE ? `<input type="number" min="0" step="any" value="${i.quantity}" data-idx="${idx}" data-field="quantity" style="width:80px;">` : `${i.quantity} ${i.unit || ''}`}</td>
+        <td>${PO_EDIT_MODE ? `<input type="number" min="0" step="any" value="${i.unit_cost}" data-idx="${idx}" data-field="unit_cost" style="width:110px;">` : formatVND(i.unit_cost)}</td>
+        <td>${formatVND(i.quantity * i.unit_cost)}</td>
+        ${PO_EDIT_MODE ? `<td><span class="p-remove" data-idx="${idx}">✕</span></td>` : ""}
       </tr>`).join("")}
     </tbody></table>
 
+    ${PO_EDIT_MODE ? `
+    <div style="margin-top:12px;">
+      <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">+ Thêm sản phẩm vào phiếu này</label>
+      <input id="poAddProductSearch" placeholder="🔍 Tìm sản phẩm theo tên hoặc SKU...">
+      <div id="poAddProductResults" style="margin-top:6px;"></div>
+    </div>` : ""}
+
     <div style="margin-top:14px;">
-      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(po.total_amount)}</span></div>
+      <div class="summary-row"><span>Tổng tiền${PO_EDIT_MODE ? ' (đang sửa)' : ''}</span><span>${formatVND(PO_EDIT_MODE ? liveTotal : po.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
-      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+      ${!PO_EDIT_MODE ? `<div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>` : ""}
     </div>
+
+    ${PO_EDIT_MODE ? `<button class="btn btn-primary" id="poSaveEditBtn" style="width:100%; justify-content:center; padding:11px; margin-top:14px;">💾 Lưu thay đổi</button>` : ""}
   `;
+
+  const editBtn = document.getElementById("poEditBtn");
+  if (editBtn) editBtn.addEventListener("click", () => { PO_EDIT_MODE = true; renderPODetailBody(); });
+  const cancelEditBtn = document.getElementById("poCancelEditBtn");
+  if (cancelEditBtn) cancelEditBtn.addEventListener("click", () => { PO_EDIT_MODE = false; CURRENT_PO_ITEMS = CURRENT_PO_ORIGINAL_ITEMS.map(i => ({ ...i })); renderPODetailBody(); });
+
+  if (PO_EDIT_MODE) {
+    body.querySelectorAll("input[data-field]").forEach(el => {
+      el.addEventListener("input", () => {
+        const idx = Number(el.dataset.idx);
+        CURRENT_PO_ITEMS[idx][el.dataset.field] = Number(el.value || 0);
+        renderPODetailBody();
+      });
+    });
+    body.querySelectorAll(".p-remove").forEach(el => {
+      el.addEventListener("click", () => {
+        CURRENT_PO_ITEMS.splice(Number(el.dataset.idx), 1);
+        renderPODetailBody();
+      });
+    });
+    document.getElementById("poAddProductSearch").addEventListener("input", renderPOAddProductResults);
+    document.getElementById("poSaveEditBtn").addEventListener("click", savePOEdits);
+  }
+}
+
+function renderPOAddProductResults() {
+  const f = document.getElementById("poAddProductSearch").value.trim().toLowerCase();
+  const wrap = document.getElementById("poAddProductResults");
+  if (!f) { wrap.innerHTML = ""; return; }
+  const matches = ALL_PRODUCTS.filter(p => p.name.toLowerCase().includes(f) || (p.sku || "").toLowerCase().includes(f)).slice(0, 8);
+  if (matches.length === 0) { wrap.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Không tìm thấy sản phẩm.</div>`; return; }
+  wrap.innerHTML = matches.map(p => `<div class="ac-result-item" data-id="${p.id}"><span class="ac-name">${p.name}</span></div>`).join("");
+  wrap.querySelectorAll(".ac-result-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const p = ALL_PRODUCTS.find(x => x.id === el.dataset.id);
+      CURRENT_PO_ITEMS.push({ id: null, product_id: p.id, name: p.name, unit: p.unit, quantity: 1, unit_cost: Number(p.cost_price || 0) });
+      document.getElementById("poAddProductSearch").value = "";
+      renderPODetailBody();
+    });
+  });
+}
+
+async function savePOEdits() {
+  const btn = document.getElementById("poSaveEditBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const originalIds = new Set(CURRENT_PO_ORIGINAL_ITEMS.map(i => i.id));
+  const currentIds = new Set(CURRENT_PO_ITEMS.filter(i => i.id).map(i => i.id));
+
+  // 1. Các dòng đã bị xóa khỏi phiếu -> hoàn lại tồn kho, xóa dòng
+  for (const orig of CURRENT_PO_ORIGINAL_ITEMS) {
+    if (!currentIds.has(orig.id)) {
+      const { data: prod } = await sb.from("products").select("quantity").eq("id", orig.product_id).single();
+      if (prod) await sb.from("products").update({ quantity: Math.max(Number(prod.quantity) - Number(orig.quantity), 0) }).eq("id", orig.product_id);
+      await sb.from("inventory_log").insert({ product_id: orig.product_id, change_qty: -orig.quantity, reason: "purchase_removed", reference_id: CURRENT_PO_ID, created_by: CURRENT_PROFILE.id });
+      await sb.from("purchase_order_items").delete().eq("id", orig.id);
+    }
+  }
+
+  // 2. Các dòng có sẵn nhưng bị đổi số lượng/đơn giá -> cập nhật + điều chỉnh chênh lệch tồn kho
+  for (const item of CURRENT_PO_ITEMS) {
+    if (!item.id) continue;
+    const orig = CURRENT_PO_ORIGINAL_ITEMS.find(o => o.id === item.id);
+    if (!orig) continue;
+    const qtyChanged = Number(item.quantity) !== Number(orig.quantity);
+    const costChanged = Number(item.unit_cost) !== Number(orig.unit_cost);
+    if (!qtyChanged && !costChanged) continue;
+
+    await sb.from("purchase_order_items").update({ quantity: item.quantity, unit_cost: item.unit_cost }).eq("id", item.id);
+
+    if (qtyChanged) {
+      const delta = Number(item.quantity) - Number(orig.quantity);
+      const { data: prod } = await sb.from("products").select("quantity").eq("id", item.product_id).single();
+      if (prod) await sb.from("products").update({ quantity: Math.max(Number(prod.quantity) + delta, 0) }).eq("id", item.product_id);
+      await sb.from("inventory_log").insert({ product_id: item.product_id, change_qty: delta, reason: "purchase_adjust", reference_id: CURRENT_PO_ID, created_by: CURRENT_PROFILE.id });
+    }
+    if (costChanged) {
+      await sb.from("products").update({ cost_price: item.unit_cost }).eq("id", item.product_id);
+    }
+  }
+
+  // 3. Dòng mới thêm vào phiếu -> insert + cộng tồn kho
+  for (const item of CURRENT_PO_ITEMS) {
+    if (item.id) continue;
+    const { error: insErr } = await sb.from("purchase_order_items").insert({
+      purchase_order_id: CURRENT_PO_ID, product_id: item.product_id, quantity: item.quantity, unit_cost: item.unit_cost
+    });
+    if (insErr) { alert("Lỗi khi thêm dòng: " + insErr.message); continue; }
+    const { data: prod } = await sb.from("products").select("quantity").eq("id", item.product_id).single();
+    if (prod) await sb.from("products").update({ quantity: Number(prod.quantity) + Number(item.quantity), cost_price: item.unit_cost }).eq("id", item.product_id);
+    await sb.from("inventory_log").insert({ product_id: item.product_id, change_qty: item.quantity, reason: "purchase", reference_id: CURRENT_PO_ID, created_by: CURRENT_PROFILE.id });
+  }
+
+  // 4. Tính lại tổng tiền phiếu
+  const newTotal = CURRENT_PO_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_cost), 0);
+  await sb.from("purchase_orders").update({ total_amount: newTotal }).eq("id", CURRENT_PO_ID);
+
+  btn.disabled = false; btn.textContent = "💾 Lưu thay đổi";
+  await loadProducts();
+  await loadReceiveHistory();
+  await showPODetail(CURRENT_PO_ID);
+  alert("Đã lưu thay đổi phiếu nhập.");
 }
 </script>
 </body>
