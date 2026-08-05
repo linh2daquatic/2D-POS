@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -877,9 +878,13 @@ async function submitReceive() {
   await sb.from("purchase_order_items").insert(itemRows);
 
   for (const item of RC_CART) {
-    const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
-    const newQty = Number(p.quantity) + item.quantity;
-    await sb.from("products").update({ quantity: newQty, cost_price: item.unit_cost }).eq("id", item.product_id);
+    const { data: p } = await sb.from("products").select("quantity, cost_price").eq("id", item.product_id).single();
+    const oldQty = Number(p?.quantity || 0);
+    const oldCost = Number(p?.cost_price || 0);
+    const newQty = oldQty + item.quantity;
+    // Giá vốn bình quân gia quyền = (SL cũ × Giá vốn cũ + SL nhập × Giá vốn nhập) ÷ Tổng SL
+    const weightedCost = newQty > 0 ? ((oldQty * oldCost) + (item.quantity * item.unit_cost)) / newQty : item.unit_cost;
+    await sb.from("products").update({ quantity: newQty, cost_price: weightedCost }).eq("id", item.product_id);
     await sb.from("inventory_log").insert({
       product_id: item.product_id, change_qty: item.quantity, reason: "purchase",
       reference_id: po.id, created_by: CURRENT_PROFILE.id
@@ -1118,8 +1123,14 @@ async function savePOEdits() {
       purchase_order_id: CURRENT_PO_ID, product_id: item.product_id, quantity: item.quantity, unit_cost: item.unit_cost
     });
     if (insErr) { alert("Lỗi khi thêm dòng: " + insErr.message); continue; }
-    const { data: prod } = await sb.from("products").select("quantity").eq("id", item.product_id).single();
-    if (prod) await sb.from("products").update({ quantity: Number(prod.quantity) + Number(item.quantity), cost_price: item.unit_cost }).eq("id", item.product_id);
+    const { data: prod } = await sb.from("products").select("quantity, cost_price").eq("id", item.product_id).single();
+    if (prod) {
+      const oldQty = Number(prod.quantity || 0);
+      const oldCost = Number(prod.cost_price || 0);
+      const newQty = oldQty + Number(item.quantity);
+      const weightedCost = newQty > 0 ? ((oldQty * oldCost) + (Number(item.quantity) * Number(item.unit_cost))) / newQty : item.unit_cost;
+      await sb.from("products").update({ quantity: newQty, cost_price: weightedCost }).eq("id", item.product_id);
+    }
     await sb.from("inventory_log").insert({ product_id: item.product_id, change_qty: item.quantity, reason: "purchase", reference_id: CURRENT_PO_ID, created_by: CURRENT_PROFILE.id });
   }
 
