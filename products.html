@@ -119,10 +119,6 @@ let RC_ACTIVE_CATEGORY = "";
         ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
       </div>
       ${isOwner ? `
-      <div class="panel" id="missingCostPanel" style="margin-bottom:16px; display:none; border-left:3px solid var(--warning);">
-        <div class="panel-header"><h2>⚠️ Sản phẩm chưa nhập giá vốn</h2></div>
-        <div class="panel-body" id="missingCostBody"></div>
-      </div>
       <div class="panel" style="margin-bottom:16px; border-left:3px solid var(--teal);">
         <div class="panel-header"><h2>🏷️ Theo dõi riêng — MAXSPECT</h2></div>
         <div class="panel-body">
@@ -226,10 +222,6 @@ let RC_ACTIVE_CATEGORY = "";
               <div class="field"><label>Giá vốn</label><input id="f_cost" type="number" step="any" value="0"></div>
               <div class="field"><label>Giá bán lẻ</label><input id="f_retail" type="number" step="any" value="0"></div>
             </div>
-            <div class="field" style="display:flex; align-items:center; gap:8px;">
-              <input type="checkbox" id="f_noRealCost" style="width:auto;">
-              <label for="f_noRealCost" style="margin-bottom:0; cursor:pointer; font-size:12.5px;">Sản phẩm này không có giá vốn thật (tự nuôi trồng, tách chiết san hô...) — bỏ qua cảnh báo thiếu giá vốn</label>
-            </div>
             <div class="field"><label>Giá bán buôn</label><input id="f_wholesale" type="number" step="any" value="0"></div>
             <div class="flex gap-8" style="margin-top:18px; justify-content:flex-end;">
               <button type="button" class="btn btn-secondary" id="cancelBtn">Hủy</button>
@@ -318,7 +310,7 @@ async function loadProducts() {
   renderCategoryChips();
   renderBrandChips();
   renderCategoryBrandDatalists();
-  if (CURRENT_PROFILE.role === "owner") { renderMaxspectValue(); renderMissingCostWarning(); }
+  if (CURRENT_PROFILE.role === "owner") renderMaxspectValue();
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
@@ -362,24 +354,6 @@ function renderCategoryBrandDatalists() {
   const brandList = document.getElementById("brandDatalist");
   if (catList) catList.innerHTML = cats.map(c => `<option value="${c}">`).join("");
   if (brandList) brandList.innerHTML = brands.map(b => `<option value="${b}">`).join("");
-}
-
-function renderMissingCostWarning() {
-  const panel = document.getElementById("missingCostPanel");
-  const body = document.getElementById("missingCostBody");
-  if (!panel) return;
-
-  const missing = ALL_PRODUCTS.filter(p => (!p.cost_price || Number(p.cost_price) <= 0) && !p.no_real_cost && p.is_active !== false);
-
-  if (missing.length === 0) { panel.style.display = "none"; return; }
-
-  panel.style.display = "block";
-  body.innerHTML = `
-    <p class="text-mute" style="font-size:12.5px; margin-bottom:10px;">${missing.length} sản phẩm sau chưa có giá vốn, làm Lãi gộp hiển thị cao hơn thực tế. Bấm "Sửa" để bổ sung giá vốn — hoặc nếu sản phẩm này thực sự không có giá vốn (tự nuôi trồng/tách chiết), tick vào ô "không có giá vốn thật" trong form Sửa để bỏ khỏi danh sách này.</p>
-    <div class="flex gap-6" style="flex-wrap:wrap;">
-      ${missing.map(p => `<span class="unscheduled-chip" style="border-color:var(--warning); color:#b45309; cursor:pointer;" onclick="openModal('${p.id}')">${p.name}</span>`).join("")}
-    </div>
-  `;
 }
 
 function renderMaxspectValue() {
@@ -495,13 +469,13 @@ function renderProductTableHtml(list, isOwner, inactiveMode) {
     <tbody>
       ${list.map(p => {
         const low = Number(p.quantity) <= Number(p.low_stock_threshold) && !isLivestockCategory(p.category);
-        const noCost = (!p.cost_price || Number(p.cost_price) <= 0) && !p.no_real_cost;
+        const noCost = !p.cost_price || Number(p.cost_price) <= 0;
         return `<tr style="${inactiveMode ? 'opacity:0.6;' : ''}">
           <td>${p.name}</td>
           <td>${p.sku || "—"}</td>
           <td>${p.category || "—"}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
-          ${isOwner ? `<td>${noCost ? '<span style="color:var(--warning);">⚠️ Chưa có</span>' : (p.no_real_cost ? `<span class="text-mute">${formatVND(p.cost_price)} (Tự SX)</span>` : formatVND(p.cost_price))}</td>` : ""}
+          ${isOwner ? `<td>${noCost ? '<span style="color:var(--warning);">⚠️ Chưa có</span>' : formatVND(p.cost_price)}</td>` : ""}
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
@@ -651,7 +625,6 @@ function openModal(id) {
   document.getElementById("f_quantity").value = p?.quantity ?? 0;
   document.getElementById("f_threshold").value = p?.low_stock_threshold ?? 5;
   document.getElementById("f_cost").value = p?.cost_price ?? 0;
-  document.getElementById("f_noRealCost").checked = p?.no_real_cost || false;
   document.getElementById("f_retail").value = p?.retail_price ?? 0;
   document.getElementById("f_wholesale").value = p?.wholesale_price ?? 0;
   document.getElementById("modalOverlay").classList.add("open");
@@ -673,7 +646,6 @@ async function saveProduct(e) {
     quantity: Number(document.getElementById("f_quantity").value || 0),
     low_stock_threshold: Number(document.getElementById("f_threshold").value || 5),
     cost_price: Number(document.getElementById("f_cost").value || 0),
-    no_real_cost: document.getElementById("f_noRealCost").checked,
     retail_price: Number(document.getElementById("f_retail").value || 0),
     wholesale_price: Number(document.getElementById("f_wholesale").value || 0),
   };
