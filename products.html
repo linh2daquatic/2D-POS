@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -50,6 +49,12 @@
 .ac-result-item { padding:9px 10px; border:1px solid var(--border); border-radius:8px; margin-top:6px; cursor:pointer; font-size:13px; }
 .ac-result-item:hover { border-color:var(--teal); background:#f0fdfa; }
 .ac-result-item .ac-name { font-weight:600; color:var(--ink); }
+.unscheduled-chip { background:#fff; border:1px dashed var(--border); font-size:12.5px; padding:6px 12px; border-radius:20px; }
+.show-more-row {
+  text-align:center; padding:12px; border:1px dashed var(--border); border-radius:10px;
+  color:var(--text-mute); font-size:13px; font-weight:600; cursor:pointer; background:#fff;
+}
+.show-more-row:hover { border-color:var(--teal); color:var(--teal-deep); }
 .type-btn.active { background:var(--ink); color:#fff; border-color:var(--ink) !important; }
 .rc-product-grid {
   display: grid;
@@ -114,6 +119,10 @@ let RC_ACTIVE_CATEGORY = "";
         ${isOwner ? `<button class="btn btn-primary" id="addBtn">+ Thêm sản phẩm</button>` : ""}
       </div>
       ${isOwner ? `
+      <div class="panel" id="missingCostPanel" style="margin-bottom:16px; display:none; border-left:3px solid var(--warning);">
+        <div class="panel-header"><h2>⚠️ Sản phẩm chưa nhập giá vốn</h2></div>
+        <div class="panel-body" id="missingCostBody"></div>
+      </div>
       <div class="panel" style="margin-bottom:16px; border-left:3px solid var(--teal);">
         <div class="panel-header"><h2>🏷️ Theo dõi riêng — MAXSPECT</h2></div>
         <div class="panel-body">
@@ -129,6 +138,7 @@ let RC_ACTIVE_CATEGORY = "";
           <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
+      <div id="inactiveProductWrap" style="margin-top:12px;"></div>
     </div>
 
     <div id="receiveTab" style="display:none;">
@@ -215,6 +225,10 @@ let RC_ACTIVE_CATEGORY = "";
             <div class="row-2">
               <div class="field"><label>Giá vốn</label><input id="f_cost" type="number" step="any" value="0"></div>
               <div class="field"><label>Giá bán lẻ</label><input id="f_retail" type="number" step="any" value="0"></div>
+            </div>
+            <div class="field" style="display:flex; align-items:center; gap:8px;">
+              <input type="checkbox" id="f_noRealCost" style="width:auto;">
+              <label for="f_noRealCost" style="margin-bottom:0; cursor:pointer; font-size:12.5px;">Sản phẩm này không có giá vốn thật (tự nuôi trồng, tách chiết san hô...) — bỏ qua cảnh báo thiếu giá vốn</label>
             </div>
             <div class="field"><label>Giá bán buôn</label><input id="f_wholesale" type="number" step="any" value="0"></div>
             <div class="flex gap-8" style="margin-top:18px; justify-content:flex-end;">
@@ -304,7 +318,7 @@ async function loadProducts() {
   renderCategoryChips();
   renderBrandChips();
   renderCategoryBrandDatalists();
-  if (CURRENT_PROFILE.role === "owner") renderMaxspectValue();
+  if (CURRENT_PROFILE.role === "owner") { renderMaxspectValue(); renderMissingCostWarning(); }
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
@@ -348,6 +362,24 @@ function renderCategoryBrandDatalists() {
   const brandList = document.getElementById("brandDatalist");
   if (catList) catList.innerHTML = cats.map(c => `<option value="${c}">`).join("");
   if (brandList) brandList.innerHTML = brands.map(b => `<option value="${b}">`).join("");
+}
+
+function renderMissingCostWarning() {
+  const panel = document.getElementById("missingCostPanel");
+  const body = document.getElementById("missingCostBody");
+  if (!panel) return;
+
+  const missing = ALL_PRODUCTS.filter(p => (!p.cost_price || Number(p.cost_price) <= 0) && !p.no_real_cost && p.is_active !== false);
+
+  if (missing.length === 0) { panel.style.display = "none"; return; }
+
+  panel.style.display = "block";
+  body.innerHTML = `
+    <p class="text-mute" style="font-size:12.5px; margin-bottom:10px;">${missing.length} sản phẩm sau chưa có giá vốn, làm Lãi gộp hiển thị cao hơn thực tế. Bấm "Sửa" để bổ sung giá vốn — hoặc nếu sản phẩm này thực sự không có giá vốn (tự nuôi trồng/tách chiết), tick vào ô "không có giá vốn thật" trong form Sửa để bỏ khỏi danh sách này.</p>
+    <div class="flex gap-6" style="flex-wrap:wrap;">
+      ${missing.map(p => `<span class="unscheduled-chip" style="border-color:var(--warning); color:#b45309; cursor:pointer;" onclick="openModal('${p.id}')">${p.name}</span>`).join("")}
+    </div>
+  `;
 }
 
 function renderMaxspectValue() {
@@ -416,16 +448,45 @@ function renderTable(filter) {
   if (ACTIVE_CATEGORY) list = list.filter(p => p.category === ACTIVE_CATEGORY);
   if (ACTIVE_BRAND) list = list.filter(p => p.brand === ACTIVE_BRAND);
 
-  if (isOwner) renderInventoryValue(list);
+  const activeList = list.filter(p => p.is_active !== false);
+  const inactiveList = list.filter(p => p.is_active === false);
 
-  if (list.length === 0) {
+  if (isOwner) renderInventoryValue(activeList);
+
+  if (activeList.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">📦</div>
       ${ALL_PRODUCTS.length === 0 ? 'Chưa có sản phẩm nào. Hãy thêm sản phẩm đầu tiên.' : 'Không tìm thấy sản phẩm phù hợp.'}
     </div>`;
-    return;
+  } else {
+    wrap.innerHTML = renderProductTableHtml(activeList, isOwner, false);
+    bindProductTableEvents(wrap);
   }
 
-  wrap.innerHTML = `<table>
+  const inactiveWrap = document.getElementById("inactiveProductWrap");
+  if (inactiveWrap && isOwner) {
+    if (inactiveList.length === 0) {
+      inactiveWrap.innerHTML = "";
+    } else {
+      inactiveWrap.innerHTML = `
+        <div class="show-more-row" id="toggleInactiveBtn">▾ ${inactiveList.length} sản phẩm đã ngừng bán (bấm để xem)</div>
+        <div id="inactiveProductTable" style="display:none; margin-top:10px;"></div>
+      `;
+      document.getElementById("toggleInactiveBtn").addEventListener("click", () => {
+        const tbl = document.getElementById("inactiveProductTable");
+        const isOpen = tbl.style.display !== "none";
+        tbl.style.display = isOpen ? "none" : "block";
+        document.getElementById("toggleInactiveBtn").textContent = `${isOpen ? '▾' : '▴'} ${inactiveList.length} sản phẩm đã ngừng bán (bấm để ${isOpen ? 'xem' : 'ẩn'})`;
+        if (!isOpen) {
+          tbl.innerHTML = renderProductTableHtml(inactiveList, isOwner, true);
+          bindProductTableEvents(tbl);
+        }
+      });
+    }
+  }
+}
+
+function renderProductTableHtml(list, isOwner, inactiveMode) {
+  return `<table>
     <thead><tr>
       <th>Sản phẩm</th><th>SKU</th><th>Danh mục</th><th>Tồn kho</th>
       ${isOwner ? `<th>Giá nhập</th>` : ""}
@@ -434,21 +495,20 @@ function renderTable(filter) {
     <tbody>
       ${list.map(p => {
         const low = Number(p.quantity) <= Number(p.low_stock_threshold) && !isLivestockCategory(p.category);
-        const noCost = !p.cost_price || Number(p.cost_price) <= 0;
-        const inactive = p.is_active === false;
-        return `<tr style="${inactive ? 'opacity:0.5;' : ''}">
-          <td>${p.name} ${inactive ? '<span class="badge" style="background:#f1f5f9; color:var(--text-mute);">Ngừng bán</span>' : ''}</td>
+        const noCost = (!p.cost_price || Number(p.cost_price) <= 0) && !p.no_real_cost;
+        return `<tr style="${inactiveMode ? 'opacity:0.6;' : ''}">
+          <td>${p.name}</td>
           <td>${p.sku || "—"}</td>
           <td>${p.category || "—"}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
           <td class="${low ? 'qty-low' : ''}">${p.quantity} ${p.unit || ''} ${low ? '⚠️' : ''}</td>
-          ${isOwner ? `<td>${noCost ? '<span style="color:var(--warning);">⚠️ Chưa có</span>' : formatVND(p.cost_price)}</td>` : ""}
+          ${isOwner ? `<td>${noCost ? '<span style="color:var(--warning);">⚠️ Chưa có</span>' : (p.no_real_cost ? `<span class="text-mute">${formatVND(p.cost_price)} (Tự SX)</span>` : formatVND(p.cost_price))}</td>` : ""}
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
             <span class="btn btn-secondary btn-mini" onclick="quickAdjust('${p.id}')" title="Nhập/Xuất kho nhanh">±Kho</span>
             <span class="btn btn-secondary btn-mini" onclick="openWriteOffModal('${p.id}')" title="Ghi nhận hao hụt / sử dụng nội bộ">🗑️ Hao hụt</span>
             <span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>
-            ${isOwner ? (inactive
+            ${isOwner ? (inactiveMode
               ? `<span class="btn btn-secondary btn-mini" onclick="toggleProductActive('${p.id}', true)">↺ Bán lại</span>`
               : `<span class="btn btn-secondary btn-mini" onclick="toggleProductActive('${p.id}', false)">⛔ Ngừng bán</span>
                  <span class="btn btn-danger btn-mini" onclick="deleteProduct('${p.id}','${p.name.replace(/'/g,"\\'")}')">Xóa</span>`
@@ -458,6 +518,11 @@ function renderTable(filter) {
       }).join("")}
     </tbody>
   </table>`;
+}
+
+function bindProductTableEvents(container) {
+  // Các hành động dùng onclick trực tiếp nên không cần bind thêm ở đây;
+  // hàm này để dành nếu sau này cần gắn thêm sự kiện.
 }
 
 async function quickAdjust(id) {
@@ -586,6 +651,7 @@ function openModal(id) {
   document.getElementById("f_quantity").value = p?.quantity ?? 0;
   document.getElementById("f_threshold").value = p?.low_stock_threshold ?? 5;
   document.getElementById("f_cost").value = p?.cost_price ?? 0;
+  document.getElementById("f_noRealCost").checked = p?.no_real_cost || false;
   document.getElementById("f_retail").value = p?.retail_price ?? 0;
   document.getElementById("f_wholesale").value = p?.wholesale_price ?? 0;
   document.getElementById("modalOverlay").classList.add("open");
@@ -607,6 +673,7 @@ async function saveProduct(e) {
     quantity: Number(document.getElementById("f_quantity").value || 0),
     low_stock_threshold: Number(document.getElementById("f_threshold").value || 5),
     cost_price: Number(document.getElementById("f_cost").value || 0),
+    no_real_cost: document.getElementById("f_noRealCost").checked,
     retail_price: Number(document.getElementById("f_retail").value || 0),
     wholesale_price: Number(document.getElementById("f_wholesale").value || 0),
   };
