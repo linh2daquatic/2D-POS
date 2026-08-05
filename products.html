@@ -609,7 +609,11 @@ async function deleteProduct(id, name) {
 }
 
 async function toggleProductActive(id, active) {
-  await sb.from("products").update({ is_active: active }).eq("id", id);
+  const { error } = await sb.from("products").update({ is_active: active }).eq("id", id);
+  if (error) {
+    alert("Lỗi khi cập nhật: " + error.message + "\n\n(Có thể database chưa chạy migration-17.sql — cần thêm cột 'is_active'. Vào Supabase SQL Editor chạy migration này trước.)");
+    return;
+  }
   await loadProducts();
 }
 
