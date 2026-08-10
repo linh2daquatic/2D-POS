@@ -24,6 +24,7 @@
 .type-btn.active.transfer { border-color:#4338ca; color:#4338ca; background:#eef2ff; }
 .tx-amount.income { color: var(--teal-deep); font-weight:700; }
 .tx-amount.expense { color: var(--danger); font-weight:700; }
+.order-row-clickable:hover { background:#f8fafc; }
 .category-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
 .cat-chip { padding:5px 12px; border-radius:16px; font-size:12px; border:1px solid var(--border); cursor:pointer; color:var(--text-mute); }
 .cat-chip.active { background:var(--ink); color:#fff; border-color:var(--ink); }
@@ -53,11 +54,12 @@ let ALL_TX = [];
 let CASH_BALANCE_ACCURATE = 0;
 let ALL_RECON = [];
 let FORM_TYPE = "income";
+let EDIT_TX_ID = null;
 let FORM_METHOD = "cash";
 let ACTIVE_TAB = "history";
 const CATEGORIES = {
   income: ["Bán hàng", "Thu nợ khách", "Góp vốn", "Khác"],
-  expense: ["Nhập hàng", "Tiền điện nước", "Lương nhân viên", "Vận chuyển", "Sửa chữa", "Khác"]
+  expense: ["Nhập hàng", "Tiền điện nước", "Lương nhân viên", "Vận chuyển", "Sửa chữa", "Rút vốn / Cá nhân", "Khác"]
 };
 
 (async () => {
@@ -128,9 +130,12 @@ const CATEGORIES = {
             </div>
             <div class="field"><label>Số tiền *</label><input id="tx_amount" type="number" step="any" required></div>
             <div class="field"><label>Ghi chú</label><input id="tx_note" placeholder="VD: Chi tiền điện tháng 7"></div>
-            <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
-              <button type="button" class="btn btn-secondary" id="txCancelBtn">Hủy</button>
-              <button type="submit" class="btn btn-primary" id="txSaveBtn">Lưu</button>
+            <div class="flex gap-8" style="margin-top:16px; justify-content:space-between;">
+              <span class="btn btn-danger btn-mini" id="txDeleteBtn" style="display:none;">Xóa giao dịch</span>
+              <div class="flex gap-8" style="margin-left:auto;">
+                <button type="button" class="btn btn-secondary" id="txCancelBtn">Hủy</button>
+                <button type="submit" class="btn btn-primary" id="txSaveBtn">Lưu</button>
+              </div>
             </div>
           </form>
         </div>
@@ -163,6 +168,7 @@ const CATEGORIES = {
   document.getElementById("addExpenseBtn").addEventListener("click", () => openModal("expense"));
   document.getElementById("txModalClose").addEventListener("click", closeModal);
   document.getElementById("txCancelBtn").addEventListener("click", closeModal);
+  document.getElementById("txDeleteBtn").addEventListener("click", deleteTx);
   document.getElementById("typeIncomeBtn").addEventListener("click", () => setFormType("income"));
   document.getElementById("typeExpenseBtn").addEventListener("click", () => setFormType("expense"));
   document.getElementById("methodCashBtn").addEventListener("click", () => setFormMethod("cash"));
@@ -243,6 +249,7 @@ function renderStats() {
 
 function renderList() {
   const wrap = document.getElementById("txListWrap");
+  const isOwner = CURRENT_PROFILE.role === "owner";
   if (ALL_TX.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">💰</div>Chưa có giao dịch nào. Ghi nhận thu/chi đầu tiên.</div>`;
     return;
@@ -250,7 +257,7 @@ function renderList() {
   wrap.innerHTML = `<table><thead><tr>
       <th>Ngày</th><th>Loại</th><th>Hình thức</th><th>Danh mục</th><th>Ghi chú</th><th>Số tiền</th>
     </tr></thead><tbody>
-    ${ALL_TX.map(t => `<tr>
+    ${ALL_TX.map(t => `<tr class="${isOwner ? 'order-row-clickable' : ''}" ${isOwner ? `data-id="${t.id}" style="cursor:pointer;"` : ''}>
       <td>${formatDateTime(t.created_at)}</td>
       <td><span class="badge ${t.type === 'income' ? 'paid' : 'debt'}">${t.type === 'income' ? 'Thu' : 'Chi'}</span></td>
       <td>${(t.method || 'cash') === 'cash' ? '💵 Tiền mặt' : '🏦 Chuyển khoản'}</td>
@@ -259,14 +266,20 @@ function renderList() {
       <td class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '−'}${formatVND(t.amount)}</td>
     </tr>`).join("")}
   </tbody></table>`;
+
+  if (isOwner) {
+    wrap.querySelectorAll("[data-id]").forEach(row => {
+      row.addEventListener("click", () => openModal(null, row.dataset.id));
+    });
+  }
 }
 
-function setFormType(type) {
+function setFormType(type, selectedCat) {
   FORM_TYPE = type;
   document.getElementById("typeIncomeBtn").classList.toggle("active", type === "income");
   document.getElementById("typeExpenseBtn").classList.toggle("active", type === "expense");
-  document.getElementById("txModalTitle").textContent = type === "income" ? "Ghi nhận thu" : "Ghi nhận chi";
-  renderCategoryChips();
+  document.getElementById("txModalTitle").textContent = EDIT_TX_ID ? "Sửa giao dịch" : (type === "income" ? "Ghi nhận thu" : "Ghi nhận chi");
+  renderCategoryChips(selectedCat);
 }
 
 function setFormMethod(method) {
@@ -275,10 +288,11 @@ function setFormMethod(method) {
   document.getElementById("methodTransferBtn").classList.toggle("active", method === "transfer");
 }
 
-function renderCategoryChips() {
+function renderCategoryChips(selectedCat) {
   const wrap = document.getElementById("categoryChips");
   const cats = CATEGORIES[FORM_TYPE];
-  wrap.innerHTML = cats.map((c, i) => `<div class="cat-chip ${i === 0 ? 'active' : ''}" data-cat="${c}">${c}</div>`).join("");
+  const active = selectedCat && cats.includes(selectedCat) ? selectedCat : cats[0];
+  wrap.innerHTML = cats.map(c => `<div class="cat-chip ${c === active ? 'active' : ''}" data-cat="${c}">${c}</div>`).join("");
   wrap.querySelectorAll(".cat-chip").forEach(el => {
     el.addEventListener("click", () => {
       wrap.querySelectorAll(".cat-chip").forEach(x => x.classList.remove("active"));
@@ -287,11 +301,16 @@ function renderCategoryChips() {
   });
 }
 
-function openModal(type) {
-  setFormType(type);
-  setFormMethod("cash");
-  document.getElementById("tx_amount").value = "";
-  document.getElementById("tx_note").value = "";
+function openModal(type, txId) {
+  EDIT_TX_ID = txId || null;
+  const t = txId ? ALL_TX.find(x => x.id === txId) : null;
+
+  setFormType(t?.type || type || "income", t?.category);
+  setFormMethod(t?.method || "cash");
+  document.getElementById("txModalTitle").textContent = t ? "Sửa giao dịch" : (FORM_TYPE === "income" ? "Ghi nhận thu" : "Ghi nhận chi");
+  document.getElementById("tx_amount").value = t?.amount || "";
+  document.getElementById("tx_note").value = t?.note || "";
+  document.getElementById("txDeleteBtn").style.display = t ? "inline-block" : "none";
   document.getElementById("txModal").classList.add("open");
 }
 function closeModal() { document.getElementById("txModal").classList.remove("open"); }
@@ -308,18 +327,26 @@ async function saveTx(e) {
   saveBtn.disabled = true;
   saveBtn.textContent = "Đang lưu...";
 
-  const { error } = await sb.from("cash_transactions").insert({
-    type: FORM_TYPE, method: FORM_METHOD, category, amount, note, created_by: CURRENT_PROFILE.id
-  });
+  let error;
+  if (EDIT_TX_ID) {
+    ({ error } = await sb.from("cash_transactions").update({
+      type: FORM_TYPE, method: FORM_METHOD, category, amount, note
+    }).eq("id", EDIT_TX_ID));
+  } else {
+    ({ error } = await sb.from("cash_transactions").insert({
+      type: FORM_TYPE, method: FORM_METHOD, category, amount, note, created_by: CURRENT_PROFILE.id
+    }));
+  }
 
   saveBtn.disabled = false;
   saveBtn.textContent = "Lưu";
 
   if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  const wasEditing = !!EDIT_TX_ID;
   closeModal();
   await loadTx();
 
-  if (CURRENT_PROFILE.role !== "owner") {
+  if (!wasEditing && CURRENT_PROFILE.role !== "owner") {
     pushNotification(
       FORM_TYPE === "income" ? "cash_income" : "cash_expense",
       FORM_TYPE === "income" ? "💰 Ghi nhận thu mới" : "💸 Ghi nhận chi mới",
@@ -327,6 +354,15 @@ async function saveTx(e) {
       "cash.html"
     );
   }
+}
+
+async function deleteTx() {
+  if (!EDIT_TX_ID) return;
+  if (!window.confirm("Xóa hẳn giao dịch này? Không thể hoàn tác.")) return;
+  const { error } = await sb.from("cash_transactions").delete().eq("id", EDIT_TX_ID);
+  if (error) { alert("Lỗi khi xóa: " + error.message); return; }
+  closeModal();
+  await loadTx();
 }
 
 /* ---------- Kiểm quỹ ---------- */
