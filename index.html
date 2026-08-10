@@ -243,8 +243,9 @@ async function loadDashboard(isOwner, selectedMonth) {
     // Chi phí cố định = các khoản "Chi" do người dùng tự ghi ở Quỹ tiền mặt (điện nước, lương, thuê nhà...)
     // LOẠI TRỪ: "Hủy đơn hàng" (chỉ là bút toán đảo ngược khi hủy đơn, không phải chi phí thật),
     // "Nhập hàng"/"Trả nợ NCC" (là giá vốn hàng hóa, đã tính trong Lãi gộp rồi, không tính lại ở đây),
-    // "Điều chỉnh kiểm quỹ" (chỉ là sửa sai số đếm tiền, không phải chi phí)
-    const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ"];
+    // "Điều chỉnh kiểm quỹ" (chỉ là sửa sai số đếm tiền, không phải chi phí),
+    // "Rút vốn / Cá nhân" (Chủ rút tiền cá nhân, không phải chi phí vận hành của cửa hàng)
+    const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ", "Rút vốn / Cá nhân"];
     const { data: expenseTx } = await sb
       .from("cash_transactions")
       .select("category, amount, note, created_at")
