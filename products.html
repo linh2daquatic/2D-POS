@@ -207,6 +207,15 @@ let RC_ACTIVE_CATEGORY = "";
           <input id="sc_search" placeholder="🔍 Tìm sản phẩm để nhập nhanh hơn..." style="margin-bottom:12px;">
           <div id="sc_itemsWrap"></div>
           <div class="summary-row total" style="margin-top:14px;"><span>Sản phẩm chênh lệch</span><span id="sc_diffCount">0</span></div>
+
+          <div style="margin-top:14px; padding:12px; background:#f8fafc; border-radius:8px;">
+            <label style="display:block; font-size:12.5px; font-weight:600; margin-bottom:8px;">Nguyên nhân chênh lệch lần này chủ yếu là gì?</label>
+            <div class="flex gap-6">
+              <div class="type-btn active" data-sccause="hao_hut" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">🐟 Hao hụt/mất thật<br><span style="font-weight:400; font-size:10.5px;">(tính vào chi phí)</span></div>
+              <div class="type-btn" data-sccause="dieu_chinh" style="flex:1; padding:9px; text-align:center; border:1.5px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; font-size:12.5px;">📝 Quên ghi chép<br><span style="font-weight:400; font-size:10.5px;">(chỉ sửa số liệu, KHÔNG tính chi phí)</span></div>
+            </div>
+          </div>
+
           <div class="flex gap-8" style="margin-top:14px;">
             <button class="btn btn-secondary" id="sc_cancelBtn">Hủy</button>
             <button class="btn btn-primary" id="sc_finishBtn">✅ Hoàn tất kiểm kho</button>
@@ -342,6 +351,13 @@ let RC_ACTIVE_CATEGORY = "";
   document.getElementById("sc_search").addEventListener("input", renderStockCountItems);
   document.getElementById("sc_cancelBtn").addEventListener("click", cancelStockCount);
   document.getElementById("sc_finishBtn").addEventListener("click", finishStockCount);
+  document.querySelectorAll("#sc_countingPanel [data-sccause]").forEach(el => {
+    el.addEventListener("click", () => {
+      SC_CAUSE = el.dataset.sccause;
+      document.querySelectorAll("#sc_countingPanel [data-sccause]").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+    });
+  });
   document.getElementById("scDetailClose").addEventListener("click", () => document.getElementById("scDetailModal").classList.remove("open"));
 })();
 
@@ -1254,6 +1270,7 @@ async function savePOEdits() {
    ============================================================ */
 let SC_ITEMS = [];
 let SC_SCOPE_LABEL = "Tất cả sản phẩm";
+let SC_CAUSE = "hao_hut";
 
 function populateStockCountCategoryFilter() {
   const sel = document.getElementById("sc_categoryFilter");
@@ -1276,6 +1293,8 @@ function startStockCount() {
   }));
 
   document.getElementById("sc_scopeLabel").textContent = SC_SCOPE_LABEL;
+  SC_CAUSE = "hao_hut";
+  document.querySelectorAll("#sc_countingPanel [data-sccause]").forEach(el => el.classList.toggle("active", el.dataset.sccause === "hao_hut"));
   document.getElementById("sc_countingPanel").style.display = "block";
   document.getElementById("sc_search").value = "";
   renderStockCountItems();
@@ -1329,7 +1348,11 @@ async function finishStockCount() {
 
   const shortageCount = diffItems.filter(i => i.counted_qty < i.system_qty).length;
   const surplusCount = diffItems.filter(i => i.counted_qty > i.system_qty).length;
-  if (!window.confirm(`Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ tự điều chỉnh lại tồn kho và ghi nhận phần thiếu vào Chi phí biến đổi.`)) return;
+  const isRealLoss = SC_CAUSE === "hao_hut";
+  const confirmMsg = isRealLoss
+    ? `Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ tự điều chỉnh lại tồn kho và ghi nhận phần thiếu vào Chi phí biến đổi (hao hụt thật).`
+    : `Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ CHỈ điều chỉnh lại số liệu tồn kho cho đúng thực tế, KHÔNG tính vào Chi phí biến đổi (vì đây là quên ghi chép, không phải mất hàng thật).`;
+  if (!window.confirm(confirmMsg)) return;
 
   const btn = document.getElementById("sc_finishBtn");
   btn.disabled = true; btn.textContent = "Đang xử lý...";
@@ -1339,15 +1362,15 @@ async function finishStockCount() {
 
   for (const it of diffItems) {
     const diff = Number(it.counted_qty) - Number(it.system_qty);
-    const diffValue = diff < 0 ? Math.abs(diff) * it.cost_price : 0;
+    const diffValue = (isRealLoss && diff < 0) ? Math.abs(diff) * it.cost_price : 0;
     totalDiffValue += diffValue;
     countItemRows.push({ product_id: it.product_id, system_qty: it.system_qty, counted_qty: it.counted_qty, diff_qty: diff, diff_value: diffValue });
 
     await sb.from("products").update({ quantity: it.counted_qty }).eq("id", it.product_id);
     await sb.from("inventory_log").insert({
-      product_id: it.product_id, change_qty: diff, reason: "stock_count", created_by: CURRENT_PROFILE.id
+      product_id: it.product_id, change_qty: diff, reason: isRealLoss ? "stock_count" : "stock_count_correction", created_by: CURRENT_PROFILE.id
     });
-    if (diff < 0) {
+    if (isRealLoss && diff < 0) {
       await sb.from("stock_adjustments").insert({
         product_id: it.product_id, quantity: Math.abs(diff), reason: "kiem_kho_thieu", cost_value: diffValue,
         note: `Phát hiện thiếu khi kiểm kho (${SC_SCOPE_LABEL})`, created_by: CURRENT_PROFILE.id
@@ -1356,7 +1379,9 @@ async function finishStockCount() {
   }
 
   const { data: sc, error } = await sb.from("stock_counts").insert({
-    scope_label: SC_SCOPE_LABEL, total_diff_value: totalDiffValue, created_by: CURRENT_PROFILE.id
+    scope_label: SC_SCOPE_LABEL, total_diff_value: totalDiffValue,
+    note: isRealLoss ? null : "Chênh lệch do quên ghi chép — không tính chi phí",
+    created_by: CURRENT_PROFILE.id
   }).select().single();
 
   if (!error && sc) {
@@ -1368,29 +1393,69 @@ async function finishStockCount() {
   document.getElementById("sc_countingPanel").style.display = "none";
   await loadProducts();
   await loadStockCountHistory();
-  alert(`Đã hoàn tất kiểm kho. Giá trị thiếu hụt phát hiện: ${formatVND(totalDiffValue)}.`);
+  alert(isRealLoss
+    ? `Đã hoàn tất kiểm kho. Giá trị thiếu hụt phát hiện (tính vào chi phí): ${formatVND(totalDiffValue)}.`
+    : `Đã hoàn tất kiểm kho. Đã điều chỉnh lại số liệu tồn kho, không tính vào chi phí.`);
 }
+
+let ALL_STOCK_COUNTS = [];
 
 async function loadStockCountHistory() {
   const wrap = document.getElementById("scHistoryWrap");
-  const { data, error } = await sb.from("stock_counts").select("id, count_date, scope_label, total_diff_value").order("count_date", { ascending: false }).limit(30);
+  const { data, error } = await sb.from("stock_counts").select("id, count_date, scope_label, total_diff_value, note").order("count_date", { ascending: false }).limit(200);
   if (error) { wrap.innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
+  ALL_STOCK_COUNTS = data || [];
 
-  if (!data || data.length === 0) {
+  if (ALL_STOCK_COUNTS.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">📋</div>Chưa có phiếu kiểm kho nào.</div>`;
     return;
   }
 
-  wrap.innerHTML = `<table><thead><tr><th>Ngày</th><th>Phạm vi</th><th>Giá trị thiếu hụt</th></tr></thead><tbody>
-    ${data.map(sc => `<tr class="order-row-clickable" data-id="${sc.id}" style="cursor:pointer;">
-      <td>${formatDateTime(sc.count_date)}</td>
-      <td>${sc.scope_label || 'Tất cả'}</td>
-      <td style="color:${Number(sc.total_diff_value) > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(sc.total_diff_value)}</td>
-    </tr>`).join("")}
+  // Gom theo ngày (yyyy-mm-dd theo giờ địa phương)
+  const byDate = {};
+  ALL_STOCK_COUNTS.forEach(sc => {
+    const d = new Date(sc.count_date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    (byDate[key] = byDate[key] || []).push(sc);
+  });
+  const dateKeys = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+  wrap.innerHTML = `<table><thead><tr><th></th><th>Ngày</th><th>Số danh mục đã kiểm</th><th>Tổng giá trị thiếu hụt</th></tr></thead><tbody>
+    ${dateKeys.map(key => {
+      const items = byDate[key];
+      const total = items.reduce((s, sc) => s + Number(sc.total_diff_value || 0), 0);
+      const label = new Date(items[0].count_date).toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+      return `<tr class="order-row-clickable" data-datekey="${key}" style="cursor:pointer;">
+        <td style="width:20px;" class="sc-date-arrow">▸</td>
+        <td>${label}</td>
+        <td>${items.length}</td>
+        <td style="color:${total > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(total)}</td>
+      </tr>
+      <tr class="sc-date-detail-row" data-detailfor="${key}" style="display:none;"><td></td><td colspan="3">
+        <table style="width:100%;"><tbody>
+          ${items.map(sc => `<tr class="order-row-clickable" data-id="${sc.id}" style="cursor:pointer;">
+            <td style="padding-left:8px;">${formatDateTime(sc.count_date)} — ${sc.scope_label || 'Tất cả'} ${sc.note ? '<span class="text-mute" style="font-size:11px;">(quên ghi chép)</span>' : ''}</td>
+            <td style="text-align:right; color:${Number(sc.total_diff_value) > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(sc.total_diff_value)}</td>
+          </tr>`).join("")}
+        </tbody></table>
+      </td></tr>`;
+    }).join("")}
   </tbody></table>`;
 
-  wrap.querySelectorAll("[data-id]").forEach(row => {
-    row.addEventListener("click", () => showStockCountDetail(row.dataset.id));
+  wrap.querySelectorAll("tr[data-datekey]").forEach(row => {
+    row.addEventListener("click", () => {
+      const key = row.dataset.datekey;
+      const detailRow = wrap.querySelector(`tr[data-detailfor="${key}"]`);
+      const isOpen = detailRow.style.display !== "none";
+      detailRow.style.display = isOpen ? "none" : "table-row";
+      row.querySelector(".sc-date-arrow").textContent = isOpen ? "▸" : "▾";
+    });
+  });
+  wrap.querySelectorAll("tr[data-id]").forEach(row => {
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showStockCountDetail(row.dataset.id);
+    });
   });
 }
 
