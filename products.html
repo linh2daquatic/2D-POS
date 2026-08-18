@@ -49,6 +49,7 @@
 .ac-result-item { padding:9px 10px; border:1px solid var(--border); border-radius:8px; margin-top:6px; cursor:pointer; font-size:13px; }
 .ac-result-item:hover { border-color:var(--teal); background:#f0fdfa; }
 .ac-result-item .ac-name { font-weight:600; color:var(--ink); }
+.order-row-clickable:hover { background:#f8fafc; }
 .unscheduled-chip { background:#fff; border:1px dashed var(--border); font-size:12.5px; padding:6px 12px; border-radius:20px; }
 .show-more-row {
   text-align:center; padding:12px; border:1px dashed var(--border); border-radius:10px;
@@ -111,6 +112,7 @@ let RC_ACTIVE_CATEGORY = "";
     <div class="tabs-row">
       <div class="tab-btn active" data-tab="list">Danh sách sản phẩm</div>
       <div class="tab-btn" data-tab="receive">Nhập hàng</div>
+      <div class="tab-btn" data-tab="count">Kiểm kho</div>
     </div>
 
     <div id="listTab">
@@ -184,6 +186,49 @@ let RC_ACTIVE_CATEGORY = "";
         <div class="panel-body" id="rcHistoryWrap">
           <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
+      </div>
+    </div>
+
+    <div id="countTab" style="display:none;">
+      <div class="panel">
+        <div class="panel-header"><h2>Bắt đầu kiểm kho</h2></div>
+        <div class="panel-body">
+          <p class="text-mute" style="font-size:12.5px; margin-bottom:12px;">Có thể kiểm theo từng danh mục thay vì cả kho cùng lúc. Sản phẩm <strong>thiếu</strong> sẽ tự tính vào Chi phí biến đổi (giống ghi hao hụt). Sản phẩm <strong>thừa</strong> chỉ điều chỉnh lại số lượng, không tính là doanh thu.</p>
+          <div class="field" style="max-width:320px;"><label>Phạm vi kiểm</label>
+            <select id="sc_categoryFilter"><option value="">— Tất cả sản phẩm —</option></select>
+          </div>
+          <button class="btn btn-primary" id="sc_startBtn">Bắt đầu đếm</button>
+        </div>
+      </div>
+
+      <div class="panel" id="sc_countingPanel" style="display:none;">
+        <div class="panel-header"><h2>Đang kiểm kho — <span id="sc_scopeLabel"></span></h2></div>
+        <div class="panel-body">
+          <input id="sc_search" placeholder="🔍 Tìm sản phẩm để nhập nhanh hơn..." style="margin-bottom:12px;">
+          <div id="sc_itemsWrap"></div>
+          <div class="summary-row total" style="margin-top:14px;"><span>Sản phẩm chênh lệch</span><span id="sc_diffCount">0</span></div>
+          <div class="flex gap-8" style="margin-top:14px;">
+            <button class="btn btn-secondary" id="sc_cancelBtn">Hủy</button>
+            <button class="btn btn-primary" id="sc_finishBtn">✅ Hoàn tất kiểm kho</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><h2>Lịch sử kiểm kho</h2></div>
+        <div class="panel-body" id="scHistoryWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="scDetailModal">
+      <div class="modal-box" style="max-width:560px;">
+        <div class="modal-header">
+          <h3 id="scDetailTitle">Chi tiết phiếu kiểm kho</h3>
+          <span class="modal-close" id="scDetailClose">✕</span>
+        </div>
+        <div class="modal-body" id="scDetailBody"></div>
       </div>
     </div>
 
@@ -292,12 +337,20 @@ let RC_ACTIVE_CATEGORY = "";
   resetReceiveForm();
   await loadReceiveHistory();
   document.getElementById("poDetailClose").addEventListener("click", () => document.getElementById("poDetailModal").classList.remove("open"));
+
+  document.getElementById("sc_startBtn").addEventListener("click", startStockCount);
+  document.getElementById("sc_search").addEventListener("input", renderStockCountItems);
+  document.getElementById("sc_cancelBtn").addEventListener("click", cancelStockCount);
+  document.getElementById("sc_finishBtn").addEventListener("click", finishStockCount);
+  document.getElementById("scDetailClose").addEventListener("click", () => document.getElementById("scDetailModal").classList.remove("open"));
 })();
 
 function switchTab(tab) {
   document.querySelectorAll(".tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
   document.getElementById("listTab").style.display = tab === "list" ? "block" : "none";
   document.getElementById("receiveTab").style.display = tab === "receive" ? "block" : "none";
+  document.getElementById("countTab").style.display = tab === "count" ? "block" : "none";
+  if (tab === "count") loadStockCountHistory();
 }
 
 let ACTIVE_CATEGORY = "";
@@ -310,6 +363,7 @@ async function loadProducts() {
   renderCategoryChips();
   renderBrandChips();
   renderCategoryBrandDatalists();
+  populateStockCountCategoryFilter();
   if (CURRENT_PROFILE.role === "owner") renderMaxspectValue();
   renderTable(document.getElementById("searchInput")?.value || "");
 }
@@ -609,12 +663,19 @@ async function deleteProduct(id, name) {
 }
 
 async function toggleProductActive(id, active) {
+  // Đổi giao diện ngay lập tức, không đợi mạng trả lời -> bấm phát ăn ngay, tránh bấm nhầm sản phẩm khác lúc chờ
+  const p = ALL_PRODUCTS.find(x => x.id === id);
+  const prevValue = p ? p.is_active : true;
+  if (p) p.is_active = active;
+  renderTable(document.getElementById("searchInput")?.value || "");
+
   const { error } = await sb.from("products").update({ is_active: active }).eq("id", id);
   if (error) {
+    // Lỗi -> hoàn tác lại giao diện về trạng thái cũ
+    if (p) p.is_active = prevValue;
+    renderTable(document.getElementById("searchInput")?.value || "");
     alert("Lỗi khi cập nhật: " + error.message + "\n\n(Có thể database chưa chạy migration-17.sql — cần thêm cột 'is_active'. Vào Supabase SQL Editor chạy migration này trước.)");
-    return;
   }
-  await loadProducts();
 }
 
 function openModal(id) {
@@ -1186,6 +1247,175 @@ async function savePOEdits() {
   await loadReceiveHistory();
   await showPODetail(CURRENT_PO_ID);
   alert("Đã lưu thay đổi phiếu nhập.");
+}
+
+/* ============================================================
+   KIỂM KHO — đối chiếu tồn kho thực tế, xử lý chênh lệch
+   ============================================================ */
+let SC_ITEMS = [];
+let SC_SCOPE_LABEL = "Tất cả sản phẩm";
+
+function populateStockCountCategoryFilter() {
+  const sel = document.getElementById("sc_categoryFilter");
+  if (!sel) return;
+  const cats = [...new Set(ALL_PRODUCTS.map(p => p.category).filter(Boolean))].sort();
+  sel.innerHTML = `<option value="">— Tất cả sản phẩm —</option>` + cats.map(c => `<option value="${c}">${c}</option>`).join("");
+}
+
+function startStockCount() {
+  const cat = document.getElementById("sc_categoryFilter").value;
+  SC_SCOPE_LABEL = cat || "Tất cả sản phẩm";
+  const list = ALL_PRODUCTS.filter(p => p.is_active !== false && (!cat || p.category === cat));
+
+  if (list.length === 0) { alert("Không có sản phẩm nào trong phạm vi đã chọn."); return; }
+
+  SC_ITEMS = list.map(p => ({
+    product_id: p.id, name: p.name, unit: p.unit, category: p.category,
+    cost_price: Number(p.cost_price || 0),
+    system_qty: Number(p.quantity), counted_qty: Number(p.quantity)
+  }));
+
+  document.getElementById("sc_scopeLabel").textContent = SC_SCOPE_LABEL;
+  document.getElementById("sc_countingPanel").style.display = "block";
+  document.getElementById("sc_search").value = "";
+  renderStockCountItems();
+}
+
+function renderStockCountItems() {
+  const f = (document.getElementById("sc_search").value || "").trim().toLowerCase();
+  const wrap = document.getElementById("sc_itemsWrap");
+  const visible = SC_ITEMS.filter(i => !f || i.name.toLowerCase().includes(f));
+
+  wrap.innerHTML = `<div style="max-height:480px; overflow-y:auto;"><table><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm thực tế</th><th>Chênh lệch</th></tr></thead><tbody>
+    ${visible.map((it) => {
+      const idx = SC_ITEMS.indexOf(it);
+      const diff = Number(it.counted_qty) - Number(it.system_qty);
+      return `<tr>
+        <td>${it.name}</td>
+        <td>${it.system_qty} ${it.unit || ''}</td>
+        <td><input type="number" step="any" value="${it.counted_qty}" data-idx="${idx}" style="width:90px;"></td>
+        <td style="font-weight:600; color:${diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--teal-deep)' : 'var(--text-mute)'};">${diff === 0 ? '—' : (diff > 0 ? '+' + diff : diff)}</td>
+      </tr>`;
+    }).join("")}
+  </tbody></table></div>`;
+
+  wrap.querySelectorAll("input[data-idx]").forEach(el => {
+    el.addEventListener("input", () => {
+      SC_ITEMS[Number(el.dataset.idx)].counted_qty = Number(el.value || 0);
+      updateStockCountDiffCount();
+      const row = el.closest("tr");
+      const diff = Number(el.value || 0) - SC_ITEMS[Number(el.dataset.idx)].system_qty;
+      row.querySelector("td:last-child").textContent = diff === 0 ? "—" : (diff > 0 ? "+" + diff : diff);
+      row.querySelector("td:last-child").style.color = diff < 0 ? "var(--danger)" : diff > 0 ? "var(--teal-deep)" : "var(--text-mute)";
+    });
+  });
+  updateStockCountDiffCount();
+}
+
+function updateStockCountDiffCount() {
+  const n = SC_ITEMS.filter(i => Number(i.counted_qty) !== Number(i.system_qty)).length;
+  document.getElementById("sc_diffCount").textContent = n;
+}
+
+function cancelStockCount() {
+  if (!window.confirm("Hủy phiếu kiểm kho đang làm dở? Toàn bộ số liệu đã nhập sẽ mất.")) return;
+  SC_ITEMS = [];
+  document.getElementById("sc_countingPanel").style.display = "none";
+}
+
+async function finishStockCount() {
+  const diffItems = SC_ITEMS.filter(i => Number(i.counted_qty) !== Number(i.system_qty));
+  if (diffItems.length === 0) { alert("Không có chênh lệch nào — tồn kho khớp hoàn toàn với hệ thống."); return; }
+
+  const shortageCount = diffItems.filter(i => i.counted_qty < i.system_qty).length;
+  const surplusCount = diffItems.filter(i => i.counted_qty > i.system_qty).length;
+  if (!window.confirm(`Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ tự điều chỉnh lại tồn kho và ghi nhận phần thiếu vào Chi phí biến đổi.`)) return;
+
+  const btn = document.getElementById("sc_finishBtn");
+  btn.disabled = true; btn.textContent = "Đang xử lý...";
+
+  let totalDiffValue = 0;
+  const countItemRows = [];
+
+  for (const it of diffItems) {
+    const diff = Number(it.counted_qty) - Number(it.system_qty);
+    const diffValue = diff < 0 ? Math.abs(diff) * it.cost_price : 0;
+    totalDiffValue += diffValue;
+    countItemRows.push({ product_id: it.product_id, system_qty: it.system_qty, counted_qty: it.counted_qty, diff_qty: diff, diff_value: diffValue });
+
+    await sb.from("products").update({ quantity: it.counted_qty }).eq("id", it.product_id);
+    await sb.from("inventory_log").insert({
+      product_id: it.product_id, change_qty: diff, reason: "stock_count", created_by: CURRENT_PROFILE.id
+    });
+    if (diff < 0) {
+      await sb.from("stock_adjustments").insert({
+        product_id: it.product_id, quantity: Math.abs(diff), reason: "kiem_kho_thieu", cost_value: diffValue,
+        note: `Phát hiện thiếu khi kiểm kho (${SC_SCOPE_LABEL})`, created_by: CURRENT_PROFILE.id
+      });
+    }
+  }
+
+  const { data: sc, error } = await sb.from("stock_counts").insert({
+    scope_label: SC_SCOPE_LABEL, total_diff_value: totalDiffValue, created_by: CURRENT_PROFILE.id
+  }).select().single();
+
+  if (!error && sc) {
+    await sb.from("stock_count_items").insert(countItemRows.map(r => ({ ...r, stock_count_id: sc.id })));
+  }
+
+  btn.disabled = false; btn.textContent = "✅ Hoàn tất kiểm kho";
+  SC_ITEMS = [];
+  document.getElementById("sc_countingPanel").style.display = "none";
+  await loadProducts();
+  await loadStockCountHistory();
+  alert(`Đã hoàn tất kiểm kho. Giá trị thiếu hụt phát hiện: ${formatVND(totalDiffValue)}.`);
+}
+
+async function loadStockCountHistory() {
+  const wrap = document.getElementById("scHistoryWrap");
+  const { data, error } = await sb.from("stock_counts").select("id, count_date, scope_label, total_diff_value").order("count_date", { ascending: false }).limit(30);
+  if (error) { wrap.innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
+
+  if (!data || data.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">📋</div>Chưa có phiếu kiểm kho nào.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table><thead><tr><th>Ngày</th><th>Phạm vi</th><th>Giá trị thiếu hụt</th></tr></thead><tbody>
+    ${data.map(sc => `<tr class="order-row-clickable" data-id="${sc.id}" style="cursor:pointer;">
+      <td>${formatDateTime(sc.count_date)}</td>
+      <td>${sc.scope_label || 'Tất cả'}</td>
+      <td style="color:${Number(sc.total_diff_value) > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(sc.total_diff_value)}</td>
+    </tr>`).join("")}
+  </tbody></table>`;
+
+  wrap.querySelectorAll("[data-id]").forEach(row => {
+    row.addEventListener("click", () => showStockCountDetail(row.dataset.id));
+  });
+}
+
+async function showStockCountDetail(scId) {
+  const modal = document.getElementById("scDetailModal");
+  const body = document.getElementById("scDetailBody");
+  body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  modal.classList.add("open");
+
+  const { data: sc } = await sb.from("stock_counts").select("count_date, scope_label, total_diff_value").eq("id", scId).single();
+  const { data: items } = await sb.from("stock_count_items").select("system_qty, counted_qty, diff_qty, diff_value, products(name, unit)").eq("stock_count_id", scId);
+
+  document.getElementById("scDetailTitle").textContent = `Kiểm kho — ${sc?.scope_label || 'Tất cả'}`;
+  body.innerHTML = `
+    <div class="summary-row"><span>Ngày kiểm</span><span>${formatDateTime(sc.count_date)}</span></div>
+    <div class="summary-row total"><span>Giá trị thiếu hụt</span><span style="color:var(--danger);">${formatVND(sc.total_diff_value)}</span></div>
+    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm được</th><th>Chênh lệch</th></tr></thead><tbody>
+      ${(items || []).map(i => `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.system_qty} ${i.products?.unit || ''}</td>
+        <td>${i.counted_qty} ${i.products?.unit || ''}</td>
+        <td style="font-weight:600; color:${i.diff_qty < 0 ? 'var(--danger)' : 'var(--teal-deep)'};">${i.diff_qty > 0 ? '+' + i.diff_qty : i.diff_qty}</td>
+      </tr>`).join("")}
+    </tbody></table>
+  `;
 }
 </script>
 </body>
