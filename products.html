@@ -50,6 +50,7 @@
 .ac-result-item:hover { border-color:var(--teal); background:#f0fdfa; }
 .ac-result-item .ac-name { font-weight:600; color:var(--ink); }
 .order-row-clickable:hover { background:#f8fafc; }
+.settings-link { font-size:11.5px; color:var(--teal-deep); text-decoration:underline; cursor:pointer; }
 .unscheduled-chip { background:#fff; border:1px dashed var(--border); font-size:12.5px; padding:6px 12px; border-radius:20px; }
 .show-more-row {
   text-align:center; padding:12px; border:1px dashed var(--border); border-radius:10px;
@@ -1439,12 +1440,9 @@ async function loadStockCountHistory() {
           ${items.map(sc => `<tr>
             <td style="padding-left:8px; cursor:pointer;" class="order-row-clickable" data-id="${sc.id}">
               ${formatDateTime(sc.count_date)} — ${sc.scope_label || 'Tất cả'}
-              ${sc.is_real_loss
-                ? '<span class="badge debt" style="margin-left:6px;">Hao hụt thật</span>'
-                : '<span class="badge" style="margin-left:6px; background:#f1f5f9; color:var(--text-mute);">Quên ghi chép</span>'}
+              <span class="settings-link" style="margin-left:8px;">Xem/đổi từng mã →</span>
             </td>
             <td style="text-align:right; color:${Number(sc.total_diff_value) > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(sc.total_diff_value)}</td>
-            <td style="text-align:right;"><span class="btn btn-secondary btn-mini sc-reclassify-btn" data-scid="${sc.id}">🔄 Đổi thành ${sc.is_real_loss ? 'Quên ghi chép' : 'Hao hụt thật'}</span></td>
           </tr>`).join("")}
         </tbody></table>
       </td></tr>`;
@@ -1466,69 +1464,146 @@ async function loadStockCountHistory() {
       showStockCountDetail(cell.dataset.id);
     });
   });
-  wrap.querySelectorAll(".sc-reclassify-btn").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      reclassifyStockCount(el.dataset.scid);
-    });
-  });
 }
 
-async function reclassifyStockCount(scId) {
-  const sc = ALL_STOCK_COUNTS.find(x => x.id === scId);
-  if (!sc) return;
-  const newIsRealLoss = !sc.is_real_loss;
+let SC_DETAIL_ID = null;
 
-  if (!window.confirm(newIsRealLoss
-    ? `Đổi phiếu này thành "Hao hụt thật"? Giá trị chênh lệch sẽ được tính lại vào Chi phí biến đổi trên Dashboard.`
-    : `Đổi phiếu này thành "Quên ghi chép"? Giá trị chênh lệch sẽ được bỏ khỏi Chi phí biến đổi trên Dashboard. Số lượng tồn kho đã điều chỉnh trước đó KHÔNG bị thay đổi.`
-  )) return;
-
-  if (!newIsRealLoss) {
-    // Chuyển sang "quên ghi chép" -> xóa các dòng đã tính vào chi phí
-    await sb.from("stock_adjustments").delete().eq("stock_count_id", scId);
-    await sb.from("stock_counts").update({ is_real_loss: false, total_diff_value: 0 }).eq("id", scId);
-  } else {
-    // Chuyển sang "hao hụt thật" -> tạo lại các dòng chi phí từ dữ liệu đã lưu sẵn
-    const { data: items } = await sb.from("stock_count_items").select("product_id, diff_qty, diff_value").eq("stock_count_id", scId);
-    let total = 0;
-    for (const it of (items || [])) {
-      if (Number(it.diff_qty) < 0 && Number(it.diff_value) > 0) {
-        await sb.from("stock_adjustments").insert({
-          product_id: it.product_id, quantity: Math.abs(it.diff_qty), reason: "kiem_kho_thieu", cost_value: it.diff_value,
-          stock_count_id: scId, note: `Phát hiện thiếu khi kiểm kho (${sc.scope_label || 'Tất cả'})`, created_by: CURRENT_PROFILE.id
-        });
-        total += Number(it.diff_value);
-      }
-    }
-    await sb.from("stock_counts").update({ is_real_loss: true, total_diff_value: total }).eq("id", scId);
-  }
-
-  await loadStockCountHistory();
-}
+let SC_EDIT_MODE = false;
 
 async function showStockCountDetail(scId) {
   const modal = document.getElementById("scDetailModal");
   const body = document.getElementById("scDetailBody");
   body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   modal.classList.add("open");
+  SC_DETAIL_ID = scId;
+  SC_EDIT_MODE = false;
+  await renderStockCountDetailBody();
+}
 
-  const { data: sc } = await sb.from("stock_counts").select("count_date, scope_label, total_diff_value").eq("id", scId).single();
-  const { data: items } = await sb.from("stock_count_items").select("system_qty, counted_qty, diff_qty, diff_value, products(name, unit)").eq("stock_count_id", scId);
+async function renderStockCountDetailBody() {
+  const scId = SC_DETAIL_ID;
+  const body = document.getElementById("scDetailBody");
+
+  const { data: sc } = await sb.from("stock_counts").select("count_date, scope_label").eq("id", scId).single();
+  const { data: items } = await sb.from("stock_count_items").select("id, product_id, system_qty, counted_qty, diff_qty, diff_value, products(name, unit)").eq("stock_count_id", scId);
+  const { data: adjustments } = await sb.from("stock_adjustments").select("product_id, cost_value").eq("stock_count_id", scId);
+
+  const realLossProductIds = new Set((adjustments || []).map(a => a.product_id));
+  const currentTotal = (adjustments || []).reduce((s, a) => s + Number(a.cost_value || 0), 0);
 
   document.getElementById("scDetailTitle").textContent = `Kiểm kho — ${sc?.scope_label || 'Tất cả'}`;
   body.innerHTML = `
     <div class="summary-row"><span>Ngày kiểm</span><span>${formatDateTime(sc.count_date)}</span></div>
-    <div class="summary-row total"><span>Giá trị thiếu hụt</span><span style="color:var(--danger);">${formatVND(sc.total_diff_value)}</span></div>
-    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm được</th><th>Chênh lệch</th></tr></thead><tbody>
-      ${(items || []).map(i => `<tr>
-        <td>${i.products?.name || '—'}</td>
-        <td>${i.system_qty} ${i.products?.unit || ''}</td>
-        <td>${i.counted_qty} ${i.products?.unit || ''}</td>
-        <td style="font-weight:600; color:${i.diff_qty < 0 ? 'var(--danger)' : 'var(--teal-deep)'};">${i.diff_qty > 0 ? '+' + i.diff_qty : i.diff_qty}</td>
-      </tr>`).join("")}
+    <div class="summary-row total"><span>Giá trị tính vào chi phí</span><span style="color:var(--danger);">${formatVND(currentTotal)}</span></div>
+    <div class="flex" style="justify-content:space-between; align-items:center; margin-top:10px;">
+      <p class="text-mute" style="font-size:11.5px; margin:0;">${SC_EDIT_MODE ? 'Sửa lại đúng số đã đếm nếu lỡ gõ nhầm.' : 'Với từng mã có chênh lệch âm (thiếu), bấm nút bên phải để chọn: hao hụt thật hay chỉ quên ghi chép.'}</p>
+      ${SC_EDIT_MODE
+        ? `<span class="btn btn-secondary btn-mini" id="scCancelEditBtn">Hủy sửa</span>`
+        : `<span class="btn btn-secondary btn-mini" id="scEditBtn">✎ Sửa số lượng đếm</span>`}
+    </div>
+    <table style="margin-top:10px;"><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm được</th><th>Chênh lệch</th><th></th></tr></thead><tbody>
+      ${(items || []).map(i => {
+        const isShortage = Number(i.diff_qty) < 0;
+        const isRealLoss = realLossProductIds.has(i.product_id);
+        return `<tr>
+          <td>${i.products?.name || '—'}</td>
+          <td>${i.system_qty} ${i.products?.unit || ''}</td>
+          <td>${SC_EDIT_MODE
+            ? `<input type="number" step="any" value="${i.counted_qty}" data-itemid="${i.id}" style="width:90px;">`
+            : `${i.counted_qty} ${i.products?.unit || ''}`}</td>
+          <td style="font-weight:600; color:${i.diff_qty < 0 ? 'var(--danger)' : 'var(--teal-deep)'};">${i.diff_qty > 0 ? '+' + i.diff_qty : i.diff_qty}</td>
+          <td>
+            ${SC_EDIT_MODE || !isShortage ? '' : (isRealLoss
+              ? `<span class="badge debt" style="margin-right:6px;">Hao hụt thật</span><span class="btn btn-secondary btn-mini sc-item-toggle" data-pid="${i.product_id}" data-qty="${Math.abs(i.diff_qty)}" data-val="${i.diff_value}" data-torealloss="false">Đổi thành quên ghi chép</span>`
+              : `<span class="badge" style="margin-right:6px; background:#f1f5f9; color:var(--text-mute);">Quên ghi chép</span><span class="btn btn-secondary btn-mini sc-item-toggle" data-pid="${i.product_id}" data-qty="${Math.abs(i.diff_qty)}" data-val="${i.diff_value}" data-torealloss="true">Đổi thành hao hụt thật</span>`
+            )}
+          </td>
+        </tr>`;
+      }).join("")}
     </tbody></table>
+    ${SC_EDIT_MODE ? `<button class="btn btn-primary" id="scSaveEditBtn" style="width:100%; justify-content:center; padding:11px; margin-top:14px;">💾 Lưu số đã sửa</button>` : ""}
   `;
+
+  const editBtn = document.getElementById("scEditBtn");
+  if (editBtn) editBtn.addEventListener("click", () => { SC_EDIT_MODE = true; renderStockCountDetailBody(); });
+  const cancelBtn = document.getElementById("scCancelEditBtn");
+  if (cancelBtn) cancelBtn.addEventListener("click", () => { SC_EDIT_MODE = false; renderStockCountDetailBody(); });
+  const saveBtn = document.getElementById("scSaveEditBtn");
+  if (saveBtn) saveBtn.addEventListener("click", saveStockCountItemEdits);
+
+  body.querySelectorAll(".sc-item-toggle").forEach(el => {
+    el.addEventListener("click", () => reclassifyStockCountItem(el.dataset.pid, Number(el.dataset.qty), Number(el.dataset.val), el.dataset.torealloss === "true"));
+  });
+}
+
+async function saveStockCountItemEdits() {
+  const scId = SC_DETAIL_ID;
+  const inputs = document.querySelectorAll('#scDetailBody input[data-itemid]');
+
+  const btn = document.getElementById("scSaveEditBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  for (const input of inputs) {
+    const { data: item } = await sb.from("stock_count_items").select("id, product_id, system_qty, counted_qty").eq("id", input.dataset.itemid).single();
+    const newCounted = Number(input.value || 0);
+    if (!item || newCounted === Number(item.counted_qty)) continue;
+
+    const correctionDelta = newCounted - Number(item.counted_qty); // phần chênh cần cộng/trừ thêm vào tồn kho hiện tại
+    const { data: product } = await sb.from("products").select("quantity, cost_price").eq("id", item.product_id).single();
+    const newProductQty = Math.max(Number(product.quantity) + correctionDelta, 0);
+    await sb.from("products").update({ quantity: newProductQty }).eq("id", item.product_id);
+    await sb.from("inventory_log").insert({
+      product_id: item.product_id, change_qty: correctionDelta, reason: "stock_count_manual_fix", created_by: CURRENT_PROFILE.id
+    });
+
+    const newDiffQty = newCounted - Number(item.system_qty);
+    const newDiffValue = newDiffQty < 0 ? Math.abs(newDiffQty) * Number(product.cost_price || 0) : 0;
+    await sb.from("stock_count_items").update({ counted_qty: newCounted, diff_qty: newDiffQty, diff_value: newDiffValue }).eq("id", item.id);
+
+    // Nếu dòng này đang được tính là "hao hụt thật", cập nhật lại đúng số tiền hoặc xóa nếu không còn thiếu nữa
+    const { data: adjRows } = await sb.from("stock_adjustments").select("id").eq("stock_count_id", scId).eq("product_id", item.product_id);
+    if (adjRows && adjRows.length > 0) {
+      if (newDiffQty < 0) {
+        await sb.from("stock_adjustments").update({ quantity: Math.abs(newDiffQty), cost_value: newDiffValue }).eq("id", adjRows[0].id);
+      } else {
+        await sb.from("stock_adjustments").delete().eq("id", adjRows[0].id);
+      }
+    }
+  }
+
+  // Tính lại tổng giá trị của phiếu
+  const { data: finalAdjustments } = await sb.from("stock_adjustments").select("cost_value").eq("stock_count_id", scId);
+  const newTotal = (finalAdjustments || []).reduce((s, a) => s + Number(a.cost_value || 0), 0);
+  await sb.from("stock_counts").update({ total_diff_value: newTotal }).eq("id", scId);
+
+  btn.disabled = false; btn.textContent = "💾 Lưu số đã sửa";
+  SC_EDIT_MODE = false;
+  await loadProducts();
+  await renderStockCountDetailBody();
+  await loadStockCountHistory();
+  alert("Đã cập nhật lại số liệu kiểm kho.");
+}
+
+async function reclassifyStockCountItem(productId, qty, value, toRealLoss) {
+  const scId = SC_DETAIL_ID;
+  const sc = ALL_STOCK_COUNTS.find(x => x.id === scId);
+
+  if (toRealLoss) {
+    await sb.from("stock_adjustments").insert({
+      product_id: productId, quantity: qty, reason: "kiem_kho_thieu", cost_value: value,
+      stock_count_id: scId, note: `Phát hiện thiếu khi kiểm kho (${sc?.scope_label || 'Tất cả'})`, created_by: CURRENT_PROFILE.id
+    });
+  } else {
+    await sb.from("stock_adjustments").delete().eq("stock_count_id", scId).eq("product_id", productId);
+  }
+
+  // Cập nhật lại tổng giá trị của phiếu theo đúng các dòng hiện đang tính là hao hụt thật
+  const { data: adjustments } = await sb.from("stock_adjustments").select("cost_value").eq("stock_count_id", scId);
+  const newTotal = (adjustments || []).reduce((s, a) => s + Number(a.cost_value || 0), 0);
+  await sb.from("stock_counts").update({ total_diff_value: newTotal }).eq("id", scId);
+
+  await renderStockCountDetailBody();
+  await loadStockCountHistory();
 }
 </script>
 </body>
