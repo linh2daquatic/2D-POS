@@ -1306,27 +1306,48 @@ function renderStockCountItems() {
   const wrap = document.getElementById("sc_itemsWrap");
   const visible = SC_ITEMS.filter(i => !f || i.name.toLowerCase().includes(f));
 
-  wrap.innerHTML = `<div style="max-height:480px; overflow-y:auto;"><table><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm thực tế</th><th>Chênh lệch</th></tr></thead><tbody>
+  wrap.innerHTML = `<div style="max-height:480px; overflow-y:auto;"><table><thead><tr><th>Sản phẩm</th><th>Hệ thống</th><th>Đếm thực tế</th><th>Chênh lệch</th><th>Nếu thừa: giá vốn lô đó (nếu biết)</th></tr></thead><tbody>
     ${visible.map((it) => {
       const idx = SC_ITEMS.indexOf(it);
       const diff = Number(it.counted_qty) - Number(it.system_qty);
       return `<tr>
         <td>${it.name}</td>
         <td>${it.system_qty} ${it.unit || ''}</td>
-        <td><input type="number" step="any" value="${it.counted_qty}" data-idx="${idx}" style="width:90px;"></td>
-        <td style="font-weight:600; color:${diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--teal-deep)' : 'var(--text-mute)'};">${diff === 0 ? '—' : (diff > 0 ? '+' + diff : diff)}</td>
+        <td><input type="number" step="any" value="${it.counted_qty}" data-idx="${idx}" data-field="counted" style="width:90px;"></td>
+        <td class="sc-diff-cell" style="font-weight:600; color:${diff < 0 ? 'var(--danger)' : diff > 0 ? 'var(--teal-deep)' : 'var(--text-mute)'};">${diff === 0 ? '—' : (diff > 0 ? '+' + diff : diff)}</td>
+        <td>${diff > 0 ? `<input type="number" step="any" value="${it.surplus_cost || ''}" data-idx="${idx}" data-field="surplusCost" placeholder="VD: ${it.cost_price}" style="width:110px;">` : ''}</td>
       </tr>`;
     }).join("")}
-  </tbody></table></div>`;
+  </tbody></table></div>
+  <p class="text-mute" style="font-size:11px; margin-top:8px;">Nếu số lượng thừa là do quên nhập hàng, nhập giá vốn của lô đó để hệ thống tự tính lại giá vốn bình quân đúng. Không biết thì để trống — số lượng vẫn được sửa đúng, chỉ giá vốn không cập nhật.</p>`;
 
-  wrap.querySelectorAll("input[data-idx]").forEach(el => {
+  wrap.querySelectorAll('input[data-field="counted"]').forEach(el => {
     el.addEventListener("input", () => {
-      SC_ITEMS[Number(el.dataset.idx)].counted_qty = Number(el.value || 0);
-      updateStockCountDiffCount();
+      const idx = Number(el.dataset.idx);
+      SC_ITEMS[idx].counted_qty = Number(el.value || 0);
+      const diff = SC_ITEMS[idx].counted_qty - SC_ITEMS[idx].system_qty;
       const row = el.closest("tr");
-      const diff = Number(el.value || 0) - SC_ITEMS[Number(el.dataset.idx)].system_qty;
-      row.querySelector("td:last-child").textContent = diff === 0 ? "—" : (diff > 0 ? "+" + diff : diff);
-      row.querySelector("td:last-child").style.color = diff < 0 ? "var(--danger)" : diff > 0 ? "var(--teal-deep)" : "var(--text-mute)";
+      const diffCell = row.querySelector(".sc-diff-cell");
+      diffCell.textContent = diff === 0 ? "—" : (diff > 0 ? "+" + diff : diff);
+      diffCell.style.color = diff < 0 ? "var(--danger)" : diff > 0 ? "var(--teal-deep)" : "var(--text-mute)";
+
+      const costCell = row.children[4];
+      if (diff > 0) {
+        if (!costCell.querySelector("input")) {
+          costCell.innerHTML = `<input type="number" step="any" value="${SC_ITEMS[idx].surplus_cost || ''}" data-idx="${idx}" data-field="surplusCost" placeholder="VD: ${SC_ITEMS[idx].cost_price}" style="width:110px;">`;
+          costCell.querySelector("input").addEventListener("input", (ev) => {
+            SC_ITEMS[idx].surplus_cost = ev.target.value === "" ? null : Number(ev.target.value);
+          });
+        }
+      } else {
+        costCell.innerHTML = "";
+      }
+      updateStockCountDiffCount();
+    });
+  });
+  wrap.querySelectorAll('input[data-field="surplusCost"]').forEach(el => {
+    el.addEventListener("input", () => {
+      SC_ITEMS[Number(el.dataset.idx)].surplus_cost = el.value === "" ? null : Number(el.value);
     });
   });
   updateStockCountDiffCount();
@@ -1386,6 +1407,13 @@ async function finishStockCount() {
         product_id: it.product_id, quantity: Math.abs(diff), reason: "kiem_kho_thieu", cost_value: potentialValue,
         stock_count_id: sc.id, note: `Phát hiện thiếu khi kiểm kho (${SC_SCOPE_LABEL})`, created_by: CURRENT_PROFILE.id
       });
+    }
+    // Thừa hàng do quên nhập -> nếu có nhập giá vốn lô đó, tính lại giá vốn bình quân cho đúng
+    if (diff > 0 && it.surplus_cost != null && it.surplus_cost >= 0) {
+      const weightedCost = it.counted_qty > 0
+        ? ((Number(it.system_qty) * it.cost_price) + (diff * Number(it.surplus_cost))) / Number(it.counted_qty)
+        : it.cost_price;
+      await sb.from("products").update({ cost_price: weightedCost }).eq("id", it.product_id);
     }
   }
 
@@ -1532,7 +1560,11 @@ async function renderStockCountDetailBody() {
   if (saveBtn) saveBtn.addEventListener("click", saveStockCountItemEdits);
 
   body.querySelectorAll(".sc-item-toggle").forEach(el => {
-    el.addEventListener("click", () => reclassifyStockCountItem(el.dataset.pid, Number(el.dataset.qty), Number(el.dataset.val), el.dataset.torealloss === "true"));
+    el.addEventListener("click", () => {
+      el.textContent = "Đang cập nhật...";
+      el.style.pointerEvents = "none";
+      reclassifyStockCountItem(el.dataset.pid, Number(el.dataset.qty), Number(el.dataset.val), el.dataset.torealloss === "true");
+    });
   });
 }
 
