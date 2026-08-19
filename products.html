@@ -1351,20 +1351,30 @@ async function finishStockCount() {
   const isRealLoss = SC_CAUSE === "hao_hut";
   const confirmMsg = isRealLoss
     ? `Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ tự điều chỉnh lại tồn kho và ghi nhận phần thiếu vào Chi phí biến đổi (hao hụt thật).`
-    : `Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ CHỈ điều chỉnh lại số liệu tồn kho cho đúng thực tế, KHÔNG tính vào Chi phí biến đổi (vì đây là quên ghi chép, không phải mất hàng thật).`;
+    : `Xác nhận hoàn tất kiểm kho?\n\n${shortageCount} sản phẩm thiếu, ${surplusCount} sản phẩm thừa.\nHệ thống sẽ CHỈ điều chỉnh lại số liệu tồn kho cho đúng thực tế, KHÔNG tính vào Chi phí biến đổi (vì đây là quên ghi chép, không phải mất hàng thật). Anh có thể đổi lại phân loại này sau nếu cần.`;
   if (!window.confirm(confirmMsg)) return;
 
   const btn = document.getElementById("sc_finishBtn");
   btn.disabled = true; btn.textContent = "Đang xử lý...";
+
+  // Tạo phiếu kiểm kho trước để lấy id liên kết cho các dòng hao hụt
+  const { data: sc, error: scErr } = await sb.from("stock_counts").insert({
+    scope_label: SC_SCOPE_LABEL, total_diff_value: 0, is_real_loss: isRealLoss,
+    note: isRealLoss ? null : "Chênh lệch do quên ghi chép — không tính chi phí",
+    created_by: CURRENT_PROFILE.id
+  }).select().single();
+
+  if (scErr || !sc) { alert("Lỗi khi tạo phiếu: " + (scErr?.message || "không rõ")); btn.disabled = false; btn.textContent = "✅ Hoàn tất kiểm kho"; return; }
 
   let totalDiffValue = 0;
   const countItemRows = [];
 
   for (const it of diffItems) {
     const diff = Number(it.counted_qty) - Number(it.system_qty);
-    const diffValue = (isRealLoss && diff < 0) ? Math.abs(diff) * it.cost_price : 0;
-    totalDiffValue += diffValue;
-    countItemRows.push({ product_id: it.product_id, system_qty: it.system_qty, counted_qty: it.counted_qty, diff_qty: diff, diff_value: diffValue });
+    // Giá trị tiềm năng luôn được tính và lưu lại (kể cả khi chọn "quên ghi chép"), để sau này đổi phân loại vẫn dùng được đúng số
+    const potentialValue = diff < 0 ? Math.abs(diff) * it.cost_price : 0;
+    if (isRealLoss) totalDiffValue += potentialValue;
+    countItemRows.push({ product_id: it.product_id, system_qty: it.system_qty, counted_qty: it.counted_qty, diff_qty: diff, diff_value: potentialValue, stock_count_id: sc.id });
 
     await sb.from("products").update({ quantity: it.counted_qty }).eq("id", it.product_id);
     await sb.from("inventory_log").insert({
@@ -1372,21 +1382,14 @@ async function finishStockCount() {
     });
     if (isRealLoss && diff < 0) {
       await sb.from("stock_adjustments").insert({
-        product_id: it.product_id, quantity: Math.abs(diff), reason: "kiem_kho_thieu", cost_value: diffValue,
-        note: `Phát hiện thiếu khi kiểm kho (${SC_SCOPE_LABEL})`, created_by: CURRENT_PROFILE.id
+        product_id: it.product_id, quantity: Math.abs(diff), reason: "kiem_kho_thieu", cost_value: potentialValue,
+        stock_count_id: sc.id, note: `Phát hiện thiếu khi kiểm kho (${SC_SCOPE_LABEL})`, created_by: CURRENT_PROFILE.id
       });
     }
   }
 
-  const { data: sc, error } = await sb.from("stock_counts").insert({
-    scope_label: SC_SCOPE_LABEL, total_diff_value: totalDiffValue,
-    note: isRealLoss ? null : "Chênh lệch do quên ghi chép — không tính chi phí",
-    created_by: CURRENT_PROFILE.id
-  }).select().single();
-
-  if (!error && sc) {
-    await sb.from("stock_count_items").insert(countItemRows.map(r => ({ ...r, stock_count_id: sc.id })));
-  }
+  await sb.from("stock_count_items").insert(countItemRows);
+  await sb.from("stock_counts").update({ total_diff_value: totalDiffValue }).eq("id", sc.id);
 
   btn.disabled = false; btn.textContent = "✅ Hoàn tất kiểm kho";
   SC_ITEMS = [];
@@ -1402,7 +1405,7 @@ let ALL_STOCK_COUNTS = [];
 
 async function loadStockCountHistory() {
   const wrap = document.getElementById("scHistoryWrap");
-  const { data, error } = await sb.from("stock_counts").select("id, count_date, scope_label, total_diff_value, note").order("count_date", { ascending: false }).limit(200);
+  const { data, error } = await sb.from("stock_counts").select("id, count_date, scope_label, total_diff_value, note, is_real_loss").order("count_date", { ascending: false }).limit(200);
   if (error) { wrap.innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
   ALL_STOCK_COUNTS = data || [];
 
@@ -1433,9 +1436,15 @@ async function loadStockCountHistory() {
       </tr>
       <tr class="sc-date-detail-row" data-detailfor="${key}" style="display:none;"><td></td><td colspan="3">
         <table style="width:100%;"><tbody>
-          ${items.map(sc => `<tr class="order-row-clickable" data-id="${sc.id}" style="cursor:pointer;">
-            <td style="padding-left:8px;">${formatDateTime(sc.count_date)} — ${sc.scope_label || 'Tất cả'} ${sc.note ? '<span class="text-mute" style="font-size:11px;">(quên ghi chép)</span>' : ''}</td>
+          ${items.map(sc => `<tr>
+            <td style="padding-left:8px; cursor:pointer;" class="order-row-clickable" data-id="${sc.id}">
+              ${formatDateTime(sc.count_date)} — ${sc.scope_label || 'Tất cả'}
+              ${sc.is_real_loss
+                ? '<span class="badge debt" style="margin-left:6px;">Hao hụt thật</span>'
+                : '<span class="badge" style="margin-left:6px; background:#f1f5f9; color:var(--text-mute);">Quên ghi chép</span>'}
+            </td>
             <td style="text-align:right; color:${Number(sc.total_diff_value) > 0 ? 'var(--danger)' : 'var(--text-mute)'}; font-weight:600;">${formatVND(sc.total_diff_value)}</td>
+            <td style="text-align:right;"><span class="btn btn-secondary btn-mini sc-reclassify-btn" data-scid="${sc.id}">🔄 Đổi thành ${sc.is_real_loss ? 'Quên ghi chép' : 'Hao hụt thật'}</span></td>
           </tr>`).join("")}
         </tbody></table>
       </td></tr>`;
@@ -1451,12 +1460,51 @@ async function loadStockCountHistory() {
       row.querySelector(".sc-date-arrow").textContent = isOpen ? "▸" : "▾";
     });
   });
-  wrap.querySelectorAll("tr[data-id]").forEach(row => {
-    row.addEventListener("click", (e) => {
+  wrap.querySelectorAll("td[data-id]").forEach(cell => {
+    cell.addEventListener("click", (e) => {
       e.stopPropagation();
-      showStockCountDetail(row.dataset.id);
+      showStockCountDetail(cell.dataset.id);
     });
   });
+  wrap.querySelectorAll(".sc-reclassify-btn").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      reclassifyStockCount(el.dataset.scid);
+    });
+  });
+}
+
+async function reclassifyStockCount(scId) {
+  const sc = ALL_STOCK_COUNTS.find(x => x.id === scId);
+  if (!sc) return;
+  const newIsRealLoss = !sc.is_real_loss;
+
+  if (!window.confirm(newIsRealLoss
+    ? `Đổi phiếu này thành "Hao hụt thật"? Giá trị chênh lệch sẽ được tính lại vào Chi phí biến đổi trên Dashboard.`
+    : `Đổi phiếu này thành "Quên ghi chép"? Giá trị chênh lệch sẽ được bỏ khỏi Chi phí biến đổi trên Dashboard. Số lượng tồn kho đã điều chỉnh trước đó KHÔNG bị thay đổi.`
+  )) return;
+
+  if (!newIsRealLoss) {
+    // Chuyển sang "quên ghi chép" -> xóa các dòng đã tính vào chi phí
+    await sb.from("stock_adjustments").delete().eq("stock_count_id", scId);
+    await sb.from("stock_counts").update({ is_real_loss: false, total_diff_value: 0 }).eq("id", scId);
+  } else {
+    // Chuyển sang "hao hụt thật" -> tạo lại các dòng chi phí từ dữ liệu đã lưu sẵn
+    const { data: items } = await sb.from("stock_count_items").select("product_id, diff_qty, diff_value").eq("stock_count_id", scId);
+    let total = 0;
+    for (const it of (items || [])) {
+      if (Number(it.diff_qty) < 0 && Number(it.diff_value) > 0) {
+        await sb.from("stock_adjustments").insert({
+          product_id: it.product_id, quantity: Math.abs(it.diff_qty), reason: "kiem_kho_thieu", cost_value: it.diff_value,
+          stock_count_id: scId, note: `Phát hiện thiếu khi kiểm kho (${sc.scope_label || 'Tất cả'})`, created_by: CURRENT_PROFILE.id
+        });
+        total += Number(it.diff_value);
+      }
+    }
+    await sb.from("stock_counts").update({ is_real_loss: true, total_diff_value: total }).eq("id", scId);
+  }
+
+  await loadStockCountHistory();
 }
 
 async function showStockCountDetail(scId) {
