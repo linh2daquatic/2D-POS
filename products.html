@@ -1620,13 +1620,15 @@ async function reclassifyStockCountItem(productId, qty, value, toRealLoss) {
   const scId = SC_DETAIL_ID;
   const sc = ALL_STOCK_COUNTS.find(x => x.id === scId);
 
+  // Luôn xóa sạch dòng cũ của đúng sản phẩm + phiếu này trước (kể cả lỡ bị trùng từ trước),
+  // đảm bảo sau bước này chỉ có tối đa 1 dòng — dù bấm nút bao nhiêu lần cũng không bị cộng dồn
+  await sb.from("stock_adjustments").delete().eq("stock_count_id", scId).eq("product_id", productId);
+
   if (toRealLoss) {
     await sb.from("stock_adjustments").insert({
       product_id: productId, quantity: qty, reason: "kiem_kho_thieu", cost_value: value,
       stock_count_id: scId, note: `Phát hiện thiếu khi kiểm kho (${sc?.scope_label || 'Tất cả'})`, created_by: CURRENT_PROFILE.id
     });
-  } else {
-    await sb.from("stock_adjustments").delete().eq("stock_count_id", scId).eq("product_id", productId);
   }
 
   // Cập nhật lại tổng giá trị của phiếu theo đúng các dòng hiện đang tính là hao hụt thật
