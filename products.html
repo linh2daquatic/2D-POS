@@ -934,7 +934,9 @@ function renderReceiveCart() {
       el.addEventListener("input", () => {
         const idx = Number(el.dataset.idx);
         RC_CART[idx][el.dataset.field] = Number(el.value || 0);
-        renderReceiveCart();
+        const row = el.closest("tr");
+        row.querySelector("td:nth-child(4)").textContent = formatVND(RC_CART[idx].quantity * RC_CART[idx].unit_cost);
+        updateReceiveSummary();
       });
     });
     wrap.querySelectorAll(".rc-remove").forEach(el => {
@@ -1125,7 +1127,7 @@ function renderPODetailBody() {
       <strong style="font-size:13.5px;">Sản phẩm</strong>
       ${isOwner ? (PO_EDIT_MODE
         ? `<span class="btn btn-secondary btn-mini" id="poCancelEditBtn">Hủy sửa</span>`
-        : `<span class="btn btn-secondary btn-mini" id="poEditBtn">✎ Sửa phiếu nhập</span>`
+        : `<div class="flex gap-6"><span class="btn btn-danger btn-mini" id="poDeleteBtn">🗑️ Xóa hẳn phiếu này</span><span class="btn btn-secondary btn-mini" id="poEditBtn">✎ Sửa phiếu nhập</span></div>`
       ) : ""}
     </div>
 
@@ -1148,7 +1150,7 @@ function renderPODetailBody() {
     </div>` : ""}
 
     <div style="margin-top:14px;">
-      <div class="summary-row"><span>Tổng tiền${PO_EDIT_MODE ? ' (đang sửa)' : ''}</span><span>${formatVND(PO_EDIT_MODE ? liveTotal : po.total_amount)}</span></div>
+      <div class="summary-row"><span>Tổng tiền${PO_EDIT_MODE ? ' (đang sửa)' : ''}</span><span id="poLiveTotal">${formatVND(PO_EDIT_MODE ? liveTotal : po.total_amount)}</span></div>
       ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
       ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
       ${!PO_EDIT_MODE ? `<div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>` : ""}
@@ -1159,6 +1161,8 @@ function renderPODetailBody() {
 
   const editBtn = document.getElementById("poEditBtn");
   if (editBtn) editBtn.addEventListener("click", () => { PO_EDIT_MODE = true; renderPODetailBody(); });
+  const deleteBtn = document.getElementById("poDeleteBtn");
+  if (deleteBtn) deleteBtn.addEventListener("click", () => deletePurchaseOrder(po.po_code));
   const cancelEditBtn = document.getElementById("poCancelEditBtn");
   if (cancelEditBtn) cancelEditBtn.addEventListener("click", () => { PO_EDIT_MODE = false; CURRENT_PO_ITEMS = CURRENT_PO_ORIGINAL_ITEMS.map(i => ({ ...i })); renderPODetailBody(); });
 
@@ -1167,7 +1171,11 @@ function renderPODetailBody() {
       el.addEventListener("input", () => {
         const idx = Number(el.dataset.idx);
         CURRENT_PO_ITEMS[idx][el.dataset.field] = Number(el.value || 0);
-        renderPODetailBody();
+        const row = el.closest("tr");
+        row.querySelector("td:nth-child(4)").textContent = formatVND(CURRENT_PO_ITEMS[idx].quantity * CURRENT_PO_ITEMS[idx].unit_cost);
+        const newLiveTotal = CURRENT_PO_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_cost), 0);
+        const totalEl = document.getElementById("poLiveTotal");
+        if (totalEl) totalEl.textContent = formatVND(newLiveTotal);
       });
     });
     body.querySelectorAll(".p-remove").forEach(el => {
@@ -1196,6 +1204,46 @@ function renderPOAddProductResults() {
       renderPODetailBody();
     });
   });
+}
+
+async function deletePurchaseOrder(poCode) {
+  if (!window.confirm(`Xóa HẲN phiếu nhập "${poCode}"?\n\nHệ thống sẽ:\n- Trừ lại đúng số lượng đã cộng vào kho lúc nhập\n- Xóa các khoản đã ghi vào Quỹ tiền mặt (nếu có thanh toán)\n- Xóa lịch sử trả nợ NCC của phiếu này\n\nLưu ý: Giá vốn bình quân đã tính lúc nhập KHÔNG tự động tính ngược lại được — anh có thể vào sửa tay giá vốn sau nếu cần.\n\nHành động này KHÔNG thể hoàn tác.`)) return;
+
+  const poId = CURRENT_PO_ID;
+  const deleteBtn = document.getElementById("poDeleteBtn");
+  if (deleteBtn) { deleteBtn.disabled = true; deleteBtn.textContent = "Đang xóa..."; }
+
+  // 1. Hoàn tác lại tồn kho cho từng sản phẩm trong phiếu
+  for (const item of CURRENT_PO_ORIGINAL_ITEMS) {
+    const { data: prod } = await sb.from("products").select("quantity").eq("id", item.product_id).single();
+    if (prod) {
+      await sb.from("products").update({ quantity: Math.max(Number(prod.quantity) - Number(item.quantity), 0) }).eq("id", item.product_id);
+    }
+    await sb.from("inventory_log").insert({
+      product_id: item.product_id, change_qty: -item.quantity, reason: "purchase_deleted", reference_id: poId, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  // 2. Xóa các khoản đã ghi vào Quỹ tiền mặt cho đơn này (chỉ khớp đúng mã phiếu trong ghi chú)
+  await sb.from("cash_transactions").delete().eq("category", "Nhập hàng").like("note", `%${poCode}%`);
+
+  // 3. Xóa lịch sử trả nợ NCC và các dòng sản phẩm của phiếu
+  await sb.from("supplier_payments").delete().eq("purchase_order_id", poId);
+  await sb.from("purchase_order_items").delete().eq("purchase_order_id", poId);
+
+  // 4. Xóa hẳn phiếu
+  const { error } = await sb.from("purchase_orders").delete().eq("id", poId);
+
+  if (error) {
+    alert("Lỗi khi xóa phiếu: " + error.message);
+    if (deleteBtn) { deleteBtn.disabled = false; deleteBtn.textContent = "🗑️ Xóa hẳn phiếu này"; }
+    return;
+  }
+
+  document.getElementById("poDetailModal").classList.remove("open");
+  await loadProducts();
+  await loadReceiveHistory();
+  alert(`Đã xóa hẳn phiếu "${poCode}" và hoàn tác lại tồn kho.`);
 }
 
 async function savePOEdits() {
