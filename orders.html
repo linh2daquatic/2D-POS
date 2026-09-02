@@ -337,7 +337,7 @@ const DRAFT_KEY = "2d_pos_order_draft";
 })();
 
 async function loadProducts() {
-  const { data } = await sb.from("products").select("*").order("name");
+  const { data } = await sb.from("products").select("*").eq("is_active", true).order("name");
   ALL_PRODUCTS = data || [];
 }
 async function loadCustomers() {
@@ -593,6 +593,7 @@ function setOrderType(type) {
     badge.style.color = type === "wholesale" ? "#4338ca" : "var(--teal-deep)";
   }
   CART.forEach(item => {
+    if (item.priceEdited) return; // Đã sửa giá tay -> giữ nguyên, không ghi đè lại
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
     if (p) item.unit_price = type === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price);
   });
@@ -851,6 +852,7 @@ function saveEpPrice() {
   const newPrice = Number(document.getElementById("ep_newPrice").value);
   if (isNaN(newPrice) || newPrice < 0) { alert("Giá không hợp lệ."); return; }
   item.unit_price = newPrice;
+  item.priceEdited = true; // Đánh dấu đã sửa giá tay, để không bị ghi đè lại khi đổi khách hàng/loại đơn
   document.getElementById("itemPriceModal").classList.remove("open");
   renderCart();
 }
