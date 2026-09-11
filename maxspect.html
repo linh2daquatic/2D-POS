@@ -44,6 +44,8 @@ function lsSet(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {}
 }
 function toISODate(d) { return d.toISOString().slice(0, 10); }
+function fmtNum(n) { return Number(n || 0).toLocaleString("vi-VN"); }
+function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0; }
 
 (async () => {
   const auth = await requireAuth();
@@ -73,6 +75,9 @@ function toISODate(d) { return d.toISOString().slice(0, 10); }
       <div class="field"><label>Từ ngày</label><input type="date" id="fromDate" value="${defaultStart}"></div>
       <div class="field"><label>Đến ngày</label><input type="date" id="toDate" value="${toISODate(today)}"></div>
       <button class="btn btn-primary" id="runBtn">Xem lượng bán</button>
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-mute); padding-bottom:8px;">
+        <input type="checkbox" id="onlySold"> Chỉ hiện mã có bán
+      </label>
       <button class="btn" id="copyBtn">Sao chép bảng</button>
       <button class="btn" id="closeBtn">Chốt kỳ này</button>
     </div>
@@ -93,6 +98,7 @@ function toISODate(d) { return d.toISOString().slice(0, 10); }
   `;
 
   document.getElementById("runBtn").addEventListener("click", loadPeriod);
+  document.getElementById("onlySold").addEventListener("change", renderTable);
   document.getElementById("copyBtn").addEventListener("click", copyTable);
   document.getElementById("closeBtn").addEventListener("click", closePeriod);
 
@@ -158,8 +164,7 @@ async function loadPeriod() {
         edited: agreed[p.id] != null
       };
     })
-    .filter(r => r.sold !== 0)
-    .sort((a, b) => b.sold * b.price - a.sold * a.price);
+    .sort((a, b) => (b.sold * b.price) - (a.sold * a.price) || a.name.localeCompare(b.name, "vi"));
 
   renderTable();
 }
@@ -169,15 +174,20 @@ function renderTable() {
 
   if (ROWS.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">📭</div>
-      Không có mã Maxspect nào bán ra trong khoảng ngày này.</div>`;
+      Chưa có sản phẩm nào mang nhãn Maxspect.</div>`;
     renderSummary(0, 0);
     return;
   }
 
+  const onlySold = document.getElementById("onlySold")?.checked;
+  const view = ROWS.map((r, idx) => ({ r, idx })).filter(x => !onlySold || x.r.sold !== 0);
+  const soldCount = ROWS.filter(r => r.sold !== 0).length;
+
   wrap.innerHTML = `
     <table>
       <thead><tr>
-        <th>Mã</th><th>Tên sản phẩm</th>
+        <th style="width:44px;">STT</th>
+        <th>Tên sản phẩm</th>
         <th class="num">Tồn hiện tại</th>
         <th class="num">Đã bán</th>
         <th class="num">Giá lẻ thống nhất</th>
@@ -185,19 +195,21 @@ function renderTable() {
         <th class="num">Vào quỹ (75%)</th>
       </tr></thead>
       <tbody>
-        ${ROWS.map((r, i) => `
-          <tr>
-            <td>${r.sku}</td>
-            <td>${r.name}</td>
-            <td class="num">${r.stock}</td>
-            <td class="num"><strong>${r.sold}</strong></td>
+        ${view.map((x, n) => {
+          const r = x.r, i = x.idx;
+          return `
+          <tr${r.sold === 0 ? ' style="opacity:.55;"' : ''}>
+            <td class="num">${n + 1}</td>
+            <td>${r.name}${r.sku && r.sku !== "—" ? `<div class="text-mute" style="font-size:11.5px;">${r.sku}</div>` : ""}</td>
+            <td class="num">${fmtNum(r.stock)}</td>
+            <td class="num"><strong>${fmtNum(r.sold)}</strong></td>
             <td class="num">
-              <input class="price-input ${r.edited ? "edited" : ""}" type="number" min="0" step="1000"
-                     value="${r.price}" data-idx="${i}">
+              <input class="price-input ${r.edited ? "edited" : ""}" type="text" inputmode="numeric"
+                     value="${fmtNum(r.price)}" data-idx="${i}">
             </td>
             <td class="num" id="amt-${i}">${formatVND(r.sold * r.price)}</td>
             <td class="num fund-cell" id="fund-${i}">${formatVND(r.sold * r.price * SHARE)}</td>
-          </tr>`).join("")}
+          </tr>`; }).join("")}
       </tbody>
       <tfoot>
         <tr class="total-row">
@@ -208,15 +220,17 @@ function renderTable() {
       </tfoot>
     </table>
     <div class="note-line">
-      Giá lẻ thống nhất là mức hai bên đã chốt, không phải giá bán thực tế trên đơn. Sửa ô giá ở đây
-      không ảnh hưởng gì tới giá bán trong POS. Ô viền xanh là giá đã sửa tay và được nhớ lại cho kỳ sau.
+      Đang hiện ${view.length} mã Maxspect, trong đó ${soldCount} mã có bán ra trong kỳ.
+      Giá lẻ thống nhất là mức hai bên đã chốt, không phải giá bán thực tế trên đơn — sửa ở đây
+      không ảnh hưởng gì tới giá bán trong POS. Ô viền xanh là giá đã sửa tay và được nhớ cho kỳ sau.
     </div>
   `;
 
   wrap.querySelectorAll(".price-input").forEach(el => {
-    el.addEventListener("change", () => {
+    el.addEventListener("input", () => {
       const idx = Number(el.dataset.idx);
-      const val = Number(el.value || 0);
+      const val = parseNum(el.value);
+      el.value = val ? fmtNum(val) : "";
       ROWS[idx].price = val;
       ROWS[idx].edited = true;
       el.classList.add("edited");
@@ -247,6 +261,7 @@ function updateTotals() {
 
 function renderSummary(amt, fund) {
   const qty = ROWS.reduce((s, r) => s + r.sold, 0);
+  const soldCount = ROWS.filter(r => r.sold !== 0).length;
   document.getElementById("summaryGrid").innerHTML = `
     <div class="stat-card accent">
       <div class="label">Tiền vào quỹ liên doanh</div>
@@ -260,7 +275,7 @@ function renderSummary(amt, fund) {
     <div class="stat-card">
       <div class="label">Số lượng đã bán</div>
       <div class="value">${qty}</div>
-      <div class="delta text-mute" style="font-size:11px;">${ROWS.length} mã có phát sinh</div>
+      <div class="delta text-mute" style="font-size:11px;">${soldCount}/${ROWS.length} mã có phát sinh</div>
     </div>
   `;
 }
@@ -271,10 +286,10 @@ function copyTable() {
   const to = document.getElementById("toDate").value;
   const lines = [
     `Quyết toán Maxspect ${from} → ${to}`,
-    ["Mã", "Tên", "Đã bán", "Giá lẻ thống nhất", "Thành tiền", "Vào quỹ"].join("\t")
+    ["STT", "Tên", "Đã bán", "Giá lẻ thống nhất", "Thành tiền", "Vào quỹ"].join("\t")
   ];
-  ROWS.forEach(r => {
-    lines.push([r.sku, r.name, r.sold, r.price, r.sold * r.price, Math.round(r.sold * r.price * SHARE)].join("\t"));
+  ROWS.forEach((r, i) => {
+    lines.push([i + 1, r.name, r.sold, r.price, r.sold * r.price, Math.round(r.sold * r.price * SHARE)].join("\t"));
   });
   const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
   lines.push(["", "Tổng", "", "", amt, Math.round(amt * SHARE)].join("\t"));
