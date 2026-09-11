@@ -21,6 +21,10 @@
 .note-line { font-size:12.5px; color:var(--text-mute); line-height:1.6; margin-top:10px; }
 .period-item { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
 .period-item:last-child { border-bottom:none; }
+.hide-btn { cursor:pointer; color:var(--text-mute); font-size:13px; padding:2px 6px; border-radius:4px; }
+.hide-btn:hover { background:#fdecec; color:var(--danger); }
+.hidden-tag { display:inline-block; cursor:pointer; background:#fff; border:1px solid var(--border); border-radius:20px; padding:4px 12px; margin:4px 6px 0 0; font-size:12.5px; }
+.hidden-tag:hover { border-color:var(--teal-deep); }
 </style>
 </head>
 <body>
@@ -34,6 +38,7 @@ let ROWS = [];
 
 const PRICE_KEY = "maxspect_agreed_prices";
 const PERIOD_KEY = "maxspect_periods";
+const HIDDEN_KEY = "maxspect_hidden_products";
 const SHARE = 0.75; // giá lẻ thống nhất × 75% = tiền vào quỹ liên doanh
 
 function lsGet(k, fallback) {
@@ -90,6 +95,8 @@ function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0;
         <div class="empty-state"><div class="icon">📅</div>Chọn khoảng ngày rồi bấm “Xem lượng bán”.</div>
       </div>
     </div>
+
+    <div id="hiddenWrap"></div>
 
     <div class="panel" style="margin-top:16px;">
       <div class="panel-header"><h2>Các kỳ đã chốt</h2></div>
@@ -167,6 +174,7 @@ async function loadPeriod() {
     })
     // mã đã ngừng bán chỉ giữ lại nếu kỳ này vẫn có phát sinh
     .filter(r => r.active || r.sold !== 0)
+    .filter(r => !lsGet(HIDDEN_KEY, []).includes(r.id))
     .sort((a, b) => (b.sold * b.price) - (a.sold * a.price) || a.name.localeCompare(b.name, "vi"));
 
   renderTable();
@@ -196,6 +204,7 @@ function renderTable() {
         <th class="num">Giá lẻ thống nhất</th>
         <th class="num">Thành tiền</th>
         <th class="num">Vào quỹ (75%)</th>
+        <th style="width:34px;"></th>
       </tr></thead>
       <tbody>
         ${view.map((x, n) => {
@@ -212,6 +221,7 @@ function renderTable() {
             </td>
             <td class="num" id="amt-${i}">${formatVND(r.sold * r.price)}</td>
             <td class="num fund-cell" id="fund-${i}">${formatVND(r.sold * r.price * SHARE)}</td>
+            <td><span class="hide-btn" data-hide="${r.id}" title="Không tính mã này vào quyết toán">✕</span></td>
           </tr>`; }).join("")}
       </tbody>
       <tfoot>
@@ -219,6 +229,7 @@ function renderTable() {
           <td colspan="5">Tổng cộng</td>
           <td class="num" id="totalAmt"></td>
           <td class="num" id="totalFund"></td>
+          <td></td>
         </tr>
       </tfoot>
     </table>
@@ -248,7 +259,43 @@ function renderTable() {
     });
   });
 
+  wrap.querySelectorAll(".hide-btn").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.hide;
+      const row = ROWS.find(r => r.id === id);
+      if (!confirm(`Bỏ “${row.name}” khỏi quyết toán Maxspect?\n\nMã này sẽ không tính vào quỹ liên doanh nữa. Đưa lại được bất cứ lúc nào ở mục bên dưới bảng.`)) return;
+      const hidden = lsGet(HIDDEN_KEY, []);
+      hidden.push(id);
+      lsSet(HIDDEN_KEY, hidden);
+      ROWS = ROWS.filter(r => r.id !== id);
+      renderTable();
+    });
+  });
+
+  renderHidden();
   updateTotals();
+}
+
+function renderHidden() {
+  const box = document.getElementById("hiddenWrap");
+  if (!box) return;
+  const hidden = lsGet(HIDDEN_KEY, []);
+  if (hidden.length === 0) { box.innerHTML = ""; return; }
+  const names = hidden.map(id => {
+    const p = MS_PRODUCTS.find(x => x.id === id);
+    return { id, name: p ? p.name : "(mã đã xóa)" };
+  });
+  box.innerHTML = `
+    <div class="note-line" style="margin-top:14px;">
+      <strong>Không tính vào quyết toán (${names.length}):</strong>
+      ${names.map(n => `<span class="hidden-tag" data-show="${n.id}">${n.name} <span style="color:var(--teal-deep);">↩ đưa lại</span></span>`).join("")}
+    </div>`;
+  box.querySelectorAll(".hidden-tag").forEach(el => {
+    el.addEventListener("click", async () => {
+      lsSet(HIDDEN_KEY, lsGet(HIDDEN_KEY, []).filter(x => x !== el.dataset.show));
+      await loadPeriod();
+    });
+  });
 }
 
 function updateTotals() {
