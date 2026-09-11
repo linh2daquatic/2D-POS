@@ -12,12 +12,15 @@
 .date-bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px; }
 .date-bar .field { display:flex; flex-direction:column; gap:4px; }
 .date-bar label { font-size:12px; color:var(--text-mute); font-weight:600; }
-.date-bar input { padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; }
-.price-input { width:110px; padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; text-align:right; }
-.price-input.edited { border-color:var(--teal-deep); background:#f0fbfa; }
+.date-bar input[type=date] { padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; }
+.cell-input { width:88px; padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; text-align:right; }
+.cell-input.wide { width:112px; }
+.cell-input.edited { border-color:var(--teal-deep); background:#f0fbfa; }
 .num { text-align:right; white-space:nowrap; }
 .total-row td { font-weight:700; background:#f1f6f9; border-top:2px solid var(--ink); }
 .fund-cell { color:var(--teal-deep); font-weight:700; }
+.sub-note { font-size:11px; color:var(--text-mute); }
+.sub-note.warn { color:var(--danger); }
 .note-line { font-size:12.5px; color:var(--text-mute); line-height:1.6; margin-top:10px; }
 .period-item { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
 .period-item:last-child { border-bottom:none; }
@@ -25,6 +28,7 @@
 .hide-btn:hover { background:#fdecec; color:var(--danger); }
 .hidden-tag { display:inline-block; cursor:pointer; background:#fff; border:1px solid var(--border); border-radius:20px; padding:4px 12px; margin:4px 6px 0 0; font-size:12.5px; }
 .hidden-tag:hover { border-color:var(--teal-deep); }
+table th { white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -36,18 +40,19 @@ let CURRENT_PROFILE = null;
 let MS_PRODUCTS = [];
 let ROWS = [];
 
-const PRICE_KEY = "maxspect_agreed_prices";
+const PRICE_KEY  = "maxspect_agreed_prices";   // giá lẻ hai bên thống nhất
+const OPEN_KEY   = "maxspect_open_stock";      // tồn tại lần chốt gần nhất
+const HIDDEN_KEY = "maxspect_hidden_products"; // mã không tính vào quyết toán
 const PERIOD_KEY = "maxspect_periods";
-const HIDDEN_KEY = "maxspect_hidden_products";
-const SHARE = 0.75; // giá lẻ thống nhất × 75% = tiền vào quỹ liên doanh
+const SHARE = 0.75;
+
+const PURCHASE_REASONS = ["purchase", "purchase_adjust", "purchase_removed", "purchase_deleted"];
 
 function lsGet(k, fallback) {
   try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; }
   catch (e) { return fallback; }
 }
-function lsSet(k, v) {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {}
-}
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function toISODate(d) { return d.toISOString().slice(0, 10); }
 function fmtNum(n) { return Number(n || 0).toLocaleString("vi-VN"); }
 function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0; }
@@ -71,9 +76,8 @@ function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0;
   });
 
   const periods = lsGet(PERIOD_KEY, []);
-  const lastEnd = periods.length ? periods[0].end : null;
   const today = new Date();
-  const defaultStart = lastEnd || toISODate(new Date(today.getTime() - 30 * 86400000));
+  const defaultStart = periods.length ? periods[0].end : toISODate(new Date(today.getTime() - 30 * 86400000));
 
   document.getElementById("pageContent").innerHTML = `
     <div class="date-bar">
@@ -92,7 +96,7 @@ function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0;
     <div class="panel">
       <div class="panel-header"><h2>Chi tiết từng mã</h2></div>
       <div class="panel-body" id="tableWrap">
-        <div class="empty-state"><div class="icon">📅</div>Chọn khoảng ngày rồi bấm “Xem lượng bán”.</div>
+        <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>
 
@@ -143,7 +147,7 @@ async function loadPeriod() {
     .from("inventory_log")
     .select("product_id, change_qty, reason, created_at")
     .in("product_id", ids)
-    .in("reason", ["sale", "cancel"])
+    .in("reason", ["sale", "cancel"].concat(PURCHASE_REASONS))
     .gte("created_at", from + "T00:00:00")
     .lte("created_at", to + "T23:59:59");
 
@@ -153,31 +157,47 @@ async function loadPeriod() {
     return;
   }
 
-  const soldMap = {};
+  const soldMap = {}, purchMap = {};
   (logs || []).forEach(l => {
-    // bán ra ghi số âm, hủy đơn ghi số dương → đảo dấu để ra lượng bán ròng
-    soldMap[l.product_id] = (soldMap[l.product_id] || 0) - Number(l.change_qty || 0);
+    const q = Number(l.change_qty || 0);
+    if (l.reason === "sale" || l.reason === "cancel") {
+      // bán ra ghi số âm, hủy đơn ghi số dương → đảo dấu để ra lượng bán ròng
+      soldMap[l.product_id] = (soldMap[l.product_id] || 0) - q;
+    } else {
+      purchMap[l.product_id] = (purchMap[l.product_id] || 0) + q;
+    }
   });
 
   const agreed = lsGet(PRICE_KEY, {});
+  const opens = lsGet(OPEN_KEY, {});
+  const hidden = lsGet(HIDDEN_KEY, []);
+
   ROWS = MS_PRODUCTS
     .map(p => {
-      const sold = soldMap[p.id] || 0;
-      const price = agreed[p.id] != null ? Number(agreed[p.id]) : Number(p.retail_price || 0);
+      const stock = Number(p.quantity || 0);
+      const soldLog = soldMap[p.id] || 0;
+      const purchased = purchMap[p.id] || 0;
+      const open = opens[p.id] != null ? Number(opens[p.id]) : null;
+      const soldCalc = open != null ? open + purchased - stock : null;
       return {
-        id: p.id, sku: p.sku || "—", name: p.name,
-        stock: Number(p.quantity || 0),
+        id: p.id, sku: p.sku || "", name: p.name,
         active: p.is_active !== false,
-        sold, price,
+        stock, purchased, open, soldLog, soldCalc,
+        sold: soldCalc != null ? soldCalc : soldLog,
+        price: agreed[p.id] != null ? Number(agreed[p.id]) : Number(p.retail_price || 0),
         edited: agreed[p.id] != null
       };
     })
-    // mã đã ngừng bán chỉ giữ lại nếu kỳ này vẫn có phát sinh
     .filter(r => r.active || r.sold !== 0)
-    .filter(r => !lsGet(HIDDEN_KEY, []).includes(r.id))
+    .filter(r => !hidden.includes(r.id))
     .sort((a, b) => (b.sold * b.price) - (a.sold * a.price) || a.name.localeCompare(b.name, "vi"));
 
   renderTable();
+}
+
+function recalcRow(r) {
+  r.soldCalc = r.open != null ? r.open + r.purchased - r.stock : null;
+  r.sold = r.soldCalc != null ? r.soldCalc : r.soldLog;
 }
 
 function renderTable() {
@@ -193,12 +213,15 @@ function renderTable() {
   const onlySold = document.getElementById("onlySold")?.checked;
   const view = ROWS.map((r, idx) => ({ r, idx })).filter(x => !onlySold || x.r.sold !== 0);
   const soldCount = ROWS.filter(r => r.sold !== 0).length;
+  const noOpen = ROWS.filter(r => r.open == null).length;
 
   wrap.innerHTML = `
     <table>
       <thead><tr>
-        <th style="width:44px;">STT</th>
+        <th style="width:40px;">STT</th>
         <th>Tên sản phẩm</th>
+        <th class="num">Tồn kỳ trước</th>
+        <th class="num">Nhập trong kỳ</th>
         <th class="num">Tồn hiện tại</th>
         <th class="num">Đã bán</th>
         <th class="num">Giá lẻ thống nhất</th>
@@ -210,13 +233,19 @@ function renderTable() {
         ${view.map((x, n) => {
           const r = x.r, i = x.idx;
           return `
-          <tr${r.sold === 0 ? ' style="opacity:.55;"' : ''}>
+          <tr${r.sold === 0 ? ' style="opacity:.6;"' : ''}>
             <td class="num">${n + 1}</td>
-            <td>${r.name}${r.active ? "" : ` <span class="text-mute" style="font-size:11.5px;">(ngừng bán)</span>`}${r.sku && r.sku !== "—" ? `<div class="text-mute" style="font-size:11.5px;">${r.sku}</div>` : ""}</td>
-            <td class="num">${fmtNum(r.stock)}</td>
-            <td class="num"><strong>${fmtNum(r.sold)}</strong></td>
+            <td>${r.name}${r.active ? "" : ` <span class="sub-note">(ngừng bán)</span>`}
+                ${r.sku ? `<div class="sub-note">${r.sku}</div>` : ""}</td>
             <td class="num">
-              <input class="price-input ${r.edited ? "edited" : ""}" type="text" inputmode="numeric"
+              <input class="cell-input open-input ${r.open != null ? "edited" : ""}" type="text" inputmode="numeric"
+                     placeholder="—" value="${r.open != null ? fmtNum(r.open) : ""}" data-idx="${i}">
+            </td>
+            <td class="num">${fmtNum(r.purchased)}</td>
+            <td class="num">${fmtNum(r.stock)}</td>
+            <td class="num" id="sold-${i}">${soldCell(r)}</td>
+            <td class="num">
+              <input class="cell-input wide price-input ${r.edited ? "edited" : ""}" type="text" inputmode="numeric"
                      value="${fmtNum(r.price)}" data-idx="${i}">
             </td>
             <td class="num" id="amt-${i}">${formatVND(r.sold * r.price)}</td>
@@ -226,7 +255,7 @@ function renderTable() {
       </tbody>
       <tfoot>
         <tr class="total-row">
-          <td colspan="5">Tổng cộng</td>
+          <td colspan="7">Tổng cộng</td>
           <td class="num" id="totalAmt"></td>
           <td class="num" id="totalFund"></td>
           <td></td>
@@ -234,11 +263,30 @@ function renderTable() {
       </tfoot>
     </table>
     <div class="note-line">
-      Đang hiện ${view.length} mã Maxspect, trong đó ${soldCount} mã có bán ra trong kỳ.
-      Giá lẻ thống nhất là mức hai bên đã chốt, không phải giá bán thực tế trên đơn — sửa ở đây
-      không ảnh hưởng gì tới giá bán trong POS. Ô viền xanh là giá đã sửa tay và được nhớ cho kỳ sau.
+      Đang hiện ${view.length} mã, trong đó ${soldCount} mã có bán ra.
+      ${noOpen > 0 ? `<strong>${noOpen} mã chưa điền tồn kỳ trước</strong> — những mã đó đang lấy số bán theo đơn hàng trong POS.` : ""}
+      Điền tồn kỳ trước thì số bán chuyển sang tính theo kho: tồn kỳ trước + nhập trong kỳ − tồn hiện tại.
+      Khi bấm “Chốt kỳ này”, tồn hiện tại được ghi lại thành tồn kỳ trước cho lần sau, khỏi nhập tay nữa.
     </div>
   `;
+
+  wrap.querySelectorAll(".open-input").forEach(el => {
+    el.addEventListener("input", () => {
+      const idx = Number(el.dataset.idx);
+      const raw = el.value.trim();
+      const val = raw === "" ? null : parseNum(raw);
+      el.value = val == null ? "" : fmtNum(val);
+      el.classList.toggle("edited", val != null);
+
+      ROWS[idx].open = val;
+      const opens = lsGet(OPEN_KEY, {});
+      if (val == null) delete opens[ROWS[idx].id]; else opens[ROWS[idx].id] = val;
+      lsSet(OPEN_KEY, opens);
+
+      recalcRow(ROWS[idx]);
+      refreshRow(idx);
+    });
+  });
 
   wrap.querySelectorAll(".price-input").forEach(el => {
     el.addEventListener("input", () => {
@@ -252,10 +300,7 @@ function renderTable() {
       const agreed = lsGet(PRICE_KEY, {});
       agreed[ROWS[idx].id] = val;
       lsSet(PRICE_KEY, agreed);
-
-      document.getElementById(`amt-${idx}`).textContent = formatVND(ROWS[idx].sold * val);
-      document.getElementById(`fund-${idx}`).textContent = formatVND(ROWS[idx].sold * val * SHARE);
-      updateTotals();
+      refreshRow(idx);
     });
   });
 
@@ -276,26 +321,20 @@ function renderTable() {
   updateTotals();
 }
 
-function renderHidden() {
-  const box = document.getElementById("hiddenWrap");
-  if (!box) return;
-  const hidden = lsGet(HIDDEN_KEY, []);
-  if (hidden.length === 0) { box.innerHTML = ""; return; }
-  const names = hidden.map(id => {
-    const p = MS_PRODUCTS.find(x => x.id === id);
-    return { id, name: p ? p.name : "(mã đã xóa)" };
-  });
-  box.innerHTML = `
-    <div class="note-line" style="margin-top:14px;">
-      <strong>Không tính vào quyết toán (${names.length}):</strong>
-      ${names.map(n => `<span class="hidden-tag" data-show="${n.id}">${n.name} <span style="color:var(--teal-deep);">↩ đưa lại</span></span>`).join("")}
-    </div>`;
-  box.querySelectorAll(".hidden-tag").forEach(el => {
-    el.addEventListener("click", async () => {
-      lsSet(HIDDEN_KEY, lsGet(HIDDEN_KEY, []).filter(x => x !== el.dataset.show));
-      await loadPeriod();
-    });
-  });
+function soldCell(r) {
+  const main = `<strong>${fmtNum(r.sold)}</strong>`;
+  if (r.soldCalc == null) return main + `<div class="sub-note">theo đơn</div>`;
+  if (r.soldCalc !== r.soldLog) return main + `<div class="sub-note warn">đơn ghi ${fmtNum(r.soldLog)}</div>`;
+  return main + `<div class="sub-note">khớp đơn</div>`;
+}
+
+function refreshRow(idx) {
+  const r = ROWS[idx];
+  const soldEl = document.getElementById(`sold-${idx}`);
+  if (soldEl) soldEl.innerHTML = soldCell(r);
+  document.getElementById(`amt-${idx}`).textContent = formatVND(r.sold * r.price);
+  document.getElementById(`fund-${idx}`).textContent = formatVND(r.sold * r.price * SHARE);
+  updateTotals();
 }
 
 function updateTotals() {
@@ -324,10 +363,32 @@ function renderSummary(amt, fund) {
     </div>
     <div class="stat-card">
       <div class="label">Số lượng đã bán</div>
-      <div class="value">${qty}</div>
+      <div class="value">${fmtNum(qty)}</div>
       <div class="delta text-mute" style="font-size:11px;">${soldCount}/${ROWS.length} mã có phát sinh</div>
     </div>
   `;
+}
+
+function renderHidden() {
+  const box = document.getElementById("hiddenWrap");
+  if (!box) return;
+  const hidden = lsGet(HIDDEN_KEY, []);
+  if (hidden.length === 0) { box.innerHTML = ""; return; }
+  const names = hidden.map(id => {
+    const p = MS_PRODUCTS.find(x => x.id === id);
+    return { id, name: p ? p.name : "(mã đã xóa)" };
+  });
+  box.innerHTML = `
+    <div class="note-line" style="margin-top:14px;">
+      <strong>Không tính vào quyết toán (${names.length}):</strong>
+      ${names.map(n => `<span class="hidden-tag" data-show="${n.id}">${n.name} <span style="color:var(--teal-deep);">↩ đưa lại</span></span>`).join("")}
+    </div>`;
+  box.querySelectorAll(".hidden-tag").forEach(el => {
+    el.addEventListener("click", async () => {
+      lsSet(HIDDEN_KEY, lsGet(HIDDEN_KEY, []).filter(x => x !== el.dataset.show));
+      await loadPeriod();
+    });
+  });
 }
 
 function copyTable() {
@@ -336,13 +397,14 @@ function copyTable() {
   const to = document.getElementById("toDate").value;
   const lines = [
     `Quyết toán Maxspect ${from} → ${to}`,
-    ["STT", "Tên", "Đã bán", "Giá lẻ thống nhất", "Thành tiền", "Vào quỹ"].join("\t")
+    ["STT", "Tên", "Tồn kỳ trước", "Nhập trong kỳ", "Tồn hiện tại", "Đã bán", "Giá lẻ thống nhất", "Thành tiền", "Vào quỹ"].join("\t")
   ];
   ROWS.forEach((r, i) => {
-    lines.push([i + 1, r.name, r.sold, r.price, r.sold * r.price, Math.round(r.sold * r.price * SHARE)].join("\t"));
+    lines.push([i + 1, r.name, r.open == null ? "" : r.open, r.purchased, r.stock,
+                r.sold, r.price, r.sold * r.price, Math.round(r.sold * r.price * SHARE)].join("\t"));
   });
   const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
-  lines.push(["", "Tổng", "", "", amt, Math.round(amt * SHARE)].join("\t"));
+  lines.push(["", "Tổng", "", "", "", "", "", amt, Math.round(amt * SHARE)].join("\t"));
 
   navigator.clipboard.writeText(lines.join("\n"))
     .then(() => alert("Đã sao chép. Dán thẳng vào sổ Maxspect hoặc gửi anh Hiếu."))
@@ -355,7 +417,11 @@ function closePeriod() {
   const to = document.getElementById("toDate").value;
   const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
 
-  if (!confirm(`Chốt kỳ ${from} → ${to}?\nTiền vào quỹ: ${formatVND(amt * SHARE)}\n\nKỳ sau sẽ tự tính từ ${to}.`)) return;
+  if (!confirm(`Chốt kỳ ${from} → ${to}?\nTiền vào quỹ: ${formatVND(amt * SHARE)}\n\nTồn hiện tại của từng mã sẽ được ghi thành tồn kỳ trước cho lần sau, và kỳ sau tính từ ${to}.`)) return;
+
+  const opens = lsGet(OPEN_KEY, {});
+  ROWS.forEach(r => { opens[r.id] = r.stock; });
+  lsSet(OPEN_KEY, opens);
 
   const periods = lsGet(PERIOD_KEY, []);
   periods.unshift({
@@ -365,9 +431,11 @@ function closePeriod() {
     closedAt: new Date().toISOString()
   });
   lsSet(PERIOD_KEY, periods.slice(0, 24));
+
   renderPeriods();
   document.getElementById("fromDate").value = to;
   alert("Đã chốt kỳ.");
+  loadPeriod();
 }
 
 function renderPeriods() {
@@ -380,7 +448,7 @@ function renderPeriods() {
   }
   wrap.innerHTML = periods.map(p => `
     <div class="period-item">
-      <div>${formatDate(p.start)} → ${formatDate(p.end)} · ${p.qty} món</div>
+      <div>${formatDate(p.start)} → ${formatDate(p.end)} · ${fmtNum(p.qty)} món</div>
       <div class="fund-cell">${formatVND(p.fund)}</div>
     </div>
   `).join("");
