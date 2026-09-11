@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quyết toán Maxspect — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.date-bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px; }
+.date-bar .field { display:flex; flex-direction:column; gap:4px; }
+.date-bar label { font-size:12px; color:var(--text-mute); font-weight:600; }
+.date-bar input { padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; }
+.price-input { width:110px; padding:5px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; text-align:right; }
+.price-input.edited { border-color:var(--teal-deep); background:#f0fbfa; }
+.num { text-align:right; white-space:nowrap; }
+.total-row td { font-weight:700; background:#f1f6f9; border-top:2px solid var(--ink); }
+.fund-cell { color:var(--teal-deep); font-weight:700; }
+.note-line { font-size:12.5px; color:var(--text-mute); line-height:1.6; margin-top:10px; }
+.period-item { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.period-item:last-child { border-bottom:none; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let MS_PRODUCTS = [];
+let ROWS = [];
+
+const PRICE_KEY = "maxspect_agreed_prices";
+const PERIOD_KEY = "maxspect_periods";
+const SHARE = 0.75; // giá lẻ thống nhất × 75% = tiền vào quỹ liên doanh
+
+function lsGet(k, fallback) {
+  try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; }
+  catch (e) { return fallback; }
+}
+function lsSet(k, v) {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {}
+}
+function toISODate(d) { return d.toISOString().slice(0, 10); }
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+
+  if (CURRENT_PROFILE.role !== "owner") {
+    document.getElementById("app").innerHTML =
+      `<div style="padding:60px; text-align:center;">Trang này chỉ dành cho tài khoản Chủ.</div>`;
+    return;
+  }
+
+  renderLayout({
+    activePage: "products",
+    profile: CURRENT_PROFILE,
+    title: "Quyết toán Maxspect",
+    subtitle: "Lượng bán và giá trị đã bán của hàng liên doanh trong một kỳ"
+  });
+
+  const periods = lsGet(PERIOD_KEY, []);
+  const lastEnd = periods.length ? periods[0].end : null;
+  const today = new Date();
+  const defaultStart = lastEnd || toISODate(new Date(today.getTime() - 30 * 86400000));
+
+  document.getElementById("pageContent").innerHTML = `
+    <div class="date-bar">
+      <div class="field"><label>Từ ngày</label><input type="date" id="fromDate" value="${defaultStart}"></div>
+      <div class="field"><label>Đến ngày</label><input type="date" id="toDate" value="${toISODate(today)}"></div>
+      <button class="btn btn-primary" id="runBtn">Xem lượng bán</button>
+      <button class="btn" id="copyBtn">Sao chép bảng</button>
+      <button class="btn" id="closeBtn">Chốt kỳ này</button>
+    </div>
+
+    <div class="stat-grid" id="summaryGrid" style="margin-bottom:16px;"></div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Chi tiết từng mã</h2></div>
+      <div class="panel-body" id="tableWrap">
+        <div class="empty-state"><div class="icon">📅</div>Chọn khoảng ngày rồi bấm “Xem lượng bán”.</div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-header"><h2>Các kỳ đã chốt</h2></div>
+      <div class="panel-body" id="periodWrap"></div>
+    </div>
+  `;
+
+  document.getElementById("runBtn").addEventListener("click", loadPeriod);
+  document.getElementById("copyBtn").addEventListener("click", copyTable);
+  document.getElementById("closeBtn").addEventListener("click", closePeriod);
+
+  renderPeriods();
+  await loadProducts();
+  await loadPeriod();
+})();
+
+async function loadProducts() {
+  const { data, error } = await sb.from("products").select("*").order("name");
+  if (error) { alert("Không tải được danh sách sản phẩm: " + error.message); return; }
+  const isMaxspect = (p) =>
+    (p.name || "").toLowerCase().includes("maxspect") ||
+    (p.brand || "").toLowerCase().includes("maxspect");
+  MS_PRODUCTS = (data || []).filter(isMaxspect);
+}
+
+async function loadPeriod() {
+  const from = document.getElementById("fromDate").value;
+  const to = document.getElementById("toDate").value;
+  const wrap = document.getElementById("tableWrap");
+
+  if (!from || !to) { alert("Chọn đủ hai mốc ngày."); return; }
+  if (from > to) { alert("Ngày bắt đầu đang sau ngày kết thúc."); return; }
+  if (MS_PRODUCTS.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🏷️</div>
+      Chưa có sản phẩm nào mang nhãn Maxspect. Vào Kho hàng, sửa sản phẩm và điền “Maxspect” vào ô Hãng.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tính...</div>`;
+
+  const ids = MS_PRODUCTS.map(p => p.id);
+  const { data: logs, error } = await sb
+    .from("inventory_log")
+    .select("product_id, change_qty, reason, created_at")
+    .in("product_id", ids)
+    .in("reason", ["sale", "cancel"])
+    .gte("created_at", from + "T00:00:00")
+    .lte("created_at", to + "T23:59:59");
+
+  if (error) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div>
+      Không đọc được nhật ký kho: ${error.message}</div>`;
+    return;
+  }
+
+  const soldMap = {};
+  (logs || []).forEach(l => {
+    // bán ra ghi số âm, hủy đơn ghi số dương → đảo dấu để ra lượng bán ròng
+    soldMap[l.product_id] = (soldMap[l.product_id] || 0) - Number(l.change_qty || 0);
+  });
+
+  const agreed = lsGet(PRICE_KEY, {});
+  ROWS = MS_PRODUCTS
+    .map(p => {
+      const sold = soldMap[p.id] || 0;
+      const price = agreed[p.id] != null ? Number(agreed[p.id]) : Number(p.retail_price || 0);
+      return {
+        id: p.id, sku: p.sku || "—", name: p.name,
+        stock: Number(p.quantity || 0),
+        sold, price,
+        edited: agreed[p.id] != null
+      };
+    })
+    .filter(r => r.sold !== 0)
+    .sort((a, b) => b.sold * b.price - a.sold * a.price);
+
+  renderTable();
+}
+
+function renderTable() {
+  const wrap = document.getElementById("tableWrap");
+
+  if (ROWS.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">📭</div>
+      Không có mã Maxspect nào bán ra trong khoảng ngày này.</div>`;
+    renderSummary(0, 0);
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Mã</th><th>Tên sản phẩm</th>
+        <th class="num">Tồn hiện tại</th>
+        <th class="num">Đã bán</th>
+        <th class="num">Giá lẻ thống nhất</th>
+        <th class="num">Thành tiền</th>
+        <th class="num">Vào quỹ (75%)</th>
+      </tr></thead>
+      <tbody>
+        ${ROWS.map((r, i) => `
+          <tr>
+            <td>${r.sku}</td>
+            <td>${r.name}</td>
+            <td class="num">${r.stock}</td>
+            <td class="num"><strong>${r.sold}</strong></td>
+            <td class="num">
+              <input class="price-input ${r.edited ? "edited" : ""}" type="number" min="0" step="1000"
+                     value="${r.price}" data-idx="${i}">
+            </td>
+            <td class="num" id="amt-${i}">${formatVND(r.sold * r.price)}</td>
+            <td class="num fund-cell" id="fund-${i}">${formatVND(r.sold * r.price * SHARE)}</td>
+          </tr>`).join("")}
+      </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td colspan="5">Tổng cộng</td>
+          <td class="num" id="totalAmt"></td>
+          <td class="num" id="totalFund"></td>
+        </tr>
+      </tfoot>
+    </table>
+    <div class="note-line">
+      Giá lẻ thống nhất là mức hai bên đã chốt, không phải giá bán thực tế trên đơn. Sửa ô giá ở đây
+      không ảnh hưởng gì tới giá bán trong POS. Ô viền xanh là giá đã sửa tay và được nhớ lại cho kỳ sau.
+    </div>
+  `;
+
+  wrap.querySelectorAll(".price-input").forEach(el => {
+    el.addEventListener("change", () => {
+      const idx = Number(el.dataset.idx);
+      const val = Number(el.value || 0);
+      ROWS[idx].price = val;
+      ROWS[idx].edited = true;
+      el.classList.add("edited");
+
+      const agreed = lsGet(PRICE_KEY, {});
+      agreed[ROWS[idx].id] = val;
+      lsSet(PRICE_KEY, agreed);
+
+      document.getElementById(`amt-${idx}`).textContent = formatVND(ROWS[idx].sold * val);
+      document.getElementById(`fund-${idx}`).textContent = formatVND(ROWS[idx].sold * val * SHARE);
+      updateTotals();
+    });
+  });
+
+  updateTotals();
+}
+
+function updateTotals() {
+  const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
+  const fund = amt * SHARE;
+  const amtEl = document.getElementById("totalAmt");
+  if (amtEl) {
+    amtEl.textContent = formatVND(amt);
+    document.getElementById("totalFund").textContent = formatVND(fund);
+  }
+  renderSummary(amt, fund);
+}
+
+function renderSummary(amt, fund) {
+  const qty = ROWS.reduce((s, r) => s + r.sold, 0);
+  document.getElementById("summaryGrid").innerHTML = `
+    <div class="stat-card accent">
+      <div class="label">Tiền vào quỹ liên doanh</div>
+      <div class="value">${formatVND(fund)}</div>
+      <div class="delta text-mute" style="font-size:11px;">Giá lẻ thống nhất × 75%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Giá trị theo giá lẻ thống nhất</div>
+      <div class="value">${formatVND(amt)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Số lượng đã bán</div>
+      <div class="value">${qty}</div>
+      <div class="delta text-mute" style="font-size:11px;">${ROWS.length} mã có phát sinh</div>
+    </div>
+  `;
+}
+
+function copyTable() {
+  if (ROWS.length === 0) { alert("Chưa có dữ liệu để sao chép."); return; }
+  const from = document.getElementById("fromDate").value;
+  const to = document.getElementById("toDate").value;
+  const lines = [
+    `Quyết toán Maxspect ${from} → ${to}`,
+    ["Mã", "Tên", "Đã bán", "Giá lẻ thống nhất", "Thành tiền", "Vào quỹ"].join("\t")
+  ];
+  ROWS.forEach(r => {
+    lines.push([r.sku, r.name, r.sold, r.price, r.sold * r.price, Math.round(r.sold * r.price * SHARE)].join("\t"));
+  });
+  const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
+  lines.push(["", "Tổng", "", "", amt, Math.round(amt * SHARE)].join("\t"));
+
+  navigator.clipboard.writeText(lines.join("\n"))
+    .then(() => alert("Đã sao chép. Dán thẳng vào sổ Maxspect hoặc gửi anh Hiếu."))
+    .catch(() => alert("Trình duyệt chặn sao chép. Bôi đen bảng rồi copy tay."));
+}
+
+function closePeriod() {
+  if (ROWS.length === 0) { alert("Chưa có dữ liệu để chốt."); return; }
+  const from = document.getElementById("fromDate").value;
+  const to = document.getElementById("toDate").value;
+  const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
+
+  if (!confirm(`Chốt kỳ ${from} → ${to}?\nTiền vào quỹ: ${formatVND(amt * SHARE)}\n\nKỳ sau sẽ tự tính từ ${to}.`)) return;
+
+  const periods = lsGet(PERIOD_KEY, []);
+  periods.unshift({
+    start: from, end: to,
+    amount: amt, fund: Math.round(amt * SHARE),
+    qty: ROWS.reduce((s, r) => s + r.sold, 0),
+    closedAt: new Date().toISOString()
+  });
+  lsSet(PERIOD_KEY, periods.slice(0, 24));
+  renderPeriods();
+  document.getElementById("fromDate").value = to;
+  alert("Đã chốt kỳ.");
+}
+
+function renderPeriods() {
+  const periods = lsGet(PERIOD_KEY, []);
+  const wrap = document.getElementById("periodWrap");
+  if (!wrap) return;
+  if (periods.length === 0) {
+    wrap.innerHTML = `<div class="empty-state" style="padding:24px;">Chưa chốt kỳ nào.</div>`;
+    return;
+  }
+  wrap.innerHTML = periods.map(p => `
+    <div class="period-item">
+      <div>${formatDate(p.start)} → ${formatDate(p.end)} · ${p.qty} món</div>
+      <div class="fund-cell">${formatVND(p.fund)}</div>
+    </div>
+  `).join("");
+}
+</script>
+</body>
+</html>
