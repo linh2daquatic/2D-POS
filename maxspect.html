@@ -29,6 +29,24 @@
 .hidden-tag { display:inline-block; cursor:pointer; background:#fff; border:1px solid var(--border); border-radius:20px; padding:4px 12px; margin:4px 6px 0 0; font-size:12.5px; }
 .hidden-tag:hover { border-color:var(--teal-deep); }
 table th { white-space:nowrap; }
+.locked .cell-input { background:#f7f8f9; color:var(--ink); border-color:transparent; pointer-events:none; }
+.locked .hide-btn { display:none; }
+.lock-banner { display:none; background:#fff8e6; border:1px solid #f0d58a; border-radius:8px; padding:9px 14px; font-size:13px; margin-bottom:14px; }
+.locked-on .lock-banner { display:block; }
+#printHead { display:none; }
+@media print {
+  body { background:#fff; }
+  .date-bar, .hide-btn, #hiddenWrap, .lock-banner, button,
+  nav, aside, header, .sidebar, .topbar, .app-nav, .page-header { display:none !important; }
+  #printHead { display:block; margin-bottom:14px; }
+  #printHead h1 { font-size:18px; margin:0 0 4px; }
+  .panel { box-shadow:none; border:1px solid #ddd; break-inside:avoid; }
+  .cell-input { border:none; background:none; padding:0; width:auto; }
+  .stat-grid { display:flex; gap:10px; }
+  table { font-size:11.5px; }
+  .sub-note { font-size:9.5px; }
+  @page { size:A4 landscape; margin:12mm; }
+}
 </style>
 </head>
 <body>
@@ -44,6 +62,8 @@ const PRICE_KEY  = "maxspect_agreed_prices";   // giá lẻ hai bên thống nh�
 const OPEN_KEY   = "maxspect_open_stock";      // tồn tại lần chốt gần nhất
 const HIDDEN_KEY = "maxspect_hidden_products"; // mã không tính vào quyết toán
 const PERIOD_KEY = "maxspect_periods";
+const EDITLOG_KEY = "maxspect_edit_log";       // thời điểm sửa từng ô
+const LOCK_KEY   = "maxspect_locked";
 const SHARE = 0.75;
 
 const PURCHASE_REASONS = ["purchase", "purchase_adjust", "purchase_removed", "purchase_deleted"];
@@ -55,6 +75,23 @@ function lsGet(k, fallback) {
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function toISODate(d) { return d.toISOString().slice(0, 10); }
 function fmtNum(n) { return Number(n || 0).toLocaleString("vi-VN"); }
+function isLocked() { return lsGet(LOCK_KEY, false) === true; }
+function stampEdit(id, field) {
+  const log = lsGet(EDITLOG_KEY, {});
+  log[id] = log[id] || {};
+  log[id][field] = new Date().toISOString();
+  lsSet(EDITLOG_KEY, log);
+}
+function editStamp(id, field) {
+  const log = lsGet(EDITLOG_KEY, {});
+  return log[id] && log[id][field] ? log[id][field] : null;
+}
+function shortStamp(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) + " " +
+         d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+}
 function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0; }
 
 (async () => {
@@ -88,8 +125,17 @@ function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0;
         <input type="checkbox" id="onlySold"> Chỉ hiện mã có bán
       </label>
       <button class="btn" id="copyBtn">Sao chép bảng</button>
+      <button class="btn" id="printBtn">In bảng</button>
+      <button class="btn" id="lockBtn">Khóa sửa</button>
       <button class="btn" id="closeBtn">Chốt kỳ này</button>
     </div>
+
+    <div id="printHead">
+      <h1>QUYẾT TOÁN MAXSPECT</h1>
+      <div id="printMeta" class="sub-note"></div>
+    </div>
+
+    <div class="lock-banner">🔒 Bảng đang khóa — không sửa được tồn kỳ trước, giá, hay loại mã. Bấm “Mở khóa” nếu cần chỉnh.</div>
 
     <div class="stat-grid" id="summaryGrid" style="margin-bottom:16px;"></div>
 
@@ -112,6 +158,9 @@ function parseNum(str) { return Number(String(str).replace(/[^0-9]/g, "")) || 0;
   document.getElementById("onlySold").addEventListener("change", renderTable);
   document.getElementById("copyBtn").addEventListener("click", copyTable);
   document.getElementById("closeBtn").addEventListener("click", closePeriod);
+  document.getElementById("printBtn").addEventListener("click", doPrint);
+  document.getElementById("lockBtn").addEventListener("click", toggleLock);
+  applyLockUI();
 
   renderPeriods();
   await loadProducts();
@@ -240,6 +289,7 @@ function renderTable() {
             <td class="num">
               <input class="cell-input open-input ${r.open != null ? "edited" : ""}" type="text" inputmode="numeric"
                      placeholder="—" value="${r.open != null ? fmtNum(r.open) : ""}" data-idx="${i}">
+              ${editStamp(r.id, "open") ? `<div class="sub-note">sửa ${shortStamp(editStamp(r.id, "open"))}</div>` : ""}
             </td>
             <td class="num">${fmtNum(r.purchased)}</td>
             <td class="num">${fmtNum(r.stock)}</td>
@@ -247,6 +297,7 @@ function renderTable() {
             <td class="num">
               <input class="cell-input wide price-input ${r.edited ? "edited" : ""}" type="text" inputmode="numeric"
                      value="${fmtNum(r.price)}" data-idx="${i}">
+              ${editStamp(r.id, "price") ? `<div class="sub-note">sửa ${shortStamp(editStamp(r.id, "price"))}</div>` : ""}
             </td>
             <td class="num" id="amt-${i}">${formatVND(r.sold * r.price)}</td>
             <td class="num fund-cell" id="fund-${i}">${formatVND(r.sold * r.price * SHARE)}</td>
@@ -282,6 +333,7 @@ function renderTable() {
       const opens = lsGet(OPEN_KEY, {});
       if (val == null) delete opens[ROWS[idx].id]; else opens[ROWS[idx].id] = val;
       lsSet(OPEN_KEY, opens);
+      stampEdit(ROWS[idx].id, "open");
 
       recalcRow(ROWS[idx]);
       refreshRow(idx);
@@ -300,6 +352,7 @@ function renderTable() {
       const agreed = lsGet(PRICE_KEY, {});
       agreed[ROWS[idx].id] = val;
       lsSet(PRICE_KEY, agreed);
+      stampEdit(ROWS[idx].id, "price");
       refreshRow(idx);
     });
   });
@@ -308,6 +361,7 @@ function renderTable() {
     el.addEventListener("click", () => {
       const id = el.dataset.hide;
       const row = ROWS.find(r => r.id === id);
+      if (isLocked()) { alert("Bảng đang khóa. Bấm “Mở khóa” trước."); return; }
       if (!confirm(`Bỏ “${row.name}” khỏi quyết toán Maxspect?\n\nMã này sẽ không tính vào quỹ liên doanh nữa. Đưa lại được bất cứ lúc nào ở mục bên dưới bảng.`)) return;
       const hidden = lsGet(HIDDEN_KEY, []);
       hidden.push(id);
@@ -319,6 +373,36 @@ function renderTable() {
 
   renderHidden();
   updateTotals();
+  applyLockUI();
+}
+
+function applyLockUI() {
+  const locked = isLocked();
+  document.body.classList.toggle("locked-on", locked);
+  const wrap = document.getElementById("tableWrap");
+  if (wrap) wrap.classList.toggle("locked", locked);
+  const btn = document.getElementById("lockBtn");
+  if (btn) btn.textContent = locked ? "Mở khóa" : "Khóa sửa";
+  document.querySelectorAll(".cell-input").forEach(el => { el.readOnly = locked; });
+}
+
+function toggleLock() {
+  const locked = isLocked();
+  if (!locked) {
+    if (!confirm("Khóa bảng lại?\n\nSau khi khóa sẽ không sửa được tồn kỳ trước, giá lẻ thống nhất, hay loại mã ra khỏi quyết toán. Mở lại bất cứ lúc nào.")) return;
+  }
+  lsSet(LOCK_KEY, !locked);
+  applyLockUI();
+}
+
+function doPrint() {
+  const from = document.getElementById("fromDate").value;
+  const to = document.getElementById("toDate").value;
+  const amt = ROWS.reduce((s, r) => s + r.sold * r.price, 0);
+  document.getElementById("printMeta").innerHTML =
+    `Kỳ ${formatDate(from)} → ${formatDate(to)} · 2D Aquatic · In lúc ${shortStamp(new Date().toISOString())}` +
+    `<br>Tiền vào quỹ liên doanh: <strong>${formatVND(amt * SHARE)}</strong> (giá lẻ thống nhất × 75%)`;
+  window.print();
 }
 
 function soldCell(r) {
