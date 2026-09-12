@@ -142,6 +142,13 @@ let RC_ACTIVE_CATEGORY = "";
 
     <div id="receiveTab" style="display:none;">
       <div class="panel">
+        <div class="panel-header"><h2>Lịch sử nhập hàng</h2></div>
+        <div class="panel-body" id="rcHistoryWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
+        </div>
+      </div>
+
+      <div class="panel">
         <div class="panel-header"><h2>Ghi nhận nhập hàng</h2></div>
         <div class="panel-body">
           <div class="field"><label>Nhà cung cấp *</label>
@@ -179,13 +186,6 @@ let RC_ACTIVE_CATEGORY = "";
 
           <div class="summary-row total"><span>Còn nợ NCC</span><span id="rc_sumDebt">0₫</span></div>
           <button class="btn btn-primary" id="rc_submitBtn" style="width:100%; max-width:420px; justify-content:center; padding:12px; margin-top:14px;">Ghi nhận nhập hàng</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header"><h2>Lịch sử nhập hàng</h2></div>
-        <div class="panel-body" id="rcHistoryWrap">
-          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
     </div>
