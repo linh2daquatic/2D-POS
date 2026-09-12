@@ -113,6 +113,7 @@ let RC_ACTIVE_CATEGORY = "";
     <div class="tabs-row">
       <div class="tab-btn active" data-tab="list">Danh sách sản phẩm</div>
       <div class="tab-btn" data-tab="receive">Nhập hàng</div>
+      <div class="tab-btn" data-tab="rcHistory">Lịch sử nhập hàng</div>
       <div class="tab-btn" data-tab="count">Kiểm kho</div>
     </div>
 
@@ -141,13 +142,6 @@ let RC_ACTIVE_CATEGORY = "";
     </div>
 
     <div id="receiveTab" style="display:none;">
-      <div class="panel">
-        <div class="panel-header"><h2>Lịch sử nhập hàng</h2></div>
-        <div class="panel-body" id="rcHistoryWrap">
-          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
-        </div>
-      </div>
-
       <div class="panel">
         <div class="panel-header"><h2>Ghi nhận nhập hàng</h2></div>
         <div class="panel-body">
@@ -186,6 +180,15 @@ let RC_ACTIVE_CATEGORY = "";
 
           <div class="summary-row total"><span>Còn nợ NCC</span><span id="rc_sumDebt">0₫</span></div>
           <button class="btn btn-primary" id="rc_submitBtn" style="width:100%; max-width:420px; justify-content:center; padding:12px; margin-top:14px;">Ghi nhận nhập hàng</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rcHistoryTab" style="display:none;">
+      <div class="panel">
+        <div class="panel-header"><h2>Lịch sử nhập hàng</h2></div>
+        <div class="panel-body" id="rcHistoryWrap">
+          <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
     </div>
@@ -366,7 +369,9 @@ function switchTab(tab) {
   document.querySelectorAll(".tab-btn").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
   document.getElementById("listTab").style.display = tab === "list" ? "block" : "none";
   document.getElementById("receiveTab").style.display = tab === "receive" ? "block" : "none";
+  document.getElementById("rcHistoryTab").style.display = tab === "rcHistory" ? "block" : "none";
   document.getElementById("countTab").style.display = tab === "count" ? "block" : "none";
+  if (tab === "rcHistory") loadReceiveHistory();
   if (tab === "count") loadStockCountHistory();
 }
 
