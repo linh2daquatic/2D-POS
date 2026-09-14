@@ -115,6 +115,7 @@ let RC_ACTIVE_CATEGORY = "";
       <div class="tab-btn" data-tab="receive">Nhập hàng</div>
       <div class="tab-btn" data-tab="rcHistory">Lịch sử nhập hàng</div>
       <div class="tab-btn" data-tab="count">Kiểm kho</div>
+      ${isOwner ? `<div class="tab-btn" data-tab="missingCost">⚠️ Thiếu giá vốn</div>` : ""}
     </div>
 
     <div id="listTab">
@@ -234,6 +235,17 @@ let RC_ACTIVE_CATEGORY = "";
         </div>
       </div>
     </div>
+
+    ${isOwner ? `
+    <div id="missingCostTab" style="display:none;">
+      <div class="panel">
+        <div class="panel-header"><h2>⚠️ Sản phẩm chưa nhập giá vốn</h2></div>
+        <div class="panel-body">
+          <p class="text-mute" style="font-size:12.5px; margin-bottom:12px;">Những sản phẩm này đang có giá vốn = 0đ — khi bán ra, hệ thống sẽ tính lãi = 100% giá bán, làm Lãi gộp trên Dashboard bị thổi phồng cao hơn thực tế. Bấm "Sửa" để bổ sung giá vốn đúng.</p>
+          <div id="missingCostWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
+        </div>
+      </div>
+    </div>` : ""}
 
     <div class="modal-overlay" id="scDetailModal">
       <div class="modal-box" style="max-width:560px;">
@@ -371,8 +383,11 @@ function switchTab(tab) {
   document.getElementById("receiveTab").style.display = tab === "receive" ? "block" : "none";
   document.getElementById("rcHistoryTab").style.display = tab === "rcHistory" ? "block" : "none";
   document.getElementById("countTab").style.display = tab === "count" ? "block" : "none";
+  const missingCostTabEl = document.getElementById("missingCostTab");
+  if (missingCostTabEl) missingCostTabEl.style.display = tab === "missingCost" ? "block" : "none";
   if (tab === "rcHistory") loadReceiveHistory();
   if (tab === "count") loadStockCountHistory();
+  if (tab === "missingCost") renderMissingCostTab();
 }
 
 let ACTIVE_CATEGORY = "";
@@ -387,6 +402,7 @@ async function loadProducts() {
   renderCategoryBrandDatalists();
   populateStockCountCategoryFilter();
   if (CURRENT_PROFILE.role === "owner") renderMaxspectValue();
+  if (document.getElementById("missingCostTab")?.style.display === "block") renderMissingCostTab();
   renderTable(document.getElementById("searchInput")?.value || "");
 }
 
@@ -430,6 +446,33 @@ function renderCategoryBrandDatalists() {
   const brandList = document.getElementById("brandDatalist");
   if (catList) catList.innerHTML = cats.map(c => `<option value="${c}">`).join("");
   if (brandList) brandList.innerHTML = brands.map(b => `<option value="${b}">`).join("");
+}
+
+function renderMissingCostTab() {
+  const wrap = document.getElementById("missingCostWrap");
+  if (!wrap) return;
+
+  const missing = ALL_PRODUCTS
+    .filter(p => p.is_active !== false && (!p.cost_price || Number(p.cost_price) <= 0))
+    .sort((a, b) => Number(b.retail_price || 0) - Number(a.retail_price || 0));
+
+  if (missing.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Không có sản phẩm nào thiếu giá vốn.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="summary-row total" style="margin-bottom:10px;"><span>Số sản phẩm thiếu giá vốn</span><span>${missing.length}</span></div>
+    <table><thead><tr><th>Sản phẩm</th><th>Danh mục</th><th>Tồn kho</th><th>Giá bán lẻ</th><th></th></tr></thead><tbody>
+      ${missing.map(p => `<tr>
+        <td>${p.name}</td>
+        <td>${p.category || '—'}${p.brand ? ` · <span style="color:var(--teal-deep); font-weight:600;">${p.brand}</span>` : ""}</td>
+        <td>${p.quantity} ${p.unit || ''}</td>
+        <td>${formatVND(p.retail_price)}</td>
+        <td><span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span></td>
+      </tr>`).join("")}
+    </tbody></table>
+  `;
 }
 
 function renderMaxspectValue() {
