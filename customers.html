@@ -111,7 +111,20 @@ let PAY_CUSTOMER = null;
     </div>
 
     <div id="tankBuyersTab" style="display:none;">
-      <input class="search-bar" id="tankBuyersSearchInput" placeholder="🔍 Tìm theo tên khách, SĐT hoặc mã bể..." style="margin-bottom:16px;">
+      <div class="subtabs-row" style="display:flex; gap:20px; border-bottom:1px solid var(--border); margin-bottom:16px;">
+        <div class="subtab-btn active" data-tankgroup="promax" style="padding:8px 2px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer; border-bottom:2px solid var(--teal-deep);">🔵 2D ProMax</div>
+        <div class="subtab-btn" data-tankgroup="infinity" style="padding:8px 2px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent;">🟢 2D Infinity</div>
+      </div>
+
+      <div class="flex gap-8" style="flex-wrap:wrap; align-items:flex-end; margin-bottom:12px;">
+        <div class="field" style="margin-bottom:0; max-width:170px;"><label>Từ ngày</label><input id="tb_fromDate" type="date"></div>
+        <div class="field" style="margin-bottom:0; max-width:170px;"><label>Đến ngày</label><input id="tb_toDate" type="date"></div>
+        <select id="tb_monthPicker" style="max-width:190px;"></select>
+        <span class="btn btn-secondary btn-mini" id="tb_applyDateBtn">Lọc</span>
+        <span class="btn btn-secondary btn-mini" id="tb_resetDateBtn">Xem tất cả</span>
+      </div>
+
+      <input class="search-bar" id="tankBuyersSearchInput" placeholder="🔍 Tìm theo tên khách hoặc SĐT..." style="margin-bottom:16px;">
       <div id="tankBuyersWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
     </div>
 
@@ -218,6 +231,40 @@ let PAY_CUSTOMER = null;
 
   document.getElementById("debtSearchInput").addEventListener("input", (e) => renderDebtList(e.target.value));
   document.getElementById("tankBuyersSearchInput").addEventListener("input", (e) => renderTankBuyers(e.target.value));
+  document.querySelectorAll("#tankBuyersTab .subtab-btn").forEach(el => {
+    el.addEventListener("click", () => {
+      TANK_GROUP_ACTIVE = el.dataset.tankgroup;
+      document.querySelectorAll("#tankBuyersTab .subtab-btn").forEach(x => {
+        x.classList.toggle("active", x === el);
+        x.style.color = x === el ? "var(--ink)" : "var(--text-mute)";
+        x.style.borderBottomColor = x === el ? "var(--teal-deep)" : "transparent";
+      });
+      renderTankBuyers(document.getElementById("tankBuyersSearchInput").value);
+    });
+  });
+  document.getElementById("tb_applyDateBtn").addEventListener("click", () => {
+    TANK_FROM_DATE = document.getElementById("tb_fromDate").value || null;
+    TANK_TO_DATE = document.getElementById("tb_toDate").value || null;
+    renderTankBuyers(document.getElementById("tankBuyersSearchInput").value);
+  });
+  document.getElementById("tb_resetDateBtn").addEventListener("click", () => {
+    document.getElementById("tb_fromDate").value = "";
+    document.getElementById("tb_toDate").value = "";
+    document.getElementById("tb_monthPicker").value = "";
+    TANK_FROM_DATE = null; TANK_TO_DATE = null;
+    renderTankBuyers(document.getElementById("tankBuyersSearchInput").value);
+  });
+  document.getElementById("tb_monthPicker").addEventListener("change", (e) => {
+    if (!e.target.value) return;
+    const [y, m] = e.target.value.split("-").map(Number);
+    const from = new Date(y, m - 1, 1);
+    const to = new Date(y, m, 0);
+    document.getElementById("tb_fromDate").value = from.toISOString().slice(0, 10);
+    document.getElementById("tb_toDate").value = to.toISOString().slice(0, 10);
+    TANK_FROM_DATE = from.toISOString().slice(0, 10);
+    TANK_TO_DATE = to.toISOString().slice(0, 10);
+    renderTankBuyers(document.getElementById("tankBuyersSearchInput").value);
+  });
   document.getElementById("payModalClose").addEventListener("click", closePayModal);
   document.getElementById("payCancelBtn").addEventListener("click", closePayModal);
   document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
@@ -401,6 +448,10 @@ async function openOrdersHistory(customerId) {
 }
 
 /* ================= TAB: CÔNG NỢ KHÁCH HÀNG ================= */
+let TANK_GROUP_ACTIVE = "promax";
+let TANK_FROM_DATE = null;
+let TANK_TO_DATE = null;
+
 async function loadTankBuyers() {
   const wrap = document.getElementById("tankBuyersWrap");
   wrap.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
@@ -429,6 +480,7 @@ async function loadTankBuyers() {
       const name = productIdToName[i.product_id] || "";
       return {
         group: name.toLowerCase().includes("promax") ? "promax" : "infinity",
+        tankName: name,
         customerName: i.orders.customers?.name || "Khách lẻ",
         phone: i.orders.customers?.phone || "",
         address: i.orders.customers?.address || "",
@@ -440,46 +492,55 @@ async function loadTankBuyers() {
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   TANK_BUYERS_LOADED = true;
+  buildTankMonthPicker();
   renderTankBuyers("");
 }
 
-function renderTankBuyerTable(list) {
-  if (list.length === 0) return `<div class="empty-state" style="padding:20px;"><div class="icon">🐠</div>Chưa có khách nào.</div>`;
-  return `<table><thead><tr><th>Khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Ngày mua</th><th>Mã đơn</th></tr></thead><tbody>
-      ${list.map(x => `<tr>
-        <td>${x.customerName}</td>
-        <td>${x.phone || '—'}</td>
-        <td>${x.address || '—'}</td>
-        <td>${formatDate(x.date)}</td>
-        <td><span class="settings-link tank-order-link" data-orderid="${x.orderId}" style="cursor:pointer;">${x.orderCode}</span></td>
-      </tr>`).join("")}
-    </tbody></table>`;
+function buildTankMonthPicker() {
+  const sel = document.getElementById("tb_monthPicker");
+  if (!sel) return;
+  const now = new Date();
+  let options = `<option value="">— Chọn nhanh theo tháng —</option>`;
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const label = i === 0 ? `Tháng này (${d.getMonth() + 1}/${d.getFullYear()})` : `Tháng ${d.getMonth() + 1}/${d.getFullYear()}`;
+    options += `<option value="${val}">${label}</option>`;
+  }
+  sel.innerHTML = options;
 }
 
 function renderTankBuyers(filter) {
   const wrap = document.getElementById("tankBuyersWrap");
   const f = (filter || "").trim().toLowerCase();
-  const matches = x => !f || x.customerName.toLowerCase().includes(f) || (x.phone || "").includes(f) || x.orderCode.toLowerCase().includes(f);
+  const matches = x => {
+    if (f && !(x.customerName.toLowerCase().includes(f) || (x.phone || "").includes(f))) return false;
+    if (x.group !== TANK_GROUP_ACTIVE) return false;
+    if (TANK_FROM_DATE && new Date(x.date) < new Date(TANK_FROM_DATE)) return false;
+    if (TANK_TO_DATE && new Date(x.date) > new Date(TANK_TO_DATE + "T23:59:59")) return false;
+    return true;
+  };
 
-  const promaxList = ALL_TANK_BUYERS.filter(x => x.group === "promax" && matches(x));
-  const infinityList = ALL_TANK_BUYERS.filter(x => x.group === "infinity" && matches(x));
+  const list = ALL_TANK_BUYERS.filter(matches);
 
-  if (promaxList.length === 0 && infinityList.length === 0) {
+  if (list.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">🐠</div>Không tìm thấy khách nào phù hợp.</div>`;
     return;
   }
 
   wrap.innerHTML = `
-    <div class="tank-buyer-cols" style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
-      <div>
-        <h3 style="font-size:14.5px; margin-bottom:10px;">🔵 2D ProMax <span class="text-mute" style="font-weight:400;">(${promaxList.length})</span></h3>
-        ${renderTankBuyerTable(promaxList)}
-      </div>
-      <div>
-        <h3 style="font-size:14.5px; margin-bottom:10px;">🟢 2D Infinity <span class="text-mute" style="font-weight:400;">(${infinityList.length})</span></h3>
-        ${renderTankBuyerTable(infinityList)}
-      </div>
-    </div>
+    <div class="summary-row total" style="margin-bottom:10px;"><span>Tổng số khách</span><span>${list.length}</span></div>
+    <table><thead><tr><th>#</th><th>Khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Bể đã mua</th><th>Ngày mua</th><th>Mã đơn</th></tr></thead><tbody>
+      ${list.map((x, idx) => `<tr>
+        <td>${idx + 1}</td>
+        <td>${x.customerName}</td>
+        <td>${x.phone || '—'}</td>
+        <td>${x.address || '—'}</td>
+        <td>${x.tankName}</td>
+        <td>${formatDate(x.date)}</td>
+        <td><span class="settings-link tank-order-link" data-orderid="${x.orderId}" style="cursor:pointer;">${x.orderCode}</span></td>
+      </tr>`).join("")}
+    </tbody></table>
   `;
 
   wrap.querySelectorAll(".tank-order-link").forEach(el => {
