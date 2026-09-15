@@ -140,7 +140,8 @@ let PAY_SUPPLIER = null;
     </div>
   `;
 
-  await Promise.all([loadSuppliers(), loadDebts()]);
+  await loadSuppliers();
+  await loadDebts();
   bindEvents();
   document.getElementById("supplierPODetailClose").addEventListener("click", () => document.getElementById("supplierPODetailModal").classList.remove("open"));
 })();
