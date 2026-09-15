@@ -35,6 +35,8 @@
 .no-purchase { color:var(--text-mute); font-style:italic; }
 .vip-tag { font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600; }
 .tabs-row { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.settings-link { color:var(--teal-deep); text-decoration:underline; font-weight:600; }
+@media (max-width: 860px) { .tank-buyer-cols { grid-template-columns:1fr !important; } }
 .tab-btn { padding:10px 4px; margin-right:16px; font-size:14px; font-weight:600; color:var(--text-mute); cursor:pointer; border-bottom:2px solid transparent; }
 .tab-btn.active { color:var(--ink); border-bottom-color:var(--teal-deep); }
 .pay-method-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
@@ -403,64 +405,86 @@ async function loadTankBuyers() {
   const wrap = document.getElementById("tankBuyersWrap");
   wrap.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
 
-  const { data: tankProducts } = await sb.from("products").select("id, name").or("name.ilike.%promax%,name.ilike.%infinity%");
+  // Chỉ lấy đúng sản phẩm BỂ (danh mục "Bể cá"), không lấy layout/chân tủ/dịch vụ setup...
+  const { data: tankProducts } = await sb.from("products").select("id, name, category").ilike("category", "%bể cá%").or("name.ilike.%promax%,name.ilike.%infinity%");
   const productIds = (tankProducts || []).map(p => p.id);
   if (productIds.length === 0) {
-    wrap.innerHTML = `<div class="empty-state"><div class="icon">🐠</div>Chưa tìm thấy sản phẩm nào có tên chứa "ProMax" hoặc "Infinity".</div>`;
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">🐠</div>Chưa tìm thấy sản phẩm bể nào có tên chứa "ProMax" hoặc "Infinity".</div>`;
     TANK_BUYERS_LOADED = true;
     return;
   }
+  const productIdToName = {};
+  tankProducts.forEach(p => { productIdToName[p.id] = p.name; });
 
   const { data: items, error } = await sb
     .from("order_items")
-    .select("quantity, unit_price, products(name), orders(order_code, created_at, status, customers(name, phone, address))")
+    .select("product_id, orders(id, order_code, created_at, status, customers(name, phone, address))")
     .in("product_id", productIds);
 
   if (error) { wrap.innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
 
   ALL_TANK_BUYERS = (items || [])
     .filter(i => i.orders && i.orders.status === "completed")
-    .map(i => ({
-      customerName: i.orders.customers?.name || "Khách lẻ",
-      phone: i.orders.customers?.phone || "",
-      address: i.orders.customers?.address || "",
-      tankName: i.products?.name || "—",
-      orderCode: i.orders.order_code,
-      date: i.orders.created_at,
-      qty: i.quantity,
-    }))
+    .map(i => {
+      const name = productIdToName[i.product_id] || "";
+      return {
+        group: name.toLowerCase().includes("promax") ? "promax" : "infinity",
+        customerName: i.orders.customers?.name || "Khách lẻ",
+        phone: i.orders.customers?.phone || "",
+        address: i.orders.customers?.address || "",
+        orderId: i.orders.id,
+        orderCode: i.orders.order_code,
+        date: i.orders.created_at,
+      };
+    })
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   TANK_BUYERS_LOADED = true;
   renderTankBuyers("");
 }
 
+function renderTankBuyerTable(list) {
+  if (list.length === 0) return `<div class="empty-state" style="padding:20px;"><div class="icon">🐠</div>Chưa có khách nào.</div>`;
+  return `<table><thead><tr><th>Khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Ngày mua</th><th>Mã đơn</th></tr></thead><tbody>
+      ${list.map(x => `<tr>
+        <td>${x.customerName}</td>
+        <td>${x.phone || '—'}</td>
+        <td>${x.address || '—'}</td>
+        <td>${formatDate(x.date)}</td>
+        <td><span class="settings-link tank-order-link" data-orderid="${x.orderId}" style="cursor:pointer;">${x.orderCode}</span></td>
+      </tr>`).join("")}
+    </tbody></table>`;
+}
+
 function renderTankBuyers(filter) {
   const wrap = document.getElementById("tankBuyersWrap");
   const f = (filter || "").trim().toLowerCase();
-  const list = ALL_TANK_BUYERS.filter(x =>
-    !f || x.customerName.toLowerCase().includes(f) || (x.phone || "").includes(f) || x.tankName.toLowerCase().includes(f)
-  );
+  const matches = x => !f || x.customerName.toLowerCase().includes(f) || (x.phone || "").includes(f) || x.orderCode.toLowerCase().includes(f);
 
-  if (list.length === 0) {
+  const promaxList = ALL_TANK_BUYERS.filter(x => x.group === "promax" && matches(x));
+  const infinityList = ALL_TANK_BUYERS.filter(x => x.group === "infinity" && matches(x));
+
+  if (promaxList.length === 0 && infinityList.length === 0) {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">🐠</div>Không tìm thấy khách nào phù hợp.</div>`;
     return;
   }
 
   wrap.innerHTML = `
-    <div class="summary-row total" style="margin-bottom:10px;"><span>Tổng lượt mua</span><span>${list.length}</span></div>
-    <table><thead><tr><th>Khách hàng</th><th>SĐT</th><th>Địa chỉ</th><th>Bể đã mua</th><th>SL</th><th>Ngày mua</th><th>Mã đơn</th></tr></thead><tbody>
-      ${list.map(x => `<tr>
-        <td>${x.customerName}</td>
-        <td>${x.phone || '—'}</td>
-        <td>${x.address || '—'}</td>
-        <td>${x.tankName}</td>
-        <td>${x.qty}</td>
-        <td>${formatDate(x.date)}</td>
-        <td>${x.orderCode}</td>
-      </tr>`).join("")}
-    </tbody></table>
+    <div class="tank-buyer-cols" style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <div>
+        <h3 style="font-size:14.5px; margin-bottom:10px;">🔵 2D ProMax <span class="text-mute" style="font-weight:400;">(${promaxList.length})</span></h3>
+        ${renderTankBuyerTable(promaxList)}
+      </div>
+      <div>
+        <h3 style="font-size:14.5px; margin-bottom:10px;">🟢 2D Infinity <span class="text-mute" style="font-weight:400;">(${infinityList.length})</span></h3>
+        ${renderTankBuyerTable(infinityList)}
+      </div>
+    </div>
   `;
+
+  wrap.querySelectorAll(".tank-order-link").forEach(el => {
+    el.addEventListener("click", () => showOrderDetail(el.dataset.orderid));
+  });
 }
 
 async function loadDebts() {
