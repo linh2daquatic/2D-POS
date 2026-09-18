@@ -379,8 +379,6 @@ function closeModal() { document.getElementById("modalOverlay").classList.remove
 async function saveCustomer(e) {
   e.preventDefault();
   const saveBtn = document.getElementById("saveBtn");
-  saveBtn.disabled = true;
-  saveBtn.textContent = "Đang lưu...";
 
   const payload = {
     name: document.getElementById("f_name").value.trim(),
@@ -390,6 +388,20 @@ async function saveCustomer(e) {
     address: document.getElementById("f_address").value.trim() || null,
     notes: document.getElementById("f_notes").value.trim() || null,
   };
+
+  // Kiểm tra trùng SĐT khi tạo khách mới (bỏ qua khi đang sửa khách hiện có)
+  if (!EDIT_ID && payload.phone) {
+    const normPhone = normalizePhone(payload.phone);
+    const existing = normPhone ? ALL_CUSTOMERS.find(c => c.phone && normalizePhone(c.phone) === normPhone) : null;
+    if (existing) {
+      const goEdit = confirm(`Đã có khách hàng "${existing.name}" với SĐT này trong hệ thống.\n\nBấm OK để mở sửa khách hàng có sẵn đó thay vì tạo mới, hoặc Cancel để huỷ.`);
+      if (goEdit) { closeModal(); openModal(existing.id); return; }
+      return;
+    }
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Đang lưu...";
 
   let error;
   if (EDIT_ID) {
