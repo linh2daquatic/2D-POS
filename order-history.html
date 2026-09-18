@@ -42,6 +42,7 @@ let PAYMENT_BREAKDOWN = {};
   const auth = await requireAuth();
   if (!auth) return;
   CURRENT_PROFILE = auth.profile;
+  const isOwner = CURRENT_PROFILE.role === "owner";
 
   renderLayout({
     activePage: "order-history",
@@ -55,6 +56,7 @@ let PAYMENT_BREAKDOWN = {};
       <div class="field" style="margin-bottom:0; max-width:170px;"><label>Từ ngày</label><input id="filterFromDate" type="date"></div>
       <div class="field" style="margin-bottom:0; max-width:170px;"><label>Đến ngày</label><input id="filterToDate" type="date"></div>
       <select id="quickMonthPicker" style="max-width:190px;"></select>
+      ${isOwner ? `<select id="staffFilter" style="max-width:190px;"><option value="">— Tất cả nhân viên —</option></select>` : ""}
       <span class="btn btn-secondary btn-mini" id="applyDateFilterBtn">Lọc</span>
       <span class="btn btn-secondary btn-mini" id="resetDateFilterBtn">Xem tất cả (200 gần nhất)</span>
     </div>
@@ -146,9 +148,15 @@ let PAYMENT_BREAKDOWN = {};
   `;
 
   await loadOrders();
+  if (isOwner) await loadStaffFilterOptions();
 
   buildQuickMonthPicker();
   document.getElementById("searchInput").addEventListener("input", (e) => renderList(e.target.value));
+  const staffFilterEl = document.getElementById("staffFilter");
+  if (staffFilterEl) staffFilterEl.addEventListener("change", (e) => {
+    STAFF_FILTER = e.target.value;
+    renderList(document.getElementById("searchInput").value);
+  });
   document.getElementById("applyDateFilterBtn").addEventListener("click", () => {
     const from = document.getElementById("filterFromDate").value;
     const to = document.getElementById("filterToDate").value;
@@ -158,6 +166,7 @@ let PAYMENT_BREAKDOWN = {};
     document.getElementById("filterFromDate").value = "";
     document.getElementById("filterToDate").value = "";
     document.getElementById("quickMonthPicker").value = "";
+    if (staffFilterEl) { staffFilterEl.value = ""; STAFF_FILTER = ""; }
     loadOrders();
   });
   document.getElementById("quickMonthPicker").addEventListener("change", (e) => {
@@ -195,6 +204,14 @@ let PAYMENT_BREAKDOWN = {};
   });
 })();
 
+async function loadStaffFilterOptions() {
+  const sel = document.getElementById("staffFilter");
+  if (!sel) return;
+  const { data } = await sb.from("profiles").select("id, full_name").order("full_name");
+  const options = (data || []).map(p => `<option value="${p.id}">${p.full_name || "Không tên"}</option>`).join("");
+  sel.innerHTML = `<option value="">— Tất cả nhân viên —</option>` + options;
+}
+
 function buildQuickMonthPicker() {
   const sel = document.getElementById("quickMonthPicker");
   const now = new Date();
@@ -213,7 +230,7 @@ async function loadOrders(fromDate, toDate) {
 
   let query = sb
     .from("orders")
-    .select("id, order_code, type, total_amount, paid_amount, status, created_at, customers(name)")
+    .select("id, order_code, type, total_amount, paid_amount, status, created_at, created_by, customers(name)")
     .order("created_at", { ascending: false });
 
   if (fromDate) query = query.gte("created_at", fromDate);
@@ -245,11 +262,14 @@ async function loadOrders(fromDate, toDate) {
   renderList("");
 }
 
+let STAFF_FILTER = "";
+
 function renderList(filter) {
   const wrap = document.getElementById("orderListWrap");
   const f = (filter || "").trim().toLowerCase();
   const list = ALL_ORDERS.filter(o =>
-    !f || o.order_code.toLowerCase().includes(f) || (o.customers?.name || "khách lẻ").toLowerCase().includes(f)
+    (!f || o.order_code.toLowerCase().includes(f) || (o.customers?.name || "khách lẻ").toLowerCase().includes(f))
+    && (!STAFF_FILTER || o.created_by === STAFF_FILTER)
   );
 
   if (list.length === 0) {
@@ -285,7 +305,6 @@ function renderList(filter) {
 let CURRENT_DETAIL_ORDER = null;
 let CURRENT_DETAIL_ITEMS = [];
 let EDIT_PRICE_MODE = false;
-let EDIT_COST_MODE = false;
 let EDIT_DISCOUNT_TYPE = "percent";
 
 async function showOrderDetail(orderId) {
@@ -295,7 +314,6 @@ async function showOrderDetail(orderId) {
   body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   modal.classList.add("open");
   EDIT_PRICE_MODE = false;
-  EDIT_COST_MODE = false;
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
@@ -305,7 +323,7 @@ async function showOrderDetail(orderId) {
 
   const { data: items } = await sb
     .from("order_items")
-    .select("id, quantity, unit_price, subtotal, cost_price_at_sale, products(name, unit)")
+    .select("id, quantity, unit_price, subtotal, products(name, unit)")
     .eq("order_id", orderId);
 
   const { data: payments } = await sb
@@ -368,13 +386,25 @@ async function assignExistingCustomer(customerId) {
 async function createAndAssignCustomer() {
   const name = document.getElementById("ac_newName").value.trim();
   if (!name) { alert("Vui lòng nhập tên khách hàng mới, hoặc chọn 1 khách có sẵn ở trên."); return; }
+  const phone = document.getElementById("ac_newPhone").value.trim() || null;
+
+  // Kiểm tra trùng SĐT trước khi tạo khách mới, tránh tạo trùng khách hàng
+  if (phone) {
+    const normPhone = normalizePhone(phone);
+    const existing = normPhone ? ALL_CUSTOMERS_FOR_ASSIGN.find(c => c.phone && normalizePhone(c.phone) === normPhone) : null;
+    if (existing) {
+      const useExisting = confirm(`Đã có khách hàng "${existing.name}" với SĐT này trong hệ thống.\n\nBấm OK để gán đơn này cho khách có sẵn đó thay vì tạo mới, hoặc Cancel để huỷ.`);
+      if (useExisting) { await assignExistingCustomer(existing.id); return; }
+      return;
+    }
+  }
 
   const btn = document.getElementById("assignCustomerSaveBtn");
   btn.disabled = true; btn.textContent = "Đang lưu...";
 
   const { data: newCustomer, error: custErr } = await sb.from("customers").insert({
     name,
-    phone: document.getElementById("ac_newPhone").value.trim() || null,
+    phone,
     address: document.getElementById("ac_newAddress").value.trim() || null,
   }).select().single();
 
@@ -447,19 +477,12 @@ function renderOrderDetailBody(payments) {
 
     <div class="flex" style="justify-content:space-between; align-items:center; margin-top:12px;">
       <strong style="font-size:13.5px;">Sản phẩm</strong>
-      ${!isCancelled && isOwner ? (
-        EDIT_PRICE_MODE ? `<span class="btn btn-secondary btn-mini" id="cancelEditPriceBtn">Hủy sửa</span>`
-      : EDIT_COST_MODE  ? `<span class="btn btn-secondary btn-mini" id="cancelEditCostBtn">Hủy sửa</span>`
-      : `<span class="flex gap-8">
-           <span class="btn btn-secondary btn-mini" id="editPriceBtn">✎ Sửa giá bán</span>
-           <span class="btn btn-secondary btn-mini" id="editCostBtn">✎ Sửa giá vốn</span>
-         </span>`
+      ${!isCancelled && isOwner ? (EDIT_PRICE_MODE
+        ? `<span class="btn btn-secondary btn-mini" id="cancelEditPriceBtn">Hủy sửa</span>`
+        : `<span class="btn btn-secondary btn-mini" id="editPriceBtn">✎ Sửa giá bán</span>`
       ) : ""}
     </div>
-    <table style="margin-top:8px;"><thead><tr>
-      <th>Sản phẩm</th><th>SL</th><th>Đơn giá</th>
-      ${isOwner ? `<th>Giá vốn</th>` : ""}
-      <th>Thành tiền</th></tr></thead>
+    <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
     <tbody id="editItemsTbody">
       ${items.map(i => `<tr>
         <td>${i.products?.name || '—'}</td>
@@ -467,16 +490,9 @@ function renderOrderDetailBody(payments) {
         <td>${EDIT_PRICE_MODE
           ? `<input type="number" step="any" value="${i.unit_price}" data-item-id="${i.id}" class="edit-price-input" style="width:110px;">`
           : formatVND(i.unit_price)}</td>
-        ${isOwner ? `<td>${EDIT_COST_MODE
-          ? `<input type="number" step="any" value="${Number(i.cost_price_at_sale) || 0}" data-item-id="${i.id}" class="edit-cost-input" style="width:110px;">`
-          : `<span style="color:${Number(i.cost_price_at_sale) > 0 ? 'var(--text-mute)' : '#dc2626'}">${formatVND(i.cost_price_at_sale || 0)}</span>`}</td>` : ""}
         <td class="edit-item-subtotal" data-item-id="${i.id}">${formatVND(i.subtotal)}</td>
       </tr>`).join("")}
     </tbody></table>
-    ${isOwner && !EDIT_PRICE_MODE ? `<div class="summary-row" style="margin-top:6px;">
-      <span>Lãi gộp của đơn</span><span id="grossProfitLine">${formatVND(
-        Number(order.total_amount) - items.reduce((s,i)=>s + Number(i.quantity)*(Number(i.cost_price_at_sale)||0), 0)
-      )}</span></div>` : ""}
 
     ${EDIT_PRICE_MODE ? `
     <div style="margin-top:14px; padding:12px; background:#f8fafc; border-radius:8px;">
@@ -503,7 +519,6 @@ function renderOrderDetailBody(payments) {
     </div>
 
     ${EDIT_PRICE_MODE ? `<button class="btn btn-primary" id="savePriceBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;">💾 Lưu giá đã sửa</button>` : ""}
-    ${EDIT_COST_MODE ? `<button class="btn btn-primary" id="saveCostBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;">💾 Lưu giá vốn</button>` : ""}
     ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:10px;" onclick="cancelOrder('${order.id}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
   `;
 
@@ -518,15 +533,6 @@ function renderOrderDetailBody(payments) {
     EDIT_DISCOUNT_TYPE = order.discount_type || "percent";
     renderOrderDetailBody(payments);
   });
-  const editCostBtn = document.getElementById("editCostBtn");
-  if (editCostBtn) editCostBtn.addEventListener("click", () => {
-    EDIT_COST_MODE = true; EDIT_PRICE_MODE = false; renderOrderDetailBody(payments);
-  });
-  const cancelCostBtn = document.getElementById("cancelEditCostBtn");
-  if (cancelCostBtn) cancelCostBtn.addEventListener("click", () => { EDIT_COST_MODE = false; renderOrderDetailBody(payments); });
-  const saveCostBtn = document.getElementById("saveCostBtn");
-  if (saveCostBtn) saveCostBtn.addEventListener("click", () => saveEditedCosts(payments));
-
   const cancelEditBtn = document.getElementById("cancelEditPriceBtn");
   if (cancelEditBtn) cancelEditBtn.addEventListener("click", () => { EDIT_PRICE_MODE = false; renderOrderDetailBody(payments); });
   const saveBtn = document.getElementById("savePriceBtn");
@@ -567,32 +573,6 @@ function updateEditPreview() {
   document.getElementById("editSumSubtotal").textContent = formatVND(subtotal);
   document.getElementById("editSumDiscount").textContent = "-" + formatVND(discount);
   document.getElementById("editSumTotal").textContent = formatVND(total);
-}
-
-async function saveEditedCosts(payments) {
-  const saveBtn = document.getElementById("saveCostBtn");
-  saveBtn.disabled = true;
-  saveBtn.textContent = "Đang lưu...";
-
-  let changed = 0;
-  const inputs = document.querySelectorAll(".edit-cost-input");
-  for (const input of inputs) {
-    const newCost = Number(input.value || 0);
-    if (newCost < 0) continue;
-    const item = CURRENT_DETAIL_ITEMS.find(i => i.id === input.dataset.itemId);
-    if (item && Number(item.cost_price_at_sale || 0) !== newCost) {
-      const { error } = await sb.from("order_items")
-        .update({ cost_price_at_sale: newCost }).eq("id", item.id);
-      if (error) { alert("Lỗi khi lưu giá vốn: " + error.message); saveBtn.disabled = false; return; }
-      item.cost_price_at_sale = newCost;
-      changed++;
-    }
-  }
-
-  EDIT_COST_MODE = false;
-  await showOrderDetail(CURRENT_DETAIL_ORDER.id);
-  alert(changed ? `Đã cập nhật giá vốn cho ${changed} dòng. Lãi gộp trên Dashboard sẽ đổi theo.`
-                : "Không có dòng nào thay đổi.");
 }
 
 async function saveEditedPrices(payments) {
