@@ -710,6 +710,23 @@ async function saveQuickCustomer() {
   const phone = document.getElementById("qc_phone").value.trim() || null;
   const address = document.getElementById("qc_address").value.trim() || null;
 
+  // Kiểm tra trùng SĐT trước khi tạo khách mới, tránh tạo trùng khách hàng
+  if (phone) {
+    const normPhone = normalizePhone(phone);
+    const existing = normPhone ? ALL_CUSTOMERS.find(c => c.phone && normalizePhone(c.phone) === normPhone) : null;
+    if (existing) {
+      const useExisting = confirm(`Đã có khách hàng "${existing.name}" với SĐT này trong hệ thống.\n\nBấm OK để dùng khách hàng có sẵn này (khuyên dùng), hoặc Cancel để huỷ và tự kiểm tra lại.`);
+      if (useExisting) {
+        SELECTED_CUSTOMER = existing;
+        setOrderType(existing.type);
+        renderCustomerPicker();
+        document.getElementById("quickCustomerModal").classList.remove("open");
+        return;
+      }
+      return;
+    }
+  }
+
   const { data, error } = await sb.from("customers").insert({ name, phone, address, type: ORDER_TYPE }).select().single();
   if (error) { alert("Lỗi khi thêm khách hàng: " + error.message); return; }
 
