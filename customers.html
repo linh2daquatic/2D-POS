@@ -744,7 +744,7 @@ async function showOrderDetail(orderId) {
 
   const { data: items } = await sb
     .from("order_items")
-    .select("quantity, unit_price, subtotal, products(name, unit)")
+    .select("id, quantity, unit_price, subtotal, products(name, unit)")
     .eq("order_id", orderId);
 
   const { data: payments } = await sb
@@ -774,7 +774,7 @@ function renderOrderDetailBody() {
   const debt = Number(order.total_amount) - Number(order.paid_amount);
 
   const totalsBlock = EDIT_ORDER_MODE ? `
-    <div class="field"><label>Giảm giá</label><input id="ed_discount" type="number" step="any" value="${Number(order.discount_amount) || 0}"></div>
+    <div class="field"><label>Giảm giá</label><input id="ed_discount" type="number" step="any" value="${Number(order.discount_amount) || 0}" oninput="updateEditTotalFromItems()"></div>
     <div class="field"><label>Tổng tiền (sau giảm giá)</label><input id="ed_total" type="number" step="any" value="${Number(order.total_amount) || 0}"></div>
     <div class="flex gap-8" style="justify-content:flex-end; margin-top:10px;">
       <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(false)">Hủy</button>
@@ -798,7 +798,12 @@ function renderOrderDetailBody() {
 
     <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
     <tbody>
-      ${order.items.map(i => `<tr>
+      ${order.items.map((i, idx) => EDIT_ORDER_MODE ? `<tr>
+        <td>${i.products?.name || '—'}</td>
+        <td>${i.quantity} ${i.products?.unit || ''}</td>
+        <td><input type="number" step="any" class="ed-item-price" data-idx="${idx}" value="${Number(i.unit_price)}" oninput="recalcItemRow(${idx})" style="width:110px;"></td>
+        <td id="ip_subtotal_${idx}">${formatVND(Number(i.unit_price) * Number(i.quantity))}</td>
+      </tr>` : `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
         <td>${formatVND(i.unit_price)}</td>
@@ -825,15 +830,60 @@ function renderOrderDetailBody() {
   `;
 }
 
+function recalcItemRow(idx) {
+  const order = CURRENT_DEBT_ORDER;
+  if (!order) return;
+  const input = document.querySelector(`.ed-item-price[data-idx="${idx}"]`);
+  const price = Number(input.value || 0);
+  const qty = Number(order.items[idx].quantity);
+  const cell = document.getElementById(`ip_subtotal_${idx}`);
+  if (cell) cell.textContent = formatVND(price * qty);
+  updateEditTotalFromItems();
+}
+
+function updateEditTotalFromItems() {
+  const order = CURRENT_DEBT_ORDER;
+  if (!order) return;
+  let subtotalSum = 0;
+  document.querySelectorAll(".ed-item-price").forEach(inp => {
+    const idx = Number(inp.dataset.idx);
+    subtotalSum += Number(inp.value || 0) * Number(order.items[idx].quantity);
+  });
+  const discount = Number(document.getElementById("ed_discount")?.value || 0);
+  const totalInput = document.getElementById("ed_total");
+  if (totalInput) totalInput.value = Math.max(subtotalSum - discount, 0);
+}
+
 async function saveOrderEdits() {
   const order = CURRENT_DEBT_ORDER;
   if (!order) return;
+
+  const priceInputs = document.querySelectorAll(".ed-item-price");
+  const newItemValues = [];
+  for (const inp of priceInputs) {
+    const price = Number(inp.value || 0);
+    if (price < 0) { alert("Đơn giá không hợp lệ."); return; }
+    newItemValues.push({ idx: Number(inp.dataset.idx), price });
+  }
+
   const newDiscount = Number(document.getElementById("ed_discount").value || 0);
   const newTotal = Number(document.getElementById("ed_total").value || 0);
 
   if (newTotal < 0 || newDiscount < 0) { alert("Giá trị không hợp lệ."); return; }
   if (newTotal < Number(order.paid_amount)) {
     if (!confirm(`Tổng tiền mới (${formatVND(newTotal)}) thấp hơn số khách đã trả (${formatVND(order.paid_amount)}) cho đơn này. Vẫn lưu?`)) return;
+  }
+
+  // Lưu đơn giá từng dòng sản phẩm đã sửa
+  for (const { idx, price } of newItemValues) {
+    const item = order.items[idx];
+    const newSubtotal = price * Number(item.quantity);
+    if (price !== Number(item.unit_price) || newSubtotal !== Number(item.subtotal)) {
+      const { error: itemErr } = await sb.from("order_items").update({ unit_price: price, subtotal: newSubtotal }).eq("id", item.id);
+      if (itemErr) { alert("Lỗi khi lưu đơn giá: " + itemErr.message); return; }
+      item.unit_price = price;
+      item.subtotal = newSubtotal;
+    }
   }
 
   const { error } = await sb.from("orders").update({ discount_amount: newDiscount, total_amount: newTotal }).eq("id", order.id);
