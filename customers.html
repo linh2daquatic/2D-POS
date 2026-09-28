@@ -879,7 +879,7 @@ async function saveOrderEdits() {
     const item = order.items[idx];
     const newSubtotal = price * Number(item.quantity);
     if (price !== Number(item.unit_price) || newSubtotal !== Number(item.subtotal)) {
-      const { error: itemErr } = await sb.from("order_items").update({ unit_price: price, subtotal: newSubtotal }).eq("id", item.id);
+      const { error: itemErr } = await sb.from("order_items").update({ unit_price: price }).eq("id", item.id);
       if (itemErr) { alert("Lỗi khi lưu đơn giá: " + itemErr.message); return; }
       item.unit_price = price;
       item.subtotal = newSubtotal;
