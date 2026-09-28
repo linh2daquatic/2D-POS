@@ -284,16 +284,20 @@ async function submitPayment() {
   alert("Đã ghi nhận thanh toán thành công!");
 }
 
+let CURRENT_DEBT_ORDER = null;
+let EDIT_ORDER_MODE = false;
+
 async function showOrderDetail(orderId) {
   const modal = document.getElementById("orderDetailModal");
   const body = document.getElementById("orderDetailBody");
   document.getElementById("orderDetailTitle").textContent = "Chi tiết đơn hàng";
   body.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   modal.classList.add("open");
+  EDIT_ORDER_MODE = false;
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, total_amount, paid_amount, discount_amount, created_at, customers(name, phone, address)")
+    .select("id, order_code, type, total_amount, paid_amount, discount_amount, created_at, customer_id, customers(name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -309,11 +313,43 @@ async function showOrderDetail(orderId) {
 
   if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
 
-  const cashPaid = (payments || []).filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
-  const transferPaid = (payments || []).filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
+  CURRENT_DEBT_ORDER = { ...order, items: items || [], payments: payments || [] };
+  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  renderOrderDetailBody();
+}
+
+function toggleEditOrder(on) {
+  EDIT_ORDER_MODE = on;
+  renderOrderDetailBody();
+}
+
+function renderOrderDetailBody() {
+  const order = CURRENT_DEBT_ORDER;
+  if (!order) return;
+  const body = document.getElementById("orderDetailBody");
+
+  const cashPaid = order.payments.filter(p => p.method === "cash").reduce((s, p) => s + Number(p.amount), 0);
+  const transferPaid = order.payments.filter(p => p.method === "transfer").reduce((s, p) => s + Number(p.amount), 0);
   const debt = Number(order.total_amount) - Number(order.paid_amount);
 
-  document.getElementById("orderDetailTitle").textContent = order.order_code;
+  const totalsBlock = EDIT_ORDER_MODE ? `
+    <div class="field"><label>Giảm giá</label><input id="ed_discount" type="number" step="any" value="${Number(order.discount_amount) || 0}"></div>
+    <div class="field"><label>Tổng tiền (sau giảm giá)</label><input id="ed_total" type="number" step="any" value="${Number(order.total_amount) || 0}"></div>
+    <div class="flex gap-8" style="justify-content:flex-end; margin-top:10px;">
+      <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(false)">Hủy</button>
+      <button type="button" class="btn btn-primary btn-mini" onclick="saveOrderEdits()">Lưu</button>
+    </div>
+  ` : `
+    ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
+    <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
+    ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
+    ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
+    <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+    <div style="text-align:right; margin-top:8px;">
+      <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(true)">✎ Sửa giá trị đơn</button>
+    </div>
+  `;
+
   body.innerHTML = `
     <div class="summary-row"><span>Khách hàng</span><span>${order.customers?.name || "Khách lẻ"}</span></div>
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
@@ -321,7 +357,7 @@ async function showOrderDetail(orderId) {
 
     <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
     <tbody>
-      ${(items || []).map(i => `<tr>
+      ${order.items.map(i => `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
         <td>${formatVND(i.unit_price)}</td>
@@ -330,13 +366,89 @@ async function showOrderDetail(orderId) {
     </tbody></table>
 
     <div style="margin-top:14px;">
-      ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
-      <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
-      ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
-      ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
-      <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
+      ${totalsBlock}
     </div>
+
+    ${!EDIT_ORDER_MODE && debt > 0 ? `
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+        <div style="font-weight:600; margin-bottom:8px;">Thanh toán đơn này</div>
+        <div class="pay-method-row">
+          <div class="field"><label>Tiền mặt</label><input id="od_pay_cash" type="number" step="any" value="0"></div>
+          <div class="field"><label>Chuyển khoản</label><input id="od_pay_transfer" type="number" step="any" value="0"></div>
+        </div>
+        <div class="flex gap-8" style="justify-content:flex-end; margin-top:10px;">
+          <button type="button" class="btn btn-primary btn-mini" id="odPaySaveBtn" onclick="payThisOrder()">✓ Xác nhận thanh toán</button>
+        </div>
+      </div>
+    ` : ""}
   `;
+}
+
+async function saveOrderEdits() {
+  const order = CURRENT_DEBT_ORDER;
+  if (!order) return;
+  const newDiscount = Number(document.getElementById("ed_discount").value || 0);
+  const newTotal = Number(document.getElementById("ed_total").value || 0);
+
+  if (newTotal < 0 || newDiscount < 0) { alert("Giá trị không hợp lệ."); return; }
+  if (newTotal < Number(order.paid_amount)) {
+    if (!confirm(`Tổng tiền mới (${formatVND(newTotal)}) thấp hơn số khách đã trả (${formatVND(order.paid_amount)}) cho đơn này. Vẫn lưu?`)) return;
+  }
+
+  const { error } = await sb.from("orders").update({ discount_amount: newDiscount, total_amount: newTotal }).eq("id", order.id);
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+
+  order.discount_amount = newDiscount;
+  order.total_amount = newTotal;
+  EDIT_ORDER_MODE = false;
+  renderOrderDetailBody();
+  await loadDebts();
+}
+
+async function payThisOrder() {
+  const order = CURRENT_DEBT_ORDER;
+  if (!order) return;
+  const debt = Number(order.total_amount) - Number(order.paid_amount);
+  const cash = Number(document.getElementById("od_pay_cash").value || 0);
+  const transfer = Number(document.getElementById("od_pay_transfer").value || 0);
+  const total = cash + transfer;
+
+  if (total <= 0) { alert("Vui lòng nhập số tiền thanh toán."); return; }
+  if (total > debt) {
+    if (!confirm(`Số tiền nhập (${formatVND(total)}) lớn hơn nợ còn lại (${formatVND(debt)}) của đơn này. Vẫn ghi nhận?`)) return;
+  }
+
+  const btn = document.getElementById("odPaySaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+
+  const newPaid = Number(order.paid_amount) + total;
+  const { error } = await sb.from("orders").update({ paid_amount: newPaid }).eq("id", order.id);
+  if (error) { alert("Lỗi khi lưu: " + error.message); btn.disabled = false; btn.textContent = "✓ Xác nhận thanh toán"; return; }
+
+  if (cash > 0) {
+    await sb.from("customer_payments").insert({
+      customer_id: order.customer_id, order_id: order.id, amount: cash,
+      method: "cash", note: `Thanh toán đơn ${order.order_code}`, created_by: CURRENT_PROFILE.id
+    });
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "cash", category: "Thu nợ khách", amount: cash,
+      note: `Thu nợ đơn ${order.order_code}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+  if (transfer > 0) {
+    await sb.from("customer_payments").insert({
+      customer_id: order.customer_id, order_id: order.id, amount: transfer,
+      method: "transfer", note: `Thanh toán đơn ${order.order_code}`, created_by: CURRENT_PROFILE.id
+    });
+    await sb.from("cash_transactions").insert({
+      type: "income", method: "transfer", category: "Thu nợ khách", amount: transfer,
+      note: `Thu nợ đơn ${order.order_code}`, created_by: CURRENT_PROFILE.id
+    });
+  }
+
+  document.getElementById("orderDetailModal").classList.remove("open");
+  await loadDebts();
+  alert("Đã ghi nhận thanh toán cho đơn " + order.order_code);
 }
 </script>
 </body>
