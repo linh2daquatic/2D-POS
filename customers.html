@@ -554,8 +554,11 @@ async function saveCustomer(e) {
     debt_limit: Number(document.getElementById("f_debt_limit").value || 0),
     address: document.getElementById("f_address").value.trim() || null,
     notes: document.getElementById("f_notes").value.trim() || null,
-    tank_info: document.getElementById("f_tank_info").value.trim() || null,
   };
+  // Chỉ ghi thông tin bể khi có nhập hoặc DB đã có cột (migration-25) để không làm hỏng việc lưu khách
+  const tankVal = document.getElementById("f_tank_info").value.trim();
+  const editingCust = EDIT_ID ? ALL_CUSTOMERS.find(x => x.id === EDIT_ID) : null;
+  if (tankVal || (editingCust && "tank_info" in editingCust)) payload.tank_info = tankVal || null;
 
   let error;
   if (EDIT_ID) {
@@ -911,10 +914,18 @@ async function showOrderDetail(orderId) {
     .eq("id", orderId)
     .single();
 
-  const { data: items } = await sb
+  // Thử đọc kèm cột giảm giá % (migration-27); nếu DB chưa có cột thì đọc bản cơ bản để đơn vẫn hiển thị đủ
+  let { data: items, error: itemsErr } = await sb
     .from("order_items")
     .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, list_price, discount_percent, products(name, unit)")
     .eq("order_id", orderId);
+  if (itemsErr) {
+    console.warn("Đọc đầy đủ lỗi, dùng bản cơ bản:", itemsErr.message);
+    ({ data: items } = await sb
+      .from("order_items")
+      .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, products(name, unit)")
+      .eq("order_id", orderId));
+  }
 
   const { data: payments } = await sb
     .from("customer_payments")
