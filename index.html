@@ -237,6 +237,27 @@ async function loadDashboard(isOwner, selectedMonth) {
     });
     const profitMonth = monthItemRevenue - monthCost;
 
+    // Lợi nhuận chung Maxspect = với hàng có "chiết khấu giá vốn lãi" (migration-28):
+    // (giá vốn tính lãi đã chốt trong đơn - giá vốn thực tế hiện tại) x số lượng bán.
+    // Phần này nằm ngoài Lãi gộp của 2D, là lợi nhuận chia với đối tác góp chung.
+    let jointProfit = null, jointQty = 0;
+    try {
+      const { data: jointItems, error: jointErr } = await sb
+        .from("order_items")
+        .select("quantity, cost_price_at_sale, products!inner(cost_price, profit_cost_discount), orders!inner(created_at,status)")
+        .eq("orders.status", "completed")
+        .not("products.profit_cost_discount", "is", null)
+        .gte("orders.created_at", monthStart.toISOString())
+        .lte("orders.created_at", monthEnd.toISOString());
+      if (!jointErr) {
+        jointProfit = 0;
+        (jointItems || []).forEach(i => {
+          jointProfit += Number(i.quantity) * (Number(i.cost_price_at_sale || 0) - Number(i.products?.cost_price || 0));
+          jointQty += Number(i.quantity);
+        });
+      }
+    } catch (e) { console.warn("Không tính được lợi nhuận chung:", e); }
+
     // ============================================================
     // CHI PHÍ THÁNG NÀY = Chi phí cố định + Chi phí biến đổi
     // ============================================================
@@ -392,6 +413,11 @@ async function loadDashboard(isOwner, selectedMonth) {
         <div class="value">${formatVND(profitMonth)}</div>
         <div class="delta text-mute" style="font-size:11px;">*Tính theo giá vốn tại thời điểm bán</div>
       </div>
+      ${jointProfit !== null ? `<div class="stat-card ${jointProfit >= 0 ? '' : 'danger-card'}">
+        <div class="label">Lợi nhuận chung Maxspect ${monthLabel}</div>
+        <div class="value">${formatVND(jointProfit)}</div>
+        <div class="delta text-mute" style="font-size:11px;">${jointQty} sản phẩm bán ra · chênh giữa giá vốn tính lãi và giá vốn thực tế · chia với đối tác, không tính vào Lãi gộp</div>
+      </div>` : ""}
       <div class="stat-card" id="expenseToggleCard" style="cursor:pointer;">
         <div class="label">Chi phí ${monthLabel} ▾</div>
         <div class="value">${formatVND(totalOperatingCost)}</div>
