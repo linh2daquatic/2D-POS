@@ -634,7 +634,9 @@ function renderCustomerPicker() {
     wrap.innerHTML = `<div class="selected-customer-tag">
       👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''} ${SELECTED_CUSTOMER.address ? '· 📍 ' + SELECTED_CUSTOMER.address : ''}
       <span class="remove-x" id="clearCustomerBtn">Bỏ chọn ✕</span>
-    </div>`;
+    </div>
+    <div id="custTankBox" style="margin-top:8px;"></div>`;
+    renderCustomerTankBox();
     document.getElementById("clearCustomerBtn").addEventListener("click", () => {
       SELECTED_CUSTOMER = null;
       setOrderType("retail");
@@ -672,6 +674,73 @@ function renderCustomerPicker() {
       if (!e.target.closest("#customerPickerWrap")) document.getElementById("customerList")?.classList.remove("open");
     });
   }
+}
+
+/* ---------- Thông tin bể của khách (hiện khi chọn khách để nhân viên tư vấn) ---------- */
+const TANK_BOUGHT_CACHE = {};
+function tkEsc(x) { return String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+
+async function fetchCustomerTanks(customerId) {
+  if (TANK_BOUGHT_CACHE[customerId]) return TANK_BOUGHT_CACHE[customerId];
+  const result = { registered: [], bought: [] };
+  try {
+    const { data: tanks } = await sb.from("tanks").select("name").eq("customer_id", customerId);
+    result.registered = (tanks || []).map(t => t.name);
+    const { data: items } = await sb.from("order_items")
+      .select("products(name, category), orders!inner(customer_id, status)")
+      .eq("orders.customer_id", customerId).eq("orders.status", "completed");
+    const set = new Set();
+    (items || []).forEach(i => { if (/bể/i.test(i.products?.category || "") && i.products?.name) set.add(i.products.name); });
+    result.bought = [...set];
+  } catch (e) { console.error(e); }
+  TANK_BOUGHT_CACHE[customerId] = result;
+  return result;
+}
+
+async function renderCustomerTankBox(editing) {
+  const box = document.getElementById("custTankBox");
+  if (!box || !SELECTED_CUSTOMER) return;
+  const cust = ALL_CUSTOMERS.find(c => c.id === SELECTED_CUSTOMER.id) || SELECTED_CUSTOMER;
+  const info = (cust.tank_info || "").trim();
+
+  if (editing) {
+    box.innerHTML = `<div style="padding:10px; background:#f8fafc; border:1px solid var(--border); border-radius:8px;">
+      <label style="display:block; font-size:12.5px; font-weight:600; margin-bottom:6px;">🪸 Thông tin bể của khách</label>
+      <textarea id="tankInfoEdit" rows="3" style="width:100%;" placeholder="VD: Bể 2D ProMax S40, nuôi SPS + cá hề, đèn Maxspect, lọc vách...">${tkEsc(info)}</textarea>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px;">
+        <span class="btn btn-secondary btn-mini" id="tankInfoCancel">Hủy</span>
+        <span class="btn btn-primary btn-mini" id="tankInfoSave">Lưu</span>
+      </div></div>`;
+    document.getElementById("tankInfoEdit").focus();
+    document.getElementById("tankInfoCancel").addEventListener("click", () => renderCustomerTankBox());
+    document.getElementById("tankInfoSave").addEventListener("click", async () => {
+      const val = document.getElementById("tankInfoEdit").value.trim() || null;
+      const { error } = await sb.from("customers").update({ tank_info: val }).eq("id", cust.id);
+      if (error) { alert("Không lưu được thông tin bể: " + error.message + "\n(Nếu chưa chạy migration-25.sql thì chạy trước.)"); return; }
+      cust.tank_info = val;
+      if (SELECTED_CUSTOMER.id === cust.id) SELECTED_CUSTOMER.tank_info = val;
+      renderCustomerTankBox();
+    });
+    return;
+  }
+
+  const draw = (t) => {
+    const lines = [];
+    if (info) lines.push(`<div style="white-space:pre-wrap;">📝 ${tkEsc(info)}</div>`);
+    (t?.registered || []).forEach(n => lines.push(`<div>🪸 ${tkEsc(n)}</div>`));
+    (t?.bought || []).forEach(n => lines.push(`<div>🛒 Đã mua: ${tkEsc(n)}</div>`));
+    box.innerHTML = `<div style="padding:9px 12px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; font-size:13px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:${lines.length ? 4 : 0}px;">
+        <strong style="font-size:12.5px;">🪸 Bể của khách</strong>
+        <span id="tankInfoEditBtn" style="font-size:12px; cursor:pointer; color:var(--teal-deep); font-weight:600;">${info ? "✎ Sửa" : "+ Thêm"}</span>
+      </div>
+      ${lines.length ? lines.join("") : `<span style="color:var(--text-mute);">Chưa có thông tin bể — bấm "+ Thêm" để ghi lại giúp lần tư vấn sau.</span>`}
+    </div>`;
+    document.getElementById("tankInfoEditBtn").addEventListener("click", () => renderCustomerTankBox(true));
+  };
+  draw(TANK_BOUGHT_CACHE[cust.id]);
+  const t = await fetchCustomerTanks(cust.id);
+  if (SELECTED_CUSTOMER && SELECTED_CUSTOMER.id === cust.id && !document.getElementById("tankInfoEdit")) draw(t);
 }
 
 function renderCustomerList(filter) {
