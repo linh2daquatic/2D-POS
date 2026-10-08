@@ -13,6 +13,9 @@
 .modal-overlay.open { display:flex; }
 .modal-box { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:88vh; overflow-y:auto; }
 .modal-box.wide { max-width:560px; }
+.modal-box.xwide { max-width:min(1000px,96vw); }
+.modal-box { overflow-x:hidden; }
+.table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 .summary-row { display:flex; justify-content:space-between; padding:5px 0; font-size:13.5px; }
 .summary-row.total { font-weight:700; font-size:15.5px; border-top:1px solid var(--border); margin-top:6px; padding-top:10px; }
 .order-row-clickable { cursor:pointer; }
@@ -175,6 +178,7 @@ let CARE_ROWS = [];
               <div class="field"><label>Hạn mức nợ (₫)</label><input id="f_debt_limit" type="number" step="any" value="0"></div>
             </div>
             <div class="field"><label>Địa chỉ</label><input id="f_address"></div>
+            <div class="field"><label>🪸 Thông tin bể của khách</label><textarea id="f_tank_info" rows="2" placeholder="VD: Bể 2D ProMax S40, nuôi SPS + cá hề, đèn Maxspect, lọc vách..."></textarea></div>
             <div class="field"><label>Ghi chú</label><textarea id="f_notes" rows="2"></textarea></div>
             <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
               <button type="button" class="btn btn-secondary" id="cancelBtn">Hủy</button>
@@ -186,7 +190,7 @@ let CARE_ROWS = [];
     </div>
 
     <div class="modal-overlay" id="ordersHistoryModal">
-      <div class="modal-box wide">
+      <div class="modal-box xwide">
         <div class="modal-header">
           <h3 id="ordersHistoryTitle">Lịch sử mua hàng</h3>
           <span class="modal-close" id="ordersHistoryClose">✕</span>
@@ -435,6 +439,7 @@ function openModal(id) {
   document.getElementById("f_debt_limit").value = c?.debt_limit ?? 0;
   document.getElementById("f_address").value = c?.address || "";
   document.getElementById("f_notes").value = c?.notes || "";
+  document.getElementById("f_tank_info").value = c?.tank_info || "";
   document.getElementById("modalOverlay").classList.add("open");
 }
 function closeModal() { document.getElementById("modalOverlay").classList.remove("open"); }
@@ -452,6 +457,7 @@ async function saveCustomer(e) {
     debt_limit: Number(document.getElementById("f_debt_limit").value || 0),
     address: document.getElementById("f_address").value.trim() || null,
     notes: document.getElementById("f_notes").value.trim() || null,
+    tank_info: document.getElementById("f_tank_info").value.trim() || null,
   };
 
   let error;
@@ -467,6 +473,7 @@ async function saveCustomer(e) {
   if (error) { alert("Lỗi khi lưu: " + error.message); return; }
   closeModal();
   await loadCustomers();
+  if (document.getElementById("careTab").style.display === "block") loadCare();
 }
 
 async function openOrdersHistory(customerId) {
@@ -490,7 +497,7 @@ async function openOrdersHistory(customerId) {
     return;
   }
 
-  body.innerHTML = `<table><thead><tr>
+  body.innerHTML = `<div class="table-scroll"><table><thead><tr>
       <th>Mã đơn</th><th>Ngày</th><th>Sản phẩm</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th>
     </tr></thead><tbody>
     ${orders.map(o => {
@@ -504,7 +511,7 @@ async function openOrdersHistory(customerId) {
         <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
       </tr>`;
     }).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 
   body.querySelectorAll(".order-row-clickable").forEach(row => {
     row.addEventListener("click", () => showOrderDetail(row.dataset.orderId));
@@ -1116,6 +1123,7 @@ function buildCareRows() {
       });
     });
     const topProducts = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, k]) => (k > 1 ? `${n} (${k} lần)` : n));
+    const tankInfo = (c.tank_info || "").trim();
     const tanks = [...new Set([...(CARE_TANKS[c.id] || []), ...tankBought])];
 
     const debtOrders = d.orders.filter(o => Number(o.total_amount) - Number(o.paid_amount) > 0);
@@ -1139,12 +1147,12 @@ function buildCareRows() {
     const vars = {
       xung_ho: careXungHo(c.name), san_pham: productText, ngay_mua: careShortDate(lastPurchase),
       so_ngay: String(daysSincePurchase), ma_don: oldestDebt ? oldestDebt.order_code : last.order_code,
-      so_tien_no: formatVND(totalDebt), be: tanks.length ? tanks.join(", ") : ""
+      so_tien_no: formatVND(totalDebt), be: [tankInfo, ...tanks].filter(Boolean).join("; ")
     };
 
     CARE_ROWS.push({
       customer: c, phone: c.phone, due: !!reason, reason, code, priority,
-      lastPurchase, daysSincePurchase, lastNames, orderCount: d.orders.length, totalSpent, topProducts, tanks,
+      lastPurchase, daysSincePurchase, lastNames, orderCount: d.orders.length, totalSpent, topProducts, tanks, tankInfo,
       lastContact, daysSinceContact, contactCount: d.contacts.length,
       lastContactId: d.contacts.length ? d.contacts[0].id : null,
       daysSinceTouch, vars
@@ -1178,7 +1186,12 @@ function renderCare() {
       return `<tr>
       <td style="min-width:150px;"><strong style="cursor:pointer; color:var(--teal-deep); text-decoration:underline;" title="Xem lịch sử mua hàng" onclick="openOrdersHistory('${r.customer.id}')">${careEsc(r.customer.name)}</strong>
         <div class="text-mute" style="font-size:12px;">${careEsc(r.phone)}</div></td>
-      <td style="min-width:130px; font-size:12.5px;">${r.tanks.length ? r.tanks.map(t => `<div>🪸 ${careEsc(t)}</div>`).join("") : `<span class="text-mute">—</span>`}</td>
+      <td style="min-width:150px; max-width:220px; font-size:12.5px;">
+        ${r.tankInfo ? `<div style="white-space:pre-wrap;">📝 ${careEsc(r.tankInfo)}</div>` : ""}
+        ${r.tanks.map(t => `<div>🪸 ${careEsc(t)}</div>`).join("")}
+        ${!r.tankInfo && !r.tanks.length ? `<span class="text-mute">—</span><br>` : ""}
+        <span style="cursor:pointer; color:var(--teal-deep);" onclick="openModal('${r.customer.id}'); setTimeout(()=>document.getElementById('f_tank_info').focus(),50)">${r.tankInfo ? "✎ Sửa" : "+ Thêm thông tin bể"}</span>
+      </td>
       <td style="min-width:260px; font-size:12.5px;">
         <div><strong>${r.orderCount} đơn</strong> · tổng ${formatVND(r.totalSpent)}</div>
         <div class="text-mute">Gần nhất ${careShortDate(r.lastPurchase)} (${r.daysSincePurchase} ngày trước): ${careEsc(careListNames(r.lastNames, 5))}</div>
