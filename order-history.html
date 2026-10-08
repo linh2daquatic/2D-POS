@@ -11,7 +11,9 @@
 <style>
 .modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
 .modal-overlay.open { display:flex; }
-.modal-box { background:#fff; border-radius:14px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto; overflow-x:hidden; }
+.modal-box.xwide { max-width:min(820px,96vw); }
+.table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 .modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
 .modal-header h3 { font-family:var(--font-display); font-size:18px; }
 .modal-body { padding:20px 22px; }
@@ -68,7 +70,7 @@ let PAYMENT_BREAKDOWN = {};
     </div>
 
     <div class="modal-overlay" id="orderDetailModal">
-      <div class="modal-box">
+      <div class="modal-box xwide">
         <div class="modal-header">
           <h3 id="orderDetailTitle">Chi tiết đơn hàng</h3>
           <span class="modal-close" id="orderDetailClose">✕</span>
@@ -323,7 +325,7 @@ async function showOrderDetail(orderId) {
 
   const { data: items } = await sb
     .from("order_items")
-    .select("id, quantity, unit_price, subtotal, products(name, unit)")
+    .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, products(name, unit)")
     .eq("order_id", orderId);
 
   const { data: payments } = await sb
@@ -479,10 +481,10 @@ function renderOrderDetailBody(payments) {
       <strong style="font-size:13.5px;">Sản phẩm</strong>
       ${!isCancelled && isOwner ? (EDIT_PRICE_MODE
         ? `<span class="btn btn-secondary btn-mini" id="cancelEditPriceBtn">Hủy sửa</span>`
-        : `<span class="btn btn-secondary btn-mini" id="editPriceBtn">✎ Sửa giá bán</span>`
+        : `<span class="btn btn-secondary btn-mini" id="editPriceBtn">✎ Sửa giá bán / giá vốn</span>`
       ) : ""}
     </div>
-    <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <div class="table-scroll"><table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th>${isOwner ? `<th>Giá vốn</th>` : ""}</tr></thead>
     <tbody id="editItemsTbody">
       ${items.map(i => `<tr>
         <td>${i.products?.name || '—'}</td>
@@ -491,8 +493,13 @@ function renderOrderDetailBody(payments) {
           ? `<input type="number" step="any" value="${i.unit_price}" data-item-id="${i.id}" class="edit-price-input" style="width:110px;">`
           : formatVND(i.unit_price)}</td>
         <td class="edit-item-subtotal" data-item-id="${i.id}">${formatVND(i.subtotal)}</td>
+        ${isOwner ? `<td>${EDIT_PRICE_MODE
+          ? `<input type="number" step="any" min="0" value="${i.cost_price_at_sale || 0}" data-item-id="${i.id}" class="edit-cost-input" style="width:100px;">`
+          : (Number(i.cost_price_at_sale || 0) <= 0
+              ? `<span style="color:var(--warning);" title="Chưa có giá vốn — lãi gộp đơn này đang bị tính 100%">⚠️ Chưa có</span>`
+              : formatVND(i.cost_price_at_sale))}</td>` : ""}
       </tr>`).join("")}
-    </tbody></table>
+    </tbody></table></div>
 
     ${EDIT_PRICE_MODE ? `
     <div style="margin-top:14px; padding:12px; background:#f8fafc; border-radius:8px;">
@@ -518,6 +525,7 @@ function renderOrderDetailBody(payments) {
       <div class="summary-row total"><span>${isCancelled ? 'Trạng thái' : (debt > 0 ? 'Còn nợ' : (debt < 0 ? 'Khách trả dư' : 'Trạng thái'))}</span><span>${isCancelled ? 'Đã hủy' : (debt !== 0 ? formatVND(Math.abs(debt)) : 'Đã thanh toán đủ')}</span></div>
     </div>
 
+    ${EDIT_PRICE_MODE && isOwner ? `<label style="display:flex; gap:8px; align-items:flex-start; margin-top:12px; font-size:12.5px; cursor:pointer;"><input type="checkbox" id="alsoUpdateProductCost" style="margin-top:2px;"><span>Đồng thời cập nhật <b>giá vốn mặc định của sản phẩm</b> (áp dụng cho các đơn bán sau này). Bỏ trống = chỉ sửa riêng đơn này.</span></label>` : ""}
     ${EDIT_PRICE_MODE ? `<button class="btn btn-primary" id="savePriceBtn" style="width:100%; justify-content:center; padding:11px; margin-top:16px;">💾 Lưu giá đã sửa</button>` : ""}
     ${!isCancelled && isOwner ? `<button class="btn btn-danger" id="cancelOrderBtn" style="width:100%; justify-content:center; padding:11px; margin-top:10px;" onclick="cancelOrder('${order.id}','${order.order_code}')">🗑️ Hủy đơn hàng này</button>` : ""}
   `;
@@ -591,6 +599,22 @@ async function saveEditedPrices(payments) {
     }
   }
 
+  // Giá vốn chốt riêng của từng dòng trong đơn (không ảnh hưởng đơn khác)
+  const alsoProduct = document.getElementById("alsoUpdateProductCost")?.checked;
+  for (const input of document.querySelectorAll(".edit-cost-input")) {
+    const newCost = Number(input.value || 0);
+    if (newCost < 0) continue;
+    const item = CURRENT_DETAIL_ITEMS.find(i => i.id === input.dataset.itemId);
+    if (!item) continue;
+    if (Number(item.cost_price_at_sale || 0) !== newCost) {
+      await sb.from("order_items").update({ cost_price_at_sale: newCost }).eq("id", item.id);
+      item.cost_price_at_sale = newCost;
+    }
+    if (alsoProduct && newCost > 0 && item.product_id) {
+      await sb.from("products").update({ cost_price: newCost }).eq("id", item.product_id);
+    }
+  }
+
   const newSubtotal = CURRENT_DETAIL_ITEMS.reduce((s, i) => s + Number(i.quantity) * Number(i.unit_price), 0);
   const discountValue = Number(document.getElementById("editDiscountValue").value || 0);
   const discountAmount = calcEditDiscount(newSubtotal);
@@ -609,7 +633,7 @@ async function saveEditedPrices(payments) {
   EDIT_PRICE_MODE = false;
   await loadOrders();
   await showOrderDetail(CURRENT_DETAIL_ORDER.id);
-  alert("Đã cập nhật giá bán và giảm giá cho đơn hàng.");
+  alert("Đã cập nhật giá bán, giá vốn và giảm giá cho đơn hàng.");
 }
 
 let CANCEL_CONTEXT = null;
