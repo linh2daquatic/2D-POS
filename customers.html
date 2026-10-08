@@ -71,7 +71,6 @@ let CARE_CYCLE = 30;
 let CARE_FILTER = "due";
 let CARE_DATA = { orders: [], contacts: [] };
 let CARE_ROWS = [];
-let CARE_TEMPLATES = {};
 
 (async () => {
   const auth = await requireAuth();
@@ -482,7 +481,7 @@ async function openOrdersHistory(customerId) {
 
   const { data: orders, error } = await sb
     .from("orders")
-    .select("id, order_code, type, total_amount, paid_amount, created_at")
+    .select("id, order_code, type, total_amount, paid_amount, created_at, order_items(quantity, products(name))")
     .eq("customer_id", customerId)
     .order("created_at", { ascending: false });
 
@@ -492,13 +491,14 @@ async function openOrdersHistory(customerId) {
   }
 
   body.innerHTML = `<table><thead><tr>
-      <th>Mã đơn</th><th>Ngày</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th>
+      <th>Mã đơn</th><th>Ngày</th><th>Sản phẩm</th><th>Loại</th><th>Tổng tiền</th><th>Trạng thái</th>
     </tr></thead><tbody>
     ${orders.map(o => {
       const debt = Number(o.total_amount) - Number(o.paid_amount);
       return `<tr class="order-row-clickable" data-order-id="${o.id}">
         <td>${o.order_code}</td>
         <td>${formatDateTime(o.created_at)}</td>
+        <td style="font-size:12.5px; min-width:180px;">${(o.order_items || []).map(i => `${i.products?.name || '—'} x${i.quantity}`).join(", ")}</td>
         <td><span class="badge ${o.type}">${o.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></td>
         <td>${formatVND(o.total_amount)}</td>
         <td><span class="badge ${debt > 0 ? 'debt' : 'paid'}">${debt > 0 ? 'Còn nợ ' + formatVND(debt) : 'Đã thanh toán'}</span></td>
@@ -1008,11 +1008,15 @@ async function payThisOrder() {
 
 /* ================= TAB: CHĂM SÓC KHÁCH ================= */
 const CARE_DEFAULT_TPL = {
-  new_purchase: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. {san_pham} {xung_ho} mua hôm {ngay_mua} dùng ổn không ạ? Cần hỗ trợ gì {xung_ho} cứ nhắn em nhé!",
-  debt: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Em xin phép nhắc nhẹ đơn {ma_don} còn lại {so_tien_no} ạ. {xung_ho} sắp xếp giúp em nhé, em cảm ơn {xung_ho} nhiều ạ!",
-  followup: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Lâu rồi em chưa thấy {xung_ho} ghé ({so_ngay} ngày kể từ lần mua {san_pham}). Bể nhà mình dạo này thế nào ạ? Cần bổ sung vật tư gì {xung_ho} nhắn em chuẩn bị sẵn nhé!"
+  new_purchase: { name: "Hỏi thăm sau khi mua", content: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. {san_pham} {xung_ho} mua hôm {ngay_mua} dùng ổn không ạ? Cần hỗ trợ gì {xung_ho} cứ nhắn em nhé!" },
+  debt: { name: "Nhắc công nợ", content: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Em xin phép nhắc nhẹ đơn {ma_don} còn lại {so_tien_no} ạ. {xung_ho} sắp xếp giúp em nhé, em cảm ơn {xung_ho} nhiều ạ!" },
+  followup: { name: "Hỏi thăm định kỳ / lâu chưa mua lại", content: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Lâu rồi em chưa thấy {xung_ho} ghé ({so_ngay} ngày kể từ lần mua {san_pham}). Bể nhà mình dạo này thế nào ạ? Cần bổ sung vật tư gì {xung_ho} nhắn em chuẩn bị sẵn nhé!" }
 };
-const CARE_TPL_NAMES = { new_purchase: "Hỏi thăm sau khi mua", debt: "Nhắc công nợ", followup: "Hỏi thăm định kỳ / lâu chưa mua lại" };
+let CARE_TPL_LIST = [];      // [{code, name, content, builtin}]
+let CARE_TPL_EDIT = [];      // bản đang chỉnh trong cửa sổ sửa mẫu
+let CARE_TPL_DELETED = [];
+let CARE_SELECTED_TPL = {};  // customerId -> code mẫu nhân viên chọn
+let CARE_TANKS = {};         // customerId -> [tên bể]
 
 async function careFetchAll(buildQuery) {
   const out = [];
@@ -1025,20 +1029,30 @@ async function careFetchAll(buildQuery) {
   return out;
 }
 
+function careTplByCode(code) { return CARE_TPL_LIST.find(t => t.code === code) || { code, name: code, content: "" }; }
+
 async function loadCare() {
   const wrap = document.getElementById("careListWrap");
   wrap.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
   try {
     const orders = await careFetchAll(() => sb.from("orders")
-      .select("id, order_code, created_at, total_amount, paid_amount, customer_id, order_items(products(name))")
+      .select("id, order_code, created_at, total_amount, paid_amount, customer_id, order_items(products(name, category))")
       .eq("status", "completed").not("customer_id", "is", null)
       .order("created_at", { ascending: false }).order("id"));
     const contacts = await careFetchAll(() => sb.from("customer_contacts")
       .select("id, customer_id, contacted_at").order("contacted_at", { ascending: false }).order("id"));
-    const { data: tpls, error: tplErr } = await sb.from("care_templates").select("code, content");
+    const { data: tpls, error: tplErr } = await sb.from("care_templates").select("code, name, content, updated_at").order("updated_at");
     if (tplErr) throw tplErr;
-    CARE_TEMPLATES = { ...CARE_DEFAULT_TPL };
-    (tpls || []).forEach(t => { CARE_TEMPLATES[t.code] = t.content; });
+    const { data: tanks } = await sb.from("tanks").select("name, customer_id").not("customer_id", "is", null);
+
+    const map = {};
+    (tpls || []).forEach(t => { map[t.code] = t; });
+    CARE_TPL_LIST = Object.keys(CARE_DEFAULT_TPL).map(code => ({
+      code, builtin: true, name: map[code]?.name || CARE_DEFAULT_TPL[code].name, content: map[code]?.content || CARE_DEFAULT_TPL[code].content
+    })).concat((tpls || []).filter(t => !CARE_DEFAULT_TPL[t.code]).map(t => ({ code: t.code, builtin: false, name: t.name, content: t.content })));
+
+    CARE_TANKS = {};
+    (tanks || []).forEach(t => { (CARE_TANKS[t.customer_id] = CARE_TANKS[t.customer_id] || []).push(t.name); });
     CARE_DATA = { orders, contacts };
   } catch (err) {
     console.error(err);
@@ -1052,6 +1066,7 @@ async function loadCare() {
 
 function careDaysAgo(d) { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
 function careShortDate(d) { return formatDate(d); }
+function careEsc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
 
 function careXungHo(name) {
   const first = String(name || "").split(" - ")[0].trim();
@@ -1061,6 +1076,12 @@ function careXungHo(name) {
 
 function careFill(tpl, vars) {
   return tpl.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? vars[k] : m));
+}
+
+function careListNames(names, max) {
+  if (names.length === 0) return "";
+  if (names.length <= max) return names.join(", ");
+  return names.slice(0, max).join(", ") + " và " + (names.length - max) + " sản phẩm khác";
 }
 
 function buildCareRows() {
@@ -1080,8 +1101,22 @@ function buildCareRows() {
     const touch = lastContact && lastContact > lastPurchase ? lastContact : lastPurchase;
     const daysSinceTouch = careDaysAgo(touch);
 
-    const names = [...new Set((last.order_items || []).map(i => i.products?.name).filter(Boolean))];
-    const productText = names.length === 0 ? "đơn hàng" : names.length <= 2 ? names.join(" và ") : names.slice(0, 2).join(", ") + " và " + (names.length - 2) + " sản phẩm khác";
+    const lastNames = [...new Set((last.order_items || []).map(i => i.products?.name).filter(Boolean))];
+    const productText = lastNames.length === 0 ? "đơn hàng" : (lastNames.length <= 2 ? lastNames.join(" và ") : careListNames(lastNames, 2));
+
+    // Thống kê toàn bộ lịch sử: số đơn, tổng chi tiêu, sản phẩm hay mua, bể đã mua
+    const freq = {}; const tankBought = new Set();
+    let totalSpent = 0;
+    d.orders.forEach(o => {
+      totalSpent += Number(o.total_amount);
+      (o.order_items || []).forEach(i => {
+        const n = i.products?.name; if (!n) return;
+        freq[n] = (freq[n] || 0) + 1;
+        if (/bể/i.test(i.products?.category || "")) tankBought.add(n);
+      });
+    });
+    const topProducts = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, k]) => (k > 1 ? `${n} (${k} lần)` : n));
+    const tanks = [...new Set([...(CARE_TANKS[c.id] || []), ...tankBought])];
 
     const debtOrders = d.orders.filter(o => Number(o.total_amount) - Number(o.paid_amount) > 0);
     const totalDebt = debtOrders.reduce((s, o) => s + Number(o.total_amount) - Number(o.paid_amount), 0);
@@ -1099,18 +1134,17 @@ function buildCareRows() {
         : `Đã ${daysSincePurchase} ngày chưa mua lại, chưa nhắn`;
       code = "followup"; priority = 3;
     }
-    // Nếu không "đến hạn", nút vẫn dùng mẫu phù hợp nhất
     if (!reason) code = (totalDebt > 0 && oldestDebtDays >= 7) ? "debt" : (daysSincePurchase <= 3 ? "new_purchase" : "followup");
 
     const vars = {
       xung_ho: careXungHo(c.name), san_pham: productText, ngay_mua: careShortDate(lastPurchase),
       so_ngay: String(daysSincePurchase), ma_don: oldestDebt ? oldestDebt.order_code : last.order_code,
-      so_tien_no: formatVND(totalDebt)
+      so_tien_no: formatVND(totalDebt), be: tanks.length ? tanks.join(", ") : ""
     };
 
     CARE_ROWS.push({
       customer: c, phone: c.phone, due: !!reason, reason, code, priority,
-      lastPurchase, daysSincePurchase, productText,
+      lastPurchase, daysSincePurchase, lastNames, orderCount: d.orders.length, totalSpent, topProducts, tanks,
       lastContact, daysSinceContact, contactCount: d.contacts.length,
       lastContactId: d.contacts.length ? d.contacts[0].id : null,
       daysSinceTouch, vars
@@ -1138,17 +1172,31 @@ function renderCare() {
   }
 
   wrap.innerHTML = `<div class="panel"><div class="panel-body" style="overflow-x:auto;"><table>
-    <thead><tr><th>Khách hàng</th><th>Mua gần nhất</th><th>Lần nhắn cuối</th><th>Lý do</th><th></th></tr></thead>
-    <tbody>${rows.map(r => `<tr>
-      <td><strong>${r.customer.name}</strong><div class="text-mute" style="font-size:12px;">${r.phone}</div></td>
-      <td>${careShortDate(r.lastPurchase)}<div class="text-mute" style="font-size:12px;">${r.daysSincePurchase} ngày trước · ${r.productText}</div></td>
-      <td>${r.lastContact
-        ? `${careShortDate(r.lastContact)}<div class="text-mute" style="font-size:12px;">${r.daysSinceContact} ngày trước · ${r.contactCount} lần
+    <thead><tr><th>Khách hàng</th><th>Bể của khách</th><th>Lịch sử mua</th><th>Lần nhắn cuối</th><th>Lý do</th><th>Nhắn tin</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const sel = CARE_SELECTED_TPL[r.customer.id] || r.code;
+      return `<tr>
+      <td style="min-width:150px;"><strong style="cursor:pointer; color:var(--teal-deep); text-decoration:underline;" title="Xem lịch sử mua hàng" onclick="openOrdersHistory('${r.customer.id}')">${careEsc(r.customer.name)}</strong>
+        <div class="text-mute" style="font-size:12px;">${careEsc(r.phone)}</div></td>
+      <td style="min-width:130px; font-size:12.5px;">${r.tanks.length ? r.tanks.map(t => `<div>🪸 ${careEsc(t)}</div>`).join("") : `<span class="text-mute">—</span>`}</td>
+      <td style="min-width:260px; font-size:12.5px;">
+        <div><strong>${r.orderCount} đơn</strong> · tổng ${formatVND(r.totalSpent)}</div>
+        <div class="text-mute">Gần nhất ${careShortDate(r.lastPurchase)} (${r.daysSincePurchase} ngày trước): ${careEsc(careListNames(r.lastNames, 5))}</div>
+        ${r.topProducts.length ? `<div class="text-mute">Hay mua: ${careEsc(r.topProducts.join(", "))}</div>` : ""}
+        <span style="cursor:pointer; color:var(--teal-deep);" onclick="openOrdersHistory('${r.customer.id}')">Xem tất cả đơn →</span>
+      </td>
+      <td style="min-width:120px; font-size:12.5px;">${r.lastContact
+        ? `${careShortDate(r.lastContact)}<div class="text-mute">${r.daysSinceContact} ngày trước · ${r.contactCount} lần
             <span style="cursor:pointer; color:var(--danger);" title="Bấm nhầm? Bỏ ghi nhận lần nhắn cuối" onclick="undoCareContact('${r.customer.id}')">↩ bỏ</span></div>`
         : `<span class="text-mute">Chưa nhắn lần nào</span>`}</td>
-      <td>${r.reason ? `<span style="color:${r.code === "debt" ? "var(--danger)" : "var(--teal-deep)"}; font-weight:600;">${r.reason}</span>` : `<span class="text-mute">Chưa đến hạn</span>`}</td>
-      <td><button class="btn btn-primary btn-mini" onclick="sendCare('${r.customer.id}')">💬 Nhắn Zalo</button></td>
-    </tr>`).join("")}</tbody></table></div></div>`;
+      <td style="min-width:150px; font-size:12.5px;">${r.reason ? `<span style="color:${r.code === "debt" ? "var(--danger)" : "var(--teal-deep)"}; font-weight:600;">${careEsc(r.reason)}</span>` : `<span class="text-mute">Chưa đến hạn</span>`}</td>
+      <td style="min-width:170px;">
+        <select style="font-size:12px; padding:4px; margin-bottom:6px; width:100%;" onchange="CARE_SELECTED_TPL['${r.customer.id}']=this.value">
+          ${CARE_TPL_LIST.map(t => `<option value="${t.code}" ${t.code === sel ? "selected" : ""}>${careEsc(t.name)}</option>`).join("")}
+        </select>
+        <button class="btn btn-primary btn-mini" onclick="sendCare('${r.customer.id}')">💬 Nhắn Zalo</button>
+      </td>
+    </tr>`; }).join("")}</tbody></table></div></div>`;
 }
 
 function careZaloUrl(phone) {
@@ -1182,14 +1230,15 @@ function careToast(msg) {
 async function sendCare(customerId) {
   const r = CARE_ROWS.find(x => x.customer.id === customerId);
   if (!r) return;
-  const message = careFill(CARE_TEMPLATES[r.code] || CARE_DEFAULT_TPL[r.code], r.vars);
+  const code = CARE_SELECTED_TPL[customerId] || r.code;
+  const message = careFill(careTplByCode(code).content, r.vars);
 
   // Phải copy + mở Zalo ngay trong lúc bấm chuột (trước mọi thao tác chờ mạng) để trình duyệt không chặn
   const copied = careCopySync(message);
   window.open(careZaloUrl(r.phone), "_blank");
 
   const { data, error } = await sb.from("customer_contacts")
-    .insert({ customer_id: customerId, template_code: r.code, message, created_by: CURRENT_PROFILE.id })
+    .insert({ customer_id: customerId, template_code: code, message, created_by: CURRENT_PROFILE.id })
     .select("id, customer_id, contacted_at").single();
   if (error) { alert("Đã mở Zalo nhưng chưa ghi nhận được lần nhắn: " + error.message); return; }
 
@@ -1197,7 +1246,7 @@ async function sendCare(customerId) {
   buildCareRows(); renderCare();
   careToast(copied
     ? `✅ Đã copy tin nhắn, dán vào Zalo của ${r.customer.name}. Đã ghi nhận đã nhắn.`
-    : `Đã mở Zalo và ghi nhận đã nhắn ${r.customer.name}. Chưa copy được tin, hãy bấm sửa mẫu để lấy nội dung.`);
+    : `Đã mở Zalo và ghi nhận đã nhắn ${r.customer.name}. Chưa copy được tin, hãy vào "Sửa mẫu tin nhắn" để copy nội dung.`);
 }
 
 async function undoCareContact(customerId) {
@@ -1210,34 +1259,89 @@ async function undoCareContact(customerId) {
   buildCareRows(); renderCare();
 }
 
+/* ---------- Sửa / thêm / copy mẫu tin nhắn ---------- */
 function openCareTemplates() {
-  const body = document.getElementById("careTplBody");
-  body.innerHTML = `
-    <div class="text-mute" style="font-size:12.5px; margin-bottom:12px;">
-      Chỗ trống tự thay theo từng khách: <b>{xung_ho}</b> (anh Đức...), <b>{san_pham}</b>, <b>{ngay_mua}</b>, <b>{so_ngay}</b> (số ngày kể từ lần mua cuối), <b>{ma_don}</b> và <b>{so_tien_no}</b> (chỉ dùng cho tin nhắc nợ).
-    </div>
-    ${Object.keys(CARE_TPL_NAMES).map(k => `
-      <div class="field"><label>${CARE_TPL_NAMES[k]}</label>
-        <textarea id="tpl_${k}" rows="4" style="width:100%;">${(CARE_TEMPLATES[k] || "").replace(/</g, "&lt;")}</textarea></div>`).join("")}
-    <div class="flex gap-8" style="justify-content:flex-end; margin-top:12px;">
-      <button type="button" class="btn btn-secondary" onclick="document.getElementById('careTplModal').classList.remove('open')">Hủy</button>
-      <button type="button" class="btn btn-primary" id="careTplSaveBtn" onclick="saveCareTemplates()">Lưu mẫu tin</button>
-    </div>`;
+  CARE_TPL_EDIT = CARE_TPL_LIST.map(t => ({ ...t }));
+  CARE_TPL_DELETED = [];
+  renderCareTplEditor();
   document.getElementById("careTplModal").classList.add("open");
 }
 
+function syncCareTplFromDom() {
+  CARE_TPL_EDIT.forEach((t, i) => {
+    const n = document.getElementById("tplName_" + i), c = document.getElementById("tplContent_" + i);
+    if (n) t.name = n.value; if (c) t.content = c.value;
+  });
+}
+
+function renderCareTplEditor() {
+  const body = document.getElementById("careTplBody");
+  body.innerHTML = `
+    <div class="text-mute" style="font-size:12.5px; margin-bottom:12px;">
+      Chỗ trống tự thay theo từng khách: <b>{xung_ho}</b> (anh Đức...), <b>{san_pham}</b> (sản phẩm đơn gần nhất), <b>{ngay_mua}</b>, <b>{so_ngay}</b> (số ngày kể từ lần mua cuối), <b>{be}</b> (bể của khách), <b>{ma_don}</b> và <b>{so_tien_no}</b> (dùng cho tin nhắc nợ).
+    </div>
+    ${CARE_TPL_EDIT.map((t, i) => `
+      <div style="border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px;">
+        <div class="flex gap-8" style="align-items:center; margin-bottom:8px;">
+          <input id="tplName_${i}" value="${careEsc(t.name)}" placeholder="Tên mẫu" style="flex:1; font-weight:600;">
+          <span class="btn btn-secondary btn-mini" onclick="copyCareTpl(${i}, this)">📋 Copy</span>
+          ${t.builtin ? "" : `<span class="btn btn-secondary btn-mini" style="color:var(--danger);" onclick="deleteCareTpl(${i})">🗑 Xóa</span>`}
+        </div>
+        <textarea id="tplContent_${i}" rows="4" style="width:100%;">${careEsc(t.content)}</textarea>
+      </div>`).join("")}
+    <div class="flex gap-8" style="justify-content:space-between; margin-top:12px; flex-wrap:wrap;">
+      <button type="button" class="btn btn-secondary" onclick="addCareTpl()">+ Thêm mẫu mới</button>
+      <div class="flex gap-8">
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('careTplModal').classList.remove('open')">Hủy</button>
+        <button type="button" class="btn btn-primary" id="careTplSaveBtn" onclick="saveCareTemplates()">Lưu mẫu tin</button>
+      </div>
+    </div>`;
+}
+
+function addCareTpl() {
+  syncCareTplFromDom();
+  CARE_TPL_EDIT.push({ code: "custom_" + Date.now(), name: "Mẫu mới", content: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. ", builtin: false, isNew: true });
+  renderCareTplEditor();
+  const i = CARE_TPL_EDIT.length - 1;
+  const el = document.getElementById("tplName_" + i);
+  if (el) { el.focus(); el.select(); }
+}
+
+function deleteCareTpl(i) {
+  syncCareTplFromDom();
+  const t = CARE_TPL_EDIT[i];
+  if (!confirm(`Xóa mẫu "${t.name}"?`)) return;
+  if (!t.isNew) CARE_TPL_DELETED.push(t.code);
+  CARE_TPL_EDIT.splice(i, 1);
+  renderCareTplEditor();
+}
+
+function copyCareTpl(i, btn) {
+  const text = document.getElementById("tplContent_" + i).value;
+  const ok = careCopySync(text);
+  const old = btn.textContent;
+  btn.textContent = ok ? "✓ Đã copy" : "Không copy được";
+  setTimeout(() => { btn.textContent = old; }, 1500);
+}
+
 async function saveCareTemplates() {
+  syncCareTplFromDom();
+  if (CARE_TPL_EDIT.some(t => !t.name.trim() || !t.content.trim())) { alert("Tên và nội dung mẫu không được để trống."); return; }
   const btn = document.getElementById("careTplSaveBtn");
   btn.disabled = true; btn.textContent = "Đang lưu...";
-  const rows = Object.keys(CARE_TPL_NAMES).map(k => ({
-    code: k, name: CARE_TPL_NAMES[k], content: document.getElementById("tpl_" + k).value.trim(), updated_at: new Date().toISOString()
-  }));
-  if (rows.some(r => !r.content)) { alert("Mẫu tin không được để trống."); btn.disabled = false; btn.textContent = "Lưu mẫu tin"; return; }
+  const now = new Date().toISOString();
+  const rows = CARE_TPL_EDIT.map(t => ({ code: t.code, name: t.name.trim(), content: t.content.trim(), updated_at: now }));
   const { error } = await sb.from("care_templates").upsert(rows, { onConflict: "code" });
+  let delErr = null;
+  if (!error && CARE_TPL_DELETED.length) {
+    ({ error: delErr } = await sb.from("care_templates").delete().in("code", CARE_TPL_DELETED));
+  }
   btn.disabled = false; btn.textContent = "Lưu mẫu tin";
-  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
-  rows.forEach(r => { CARE_TEMPLATES[r.code] = r.content; });
+  if (error || delErr) { alert("Lỗi khi lưu: " + (error || delErr).message); return; }
+  CARE_TPL_LIST = CARE_TPL_EDIT.map(t => ({ code: t.code, name: t.name.trim(), content: t.content.trim(), builtin: !!t.builtin }));
+  CARE_SELECTED_TPL = {};
   document.getElementById("careTplModal").classList.remove("open");
+  renderCare();
   careToast("Đã lưu mẫu tin nhắn.");
 }
 </script>
