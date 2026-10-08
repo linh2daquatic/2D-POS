@@ -67,6 +67,11 @@ let FORM_TYPE = "retail";
 let SORT_MODE = "name";
 let DEBT_LIST = [];
 let PAY_CUSTOMER = null;
+let CARE_CYCLE = 30;
+let CARE_FILTER = "due";
+let CARE_DATA = { orders: [], contacts: [] };
+let CARE_ROWS = [];
+let CARE_TEMPLATES = {};
 
 (async () => {
   const auth = await requireAuth();
@@ -85,6 +90,7 @@ let PAY_CUSTOMER = null;
       <div class="tab-btn active" data-tab="customers">Khách hàng</div>
       <div class="tab-btn" data-tab="debt">Công nợ khách hàng</div>
       <div class="tab-btn" data-tab="tankBuyers">🐠 Khách mua bể ProMax/Infinity</div>
+      <div class="tab-btn" data-tab="care">💬 Chăm sóc khách</div>
     </div>
 
     <div id="customersTab">
@@ -102,6 +108,28 @@ let PAY_CUSTOMER = null;
           <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
         </div>
       </div>
+    </div>
+
+    <div id="careTab" style="display:none;">
+      <div class="flex gap-8" style="flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+        <input class="search-bar" id="careSearchInput" placeholder="🔍 Tìm theo tên hoặc SĐT..." style="max-width:280px; margin-bottom:0;">
+        <select id="careCycleSelect" style="max-width:210px;">
+          <option value="14">Chu kỳ nhắn: 14 ngày</option>
+          <option value="21">Chu kỳ nhắn: 21 ngày</option>
+          <option value="30">Chu kỳ nhắn: 30 ngày</option>
+          <option value="45">Chu kỳ nhắn: 45 ngày</option>
+          <option value="60">Chu kỳ nhắn: 60 ngày</option>
+          <option value="90">Chu kỳ nhắn: 90 ngày</option>
+        </select>
+        <span class="btn btn-secondary btn-mini" id="careEditTplBtn" style="display:none;">✎ Sửa mẫu tin nhắn</span>
+      </div>
+      <div class="sort-chips" id="careChips">
+        <div class="sort-chip active" data-carefilter="due">Cần nhắn hôm nay</div>
+        <div class="sort-chip" data-carefilter="all">Tất cả khách</div>
+        <div class="sort-chip" data-carefilter="recent">Đã nhắn 7 ngày qua</div>
+      </div>
+      <div class="text-mute" id="careSummary" style="font-size:12.5px; margin-bottom:10px;"></div>
+      <div id="careListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
     </div>
 
     <div id="debtTab" style="display:none;">
@@ -192,6 +220,16 @@ let PAY_CUSTOMER = null;
       </div>
     </div>
 
+    <div class="modal-overlay" id="careTplModal">
+      <div class="modal-box wide">
+        <div class="modal-header">
+          <h3>Mẫu tin nhắn chăm sóc</h3>
+          <span class="modal-close" id="careTplClose">✕</span>
+        </div>
+        <div class="modal-body" id="careTplBody"></div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="orderDetailModal">
       <div class="modal-box wide">
         <div class="modal-header">
@@ -270,6 +308,30 @@ let PAY_CUSTOMER = null;
   document.getElementById("pay_cash").addEventListener("input", updatePaySummary);
   document.getElementById("pay_transfer").addEventListener("input", updatePaySummary);
   document.getElementById("paySaveBtn").addEventListener("click", submitPayment);
+
+  /* --- Chăm sóc khách --- */
+  try { const c = localStorage.getItem("careCycle"); if (c) CARE_CYCLE = Number(c) || 30; } catch (e) {}
+  document.getElementById("careCycleSelect").value = String(CARE_CYCLE);
+  document.getElementById("careCycleSelect").addEventListener("change", (e) => {
+    CARE_CYCLE = Number(e.target.value) || 30;
+    try { localStorage.setItem("careCycle", String(CARE_CYCLE)); } catch (err) {}
+    buildCareRows(); renderCare();
+  });
+  document.getElementById("careSearchInput").addEventListener("input", renderCare);
+  document.querySelectorAll("#careChips .sort-chip").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll("#careChips .sort-chip").forEach(x => x.classList.remove("active"));
+      el.classList.add("active");
+      CARE_FILTER = el.dataset.carefilter;
+      renderCare();
+    });
+  });
+  if (CURRENT_PROFILE.role === "owner") {
+    const eb = document.getElementById("careEditTplBtn");
+    eb.style.display = "inline-block";
+    eb.addEventListener("click", openCareTemplates);
+  }
+  document.getElementById("careTplClose").addEventListener("click", () => document.getElementById("careTplModal").classList.remove("open"));
 })();
 
 function switchMainTab(tab) {
@@ -277,7 +339,9 @@ function switchMainTab(tab) {
   document.getElementById("customersTab").style.display = tab === "customers" ? "block" : "none";
   document.getElementById("debtTab").style.display = tab === "debt" ? "block" : "none";
   document.getElementById("tankBuyersTab").style.display = tab === "tankBuyers" ? "block" : "none";
+  document.getElementById("careTab").style.display = tab === "care" ? "block" : "none";
   if (tab === "tankBuyers" && !TANK_BUYERS_LOADED) loadTankBuyers();
+  if (tab === "care") loadCare();
 }
 
 function setFormType(t) {
@@ -940,6 +1004,241 @@ async function payThisOrder() {
   document.getElementById("orderDetailModal").classList.remove("open");
   await loadDebts();
   alert("Đã ghi nhận thanh toán cho đơn " + order.order_code);
+}
+
+/* ================= TAB: CHĂM SÓC KHÁCH ================= */
+const CARE_DEFAULT_TPL = {
+  new_purchase: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. {san_pham} {xung_ho} mua hôm {ngay_mua} dùng ổn không ạ? Cần hỗ trợ gì {xung_ho} cứ nhắn em nhé!",
+  debt: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Em xin phép nhắc nhẹ đơn {ma_don} còn lại {so_tien_no} ạ. {xung_ho} sắp xếp giúp em nhé, em cảm ơn {xung_ho} nhiều ạ!",
+  followup: "Dạ {xung_ho} ơi, em bên 2D Aquatic ạ. Lâu rồi em chưa thấy {xung_ho} ghé ({so_ngay} ngày kể từ lần mua {san_pham}). Bể nhà mình dạo này thế nào ạ? Cần bổ sung vật tư gì {xung_ho} nhắn em chuẩn bị sẵn nhé!"
+};
+const CARE_TPL_NAMES = { new_purchase: "Hỏi thăm sau khi mua", debt: "Nhắc công nợ", followup: "Hỏi thăm định kỳ / lâu chưa mua lại" };
+
+async function careFetchAll(buildQuery) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await buildQuery().range(from, from + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+async function loadCare() {
+  const wrap = document.getElementById("careListWrap");
+  wrap.innerHTML = `<div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>`;
+  try {
+    const orders = await careFetchAll(() => sb.from("orders")
+      .select("id, order_code, created_at, total_amount, paid_amount, customer_id, order_items(products(name))")
+      .eq("status", "completed").not("customer_id", "is", null)
+      .order("created_at", { ascending: false }).order("id"));
+    const contacts = await careFetchAll(() => sb.from("customer_contacts")
+      .select("id, customer_id, contacted_at").order("contacted_at", { ascending: false }).order("id"));
+    const { data: tpls, error: tplErr } = await sb.from("care_templates").select("code, content");
+    if (tplErr) throw tplErr;
+    CARE_TEMPLATES = { ...CARE_DEFAULT_TPL };
+    (tpls || []).forEach(t => { CARE_TEMPLATES[t.code] = t.content; });
+    CARE_DATA = { orders, contacts };
+  } catch (err) {
+    console.error(err);
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div>Không tải được dữ liệu chăm sóc khách.<br>
+      <span style="font-size:12.5px;">Nếu chưa chạy <b>migration-24.sql</b> trong Supabase SQL Editor thì chạy trước. (${err.message || err})</span></div>`;
+    return;
+  }
+  buildCareRows();
+  renderCare();
+}
+
+function careDaysAgo(d) { return Math.floor((Date.now() - new Date(d).getTime()) / 86400000); }
+function careShortDate(d) { return formatDate(d); }
+
+function careXungHo(name) {
+  const first = String(name || "").split(" - ")[0].trim();
+  if (/^(anh|chị|chi|cô|co|chú|chu|bạn|ban|em)\s/i.test(first)) return first.charAt(0).toLowerCase() + first.slice(1);
+  return "anh/chị";
+}
+
+function careFill(tpl, vars) {
+  return tpl.replace(/\{(\w+)\}/g, (m, k) => (vars[k] !== undefined ? vars[k] : m));
+}
+
+function buildCareRows() {
+  const byCust = {};
+  CARE_DATA.orders.forEach(o => { (byCust[o.customer_id] = byCust[o.customer_id] || { orders: [], contacts: [] }).orders.push(o); });
+  CARE_DATA.contacts.forEach(c => { if (byCust[c.customer_id]) byCust[c.customer_id].contacts.push(c); });
+
+  CARE_ROWS = [];
+  ALL_CUSTOMERS.forEach(c => {
+    const d = byCust[c.id];
+    if (!d || !c.phone || !normalizePhone(c.phone)) return;
+    const last = d.orders[0]; // đã sắp xếp mới nhất trước
+    const lastPurchase = new Date(last.created_at);
+    const lastContact = d.contacts.length ? new Date(d.contacts[0].contacted_at) : null;
+    const daysSincePurchase = careDaysAgo(lastPurchase);
+    const daysSinceContact = lastContact ? careDaysAgo(lastContact) : null;
+    const touch = lastContact && lastContact > lastPurchase ? lastContact : lastPurchase;
+    const daysSinceTouch = careDaysAgo(touch);
+
+    const names = [...new Set((last.order_items || []).map(i => i.products?.name).filter(Boolean))];
+    const productText = names.length === 0 ? "đơn hàng" : names.length <= 2 ? names.join(" và ") : names.slice(0, 2).join(", ") + " và " + (names.length - 2) + " sản phẩm khác";
+
+    const debtOrders = d.orders.filter(o => Number(o.total_amount) - Number(o.paid_amount) > 0);
+    const totalDebt = debtOrders.reduce((s, o) => s + Number(o.total_amount) - Number(o.paid_amount), 0);
+    const oldestDebt = debtOrders.length ? debtOrders[debtOrders.length - 1] : null;
+    const oldestDebtDays = oldestDebt ? careDaysAgo(oldestDebt.created_at) : 0;
+
+    let reason = null, code = "followup", priority = 9;
+    if (oldestDebt && oldestDebtDays >= 7 && (daysSinceContact === null || daysSinceContact >= 7)) {
+      reason = `Còn nợ ${formatVND(totalDebt)} (đơn ${oldestDebt.order_code}, ${oldestDebtDays} ngày)`; code = "debt"; priority = 1;
+    } else if (daysSincePurchase >= 1 && daysSincePurchase <= 3 && (!lastContact || lastContact < lastPurchase)) {
+      reason = `Mới mua ${daysSincePurchase} ngày trước, hỏi thăm`; code = "new_purchase"; priority = 2;
+    } else if (daysSinceTouch >= CARE_CYCLE) {
+      reason = lastContact && lastContact > lastPurchase
+        ? `Đã ${daysSinceContact} ngày chưa nhắn lại`
+        : `Đã ${daysSincePurchase} ngày chưa mua lại, chưa nhắn`;
+      code = "followup"; priority = 3;
+    }
+    // Nếu không "đến hạn", nút vẫn dùng mẫu phù hợp nhất
+    if (!reason) code = (totalDebt > 0 && oldestDebtDays >= 7) ? "debt" : (daysSincePurchase <= 3 ? "new_purchase" : "followup");
+
+    const vars = {
+      xung_ho: careXungHo(c.name), san_pham: productText, ngay_mua: careShortDate(lastPurchase),
+      so_ngay: String(daysSincePurchase), ma_don: oldestDebt ? oldestDebt.order_code : last.order_code,
+      so_tien_no: formatVND(totalDebt)
+    };
+
+    CARE_ROWS.push({
+      customer: c, phone: c.phone, due: !!reason, reason, code, priority,
+      lastPurchase, daysSincePurchase, productText,
+      lastContact, daysSinceContact, contactCount: d.contacts.length,
+      lastContactId: d.contacts.length ? d.contacts[0].id : null,
+      daysSinceTouch, vars
+    });
+  });
+  CARE_ROWS.sort((a, b) => (a.due === b.due ? (a.priority - b.priority || b.daysSinceTouch - a.daysSinceTouch) : (a.due ? -1 : 1)));
+}
+
+function renderCare() {
+  const wrap = document.getElementById("careListWrap");
+  const f = (document.getElementById("careSearchInput").value || "").trim().toLowerCase();
+  let rows = CARE_ROWS.filter(r => phoneOrNameMatches(r.customer.name, r.phone, f));
+  const dueCount = CARE_ROWS.filter(r => r.due).length;
+  if (CARE_FILTER === "due") rows = rows.filter(r => r.due);
+  else if (CARE_FILTER === "recent") rows = rows.filter(r => r.daysSinceContact !== null && r.daysSinceContact <= 7)
+    .sort((a, b) => b.lastContact - a.lastContact);
+
+  const noPhone = ALL_CUSTOMERS.filter(c => !c.phone || !normalizePhone(c.phone)).length;
+  document.getElementById("careSummary").textContent =
+    `${dueCount} khách cần nhắn (chu kỳ ${CARE_CYCLE} ngày) · Tổng ${CARE_ROWS.length} khách có SĐT và lịch sử mua` + (noPhone ? ` · ${noPhone} khách chưa có SĐT nên không hiện ở đây` : "");
+
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">${CARE_FILTER === "due" ? "✅" : "🔍"}</div>${CARE_FILTER === "due" ? "Hôm nay không có khách nào cần nhắn." : "Không có khách phù hợp."}</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<div class="panel"><div class="panel-body" style="overflow-x:auto;"><table>
+    <thead><tr><th>Khách hàng</th><th>Mua gần nhất</th><th>Lần nhắn cuối</th><th>Lý do</th><th></th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td><strong>${r.customer.name}</strong><div class="text-mute" style="font-size:12px;">${r.phone}</div></td>
+      <td>${careShortDate(r.lastPurchase)}<div class="text-mute" style="font-size:12px;">${r.daysSincePurchase} ngày trước · ${r.productText}</div></td>
+      <td>${r.lastContact
+        ? `${careShortDate(r.lastContact)}<div class="text-mute" style="font-size:12px;">${r.daysSinceContact} ngày trước · ${r.contactCount} lần
+            <span style="cursor:pointer; color:var(--danger);" title="Bấm nhầm? Bỏ ghi nhận lần nhắn cuối" onclick="undoCareContact('${r.customer.id}')">↩ bỏ</span></div>`
+        : `<span class="text-mute">Chưa nhắn lần nào</span>`}</td>
+      <td>${r.reason ? `<span style="color:${r.code === "debt" ? "var(--danger)" : "var(--teal-deep)"}; font-weight:600;">${r.reason}</span>` : `<span class="text-mute">Chưa đến hạn</span>`}</td>
+      <td><button class="btn btn-primary btn-mini" onclick="sendCare('${r.customer.id}')">💬 Nhắn Zalo</button></td>
+    </tr>`).join("")}</tbody></table></div></div>`;
+}
+
+function careZaloUrl(phone) {
+  let d = normalizePhone(phone).replace(/^\+/, "");
+  if (d.startsWith("84") && d.length >= 11) d = "0" + d.slice(2);
+  return "https://zalo.me/" + d;
+}
+
+function careCopySync(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  ta.remove();
+  try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {}
+  return ok;
+}
+
+function careToast(msg) {
+  let t = document.getElementById("careToast");
+  if (!t) {
+    t = document.createElement("div"); t.id = "careToast";
+    t.style.cssText = "position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#0f1b2d; color:#fff; padding:12px 18px; border-radius:10px; font-size:13.5px; z-index:300; max-width:90vw; box-shadow:0 6px 20px rgba(0,0,0,.25);";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => { t.style.display = "none"; }, 5000);
+}
+
+async function sendCare(customerId) {
+  const r = CARE_ROWS.find(x => x.customer.id === customerId);
+  if (!r) return;
+  const message = careFill(CARE_TEMPLATES[r.code] || CARE_DEFAULT_TPL[r.code], r.vars);
+
+  // Phải copy + mở Zalo ngay trong lúc bấm chuột (trước mọi thao tác chờ mạng) để trình duyệt không chặn
+  const copied = careCopySync(message);
+  window.open(careZaloUrl(r.phone), "_blank");
+
+  const { data, error } = await sb.from("customer_contacts")
+    .insert({ customer_id: customerId, template_code: r.code, message, created_by: CURRENT_PROFILE.id })
+    .select("id, customer_id, contacted_at").single();
+  if (error) { alert("Đã mở Zalo nhưng chưa ghi nhận được lần nhắn: " + error.message); return; }
+
+  CARE_DATA.contacts.unshift(data);
+  buildCareRows(); renderCare();
+  careToast(copied
+    ? `✅ Đã copy tin nhắn, dán vào Zalo của ${r.customer.name}. Đã ghi nhận đã nhắn.`
+    : `Đã mở Zalo và ghi nhận đã nhắn ${r.customer.name}. Chưa copy được tin, hãy bấm sửa mẫu để lấy nội dung.`);
+}
+
+async function undoCareContact(customerId) {
+  const r = CARE_ROWS.find(x => x.customer.id === customerId);
+  if (!r || !r.lastContactId) return;
+  if (!confirm(`Bỏ ghi nhận lần nhắn cuối cho ${r.customer.name}?`)) return;
+  const { error } = await sb.from("customer_contacts").delete().eq("id", r.lastContactId);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  CARE_DATA.contacts = CARE_DATA.contacts.filter(c => c.id !== r.lastContactId);
+  buildCareRows(); renderCare();
+}
+
+function openCareTemplates() {
+  const body = document.getElementById("careTplBody");
+  body.innerHTML = `
+    <div class="text-mute" style="font-size:12.5px; margin-bottom:12px;">
+      Chỗ trống tự thay theo từng khách: <b>{xung_ho}</b> (anh Đức...), <b>{san_pham}</b>, <b>{ngay_mua}</b>, <b>{so_ngay}</b> (số ngày kể từ lần mua cuối), <b>{ma_don}</b> và <b>{so_tien_no}</b> (chỉ dùng cho tin nhắc nợ).
+    </div>
+    ${Object.keys(CARE_TPL_NAMES).map(k => `
+      <div class="field"><label>${CARE_TPL_NAMES[k]}</label>
+        <textarea id="tpl_${k}" rows="4" style="width:100%;">${(CARE_TEMPLATES[k] || "").replace(/</g, "&lt;")}</textarea></div>`).join("")}
+    <div class="flex gap-8" style="justify-content:flex-end; margin-top:12px;">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('careTplModal').classList.remove('open')">Hủy</button>
+      <button type="button" class="btn btn-primary" id="careTplSaveBtn" onclick="saveCareTemplates()">Lưu mẫu tin</button>
+    </div>`;
+  document.getElementById("careTplModal").classList.add("open");
+}
+
+async function saveCareTemplates() {
+  const btn = document.getElementById("careTplSaveBtn");
+  btn.disabled = true; btn.textContent = "Đang lưu...";
+  const rows = Object.keys(CARE_TPL_NAMES).map(k => ({
+    code: k, name: CARE_TPL_NAMES[k], content: document.getElementById("tpl_" + k).value.trim(), updated_at: new Date().toISOString()
+  }));
+  if (rows.some(r => !r.content)) { alert("Mẫu tin không được để trống."); btn.disabled = false; btn.textContent = "Lưu mẫu tin"; return; }
+  const { error } = await sb.from("care_templates").upsert(rows, { onConflict: "code" });
+  btn.disabled = false; btn.textContent = "Lưu mẫu tin";
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  rows.forEach(r => { CARE_TEMPLATES[r.code] = r.content; });
+  document.getElementById("careTplModal").classList.remove("open");
+  careToast("Đã lưu mẫu tin nhắn.");
 }
 </script>
 </body>
