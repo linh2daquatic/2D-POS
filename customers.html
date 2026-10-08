@@ -98,6 +98,7 @@ let CARE_ROWS = [];
     <div id="customersTab">
       <div class="flex" style="justify-content:space-between; margin-bottom:16px;">
         <input class="search-bar" id="searchInput" placeholder="🔍 Tìm theo tên hoặc số điện thoại...">
+        <button class="btn btn-secondary" id="dupBtn" style="display:none;" title="Gộp các khách trùng số điện thoại">🔀 Gộp khách trùng <span id="dupCount"></span></button>
         <button class="btn btn-primary" id="addBtn">+ Thêm khách hàng</button>
       </div>
       <div class="sort-chips" id="sortChips">
@@ -199,6 +200,16 @@ let CARE_ROWS = [];
       </div>
     </div>
 
+    <div class="modal-overlay" id="dupModal">
+      <div class="modal-box xwide">
+        <div class="modal-header">
+          <h3>🔀 Gộp khách hàng trùng số điện thoại</h3>
+          <span class="modal-close" id="dupClose">✕</span>
+        </div>
+        <div class="modal-body" id="dupBody"></div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="payModal">
       <div class="modal-box">
         <div class="modal-header">
@@ -252,6 +263,8 @@ let CARE_ROWS = [];
 
   document.getElementById("searchInput").addEventListener("input", (e) => renderTable(e.target.value));
   document.getElementById("addBtn").addEventListener("click", () => openModal());
+  document.getElementById("dupBtn").addEventListener("click", openDupModal);
+  document.getElementById("dupClose").addEventListener("click", () => document.getElementById("dupModal").classList.remove("open"));
   document.getElementById("modalClose").addEventListener("click", closeModal);
   document.getElementById("cancelBtn").addEventListener("click", closeModal);
   document.getElementById("custForm").addEventListener("submit", saveCustomer);
@@ -379,6 +392,90 @@ async function loadCustomers() {
   });
 
   renderTable(document.getElementById("searchInput")?.value || "");
+  updateDupButton();
+}
+
+/* ---------- Gộp khách trùng SĐT (chỉ chủ cửa hàng) ---------- */
+function findDupGroups() {
+  const groups = {};
+  ALL_CUSTOMERS.forEach(c => {
+    let key = normalizePhone(c.phone).replace(/^\+?84/, "0");
+    if (key.length < 8) return;
+    (groups[key] = groups[key] || []).push(c);
+  });
+  return Object.entries(groups).filter(([, arr]) => arr.length > 1).map(([phone, arr]) => {
+    const sorted = [...arr].sort((a, b) => {
+      const d = (CUSTOMER_STATS[b.id]?.orderCount || 0) - (CUSTOMER_STATS[a.id]?.orderCount || 0);
+      return d !== 0 ? d : new Date(a.created_at) - new Date(b.created_at);
+    });
+    return { phone, list: sorted };
+  });
+}
+
+function updateDupButton() {
+  const btn = document.getElementById("dupBtn");
+  if (!btn || CURRENT_PROFILE?.role !== "owner") return;
+  const n = findDupGroups().length;
+  btn.style.display = n > 0 ? "" : "none";
+  document.getElementById("dupCount").textContent = n > 0 ? `(${n})` : "";
+}
+
+function openDupModal() {
+  const body = document.getElementById("dupBody");
+  const groups = findDupGroups();
+  if (groups.length === 0) {
+    body.innerHTML = `<div class="empty-state"><div class="icon">✅</div>Không còn khách nào trùng số điện thoại.</div>`;
+    document.getElementById("dupModal").classList.add("open");
+    return;
+  }
+  body.innerHTML = `
+    <p class="text-mute" style="font-size:12.5px; margin-bottom:12px;">Mỗi nhóm là các khách có cùng SĐT. Chọn <b>bản được giữ</b> (mặc định: bản nhiều đơn nhất). Toàn bộ đơn hàng, công nợ, bể, lịch sử nhắn tin của các bản còn lại sẽ chuyển sang bản được giữ rồi xóa bản trùng. <b>Không thể hoàn tác</b>, nên kiểm tra kỹ các nhóm có vẻ là hai người khác nhau dùng chung số.</p>
+    ${groups.map((g, gi) => `
+      <div style="border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <strong>📞 ${g.phone}</strong>
+          <button class="btn btn-primary btn-mini" onclick="mergeDupGroup(${gi})">Gộp nhóm này</button>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>Giữ</th><th>Tên</th><th>Địa chỉ</th><th>Số đơn</th><th>Tổng chi tiêu</th><th>Ngày tạo</th></tr></thead><tbody>
+        ${g.list.map((c, ci) => `<tr>
+          <td><input type="radio" name="dupkeep_${gi}" value="${c.id}" ${ci === 0 ? "checked" : ""}></td>
+          <td>${careEsc(c.name)}</td><td>${careEsc(c.address || "—")}</td>
+          <td>${CUSTOMER_STATS[c.id]?.orderCount || 0}</td>
+          <td>${CUSTOMER_STATS[c.id]?.totalSpent ? formatVND(CUSTOMER_STATS[c.id].totalSpent) : "—"}</td>
+          <td>${c.created_at ? formatDate(c.created_at) : "—"}</td>
+        </tr>`).join("")}
+        </tbody></table></div>
+      </div>`).join("")}
+    <button class="btn btn-secondary" style="width:100%; justify-content:center;" onclick="mergeAllDupGroups()">Gộp tất cả ${groups.length} nhóm (giữ bản nhiều đơn nhất trong mỗi nhóm)</button>`;
+  document.getElementById("dupModal").classList.add("open");
+}
+
+async function runMerge(group, keepId) {
+  const dropIds = group.list.map(c => c.id).filter(id => id !== keepId);
+  const { error } = await sb.rpc("merge_customers", { keep_id: keepId, drop_ids: dropIds });
+  if (error) throw error;
+}
+
+async function mergeDupGroup(gi) {
+  const g = findDupGroups()[gi];
+  if (!g) return;
+  const keepId = document.querySelector(`input[name="dupkeep_${gi}"]:checked`)?.value;
+  if (!keepId) return;
+  const keep = g.list.find(c => c.id === keepId);
+  if (!window.confirm(`Gộp ${g.list.length} khách trùng SĐT ${g.phone} vào "${keep.name}"?\n\nKhông thể hoàn tác.`)) return;
+  try { await runMerge(g, keepId); }
+  catch (e) { alert("Lỗi khi gộp: " + (e.message || e) + "\n(Nếu chưa chạy migration-26.sql trong Supabase SQL Editor thì chạy trước.)"); return; }
+  await loadCustomers();
+  openDupModal();
+}
+
+async function mergeAllDupGroups() {
+  const groups = findDupGroups();
+  if (!window.confirm(`Gộp tự động ${groups.length} nhóm khách trùng SĐT?\nMỗi nhóm giữ bản có nhiều đơn nhất.\n\nKhông thể hoàn tác.`)) return;
+  try { for (const g of groups) await runMerge(g, g.list[0].id); }
+  catch (e) { alert("Lỗi khi gộp: " + (e.message || e) + "\n(Nếu chưa chạy migration-26.sql thì chạy trước.)"); await loadCustomers(); return; }
+  await loadCustomers();
+  openDupModal();
 }
 
 function renderTable(filter) {
