@@ -293,6 +293,10 @@ let RC_ACTIVE_CATEGORY = "";
               <div class="field"><label>Giá bán lẻ</label><input id="f_retail" type="number" step="any" value="0"></div>
             </div>
             <div class="field"><label>Giá bán buôn</label><input id="f_wholesale" type="number" step="any" value="0"></div>
+            <div class="field" id="f_pcd_wrap"><label>Chiết khấu từ giá lẻ để tính giá vốn lãi (%) — để trống nếu dùng giá vốn thực tế</label>
+              <input id="f_pcd" type="number" step="any" min="0" max="100" placeholder="VD: 25 cho hàng Maxspect góp chung">
+              <p class="text-mute" style="font-size:11.5px; margin-top:4px;">Khi bán, giá vốn tính lãi Dashboard = giá bán lẻ × (1 − %). Giá vốn thực tế ở trên vẫn dùng cho tồn kho / quyết toán.</p>
+            </div>
             <div class="flex gap-8" style="margin-top:18px; justify-content:flex-end;">
               <button type="button" class="btn btn-secondary" id="cancelBtn">Hủy</button>
               <button type="submit" class="btn btn-primary" id="saveBtn">Lưu sản phẩm</button>
@@ -757,6 +761,8 @@ function openModal(id) {
   document.getElementById("f_cost").value = p?.cost_price ?? 0;
   document.getElementById("f_retail").value = p?.retail_price ?? 0;
   document.getElementById("f_wholesale").value = p?.wholesale_price ?? 0;
+  document.getElementById("f_pcd").value = p?.profit_cost_discount ?? "";
+  document.getElementById("f_pcd_wrap").style.display = CURRENT_PROFILE.role === "owner" ? "" : "none";
   document.getElementById("modalOverlay").classList.add("open");
 }
 function closeModal() { document.getElementById("modalOverlay").classList.remove("open"); }
@@ -779,6 +785,12 @@ async function saveProduct(e) {
     retail_price: Number(document.getElementById("f_retail").value || 0),
     wholesale_price: Number(document.getElementById("f_wholesale").value || 0),
   };
+  // Chỉ ghi cột chiết khấu giá vốn khi là chủ cửa hàng và (đã có cột trong DB hoặc có nhập giá trị)
+  if (CURRENT_PROFILE.role === "owner") {
+    const pcdRaw = document.getElementById("f_pcd").value.trim();
+    const editing = EDIT_ID ? ALL_PRODUCTS.find(x => x.id === EDIT_ID) : null;
+    if (pcdRaw !== "" || (editing && "profit_cost_discount" in editing)) payload.profit_cost_discount = pcdRaw === "" ? null : Number(pcdRaw);
+  }
 
   let error;
   if (EDIT_ID) {
