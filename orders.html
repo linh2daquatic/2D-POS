@@ -168,7 +168,10 @@ const DRAFT_KEY = "2d_pos_order_draft";
           </div>
           <div class="panel-body">
             <div id="cartItems"></div>
+            <div id="groupDiscWrap"></div>
 
+            <div class="summary-row" id="listRow" style="display:none;"><span>Giá lẻ (chưa giảm)</span><span id="sumList">0₫</span></div>
+            <div class="summary-row" id="lineDiscRow" style="display:none; color:var(--danger); font-weight:600;"><span>Giảm theo sản phẩm <span id="sumLineDiscPct"></span></span><span id="sumLineDisc">-0₫</span></div>
             <div class="summary-row"><span>Tạm tính</span><span id="sumSubtotal">0₫</span></div>
 
             <div class="discount-row">
@@ -178,7 +181,7 @@ const DRAFT_KEY = "2d_pos_order_draft";
               </div>
               <input id="discountValue" type="number" step="any" value="0" placeholder="Giảm giá">
             </div>
-            <div class="summary-row" id="discountRow" style="display:none;"><span>Giảm giá</span><span id="sumDiscount">-0₫</span></div>
+            <div class="summary-row" id="discountRow" style="display:none;"><span>Giảm giá <span id="sumDiscLabel"></span></span><span id="sumDiscount">-0₫</span></div>
 
             <div class="summary-row total"><span>Tổng tiền</span><span id="sumTotal">0₫</span></div>
 
@@ -874,7 +877,7 @@ function addToCart(productId) {
     showAddToast(p.name, existing.quantity);
   } else {
     CART.push({
-      product_id: p.id, name: p.name, unit: p.unit, max_qty: Number(p.quantity),
+      product_id: p.id, name: p.name, unit: p.unit, category: p.category || '', max_qty: Number(p.quantity),
       quantity: 1, unit_price: ORDER_TYPE === "wholesale" ? Number(p.wholesale_price) : Number(p.retail_price)
     });
     showAddToast(p.name, 1);
@@ -902,13 +905,57 @@ function changeQty(productId, delta) {
 
 let EDIT_ITEM_ID = null;
 
+// Giá gốc (trước giảm) của dòng: nếu đã giảm thì là list_price, chưa thì là giá hiện tại
+function cartBasePrice(item) { return Number(item.list_price) > 0 ? Number(item.list_price) : Number(item.unit_price); }
+// Đặt giá mới cho dòng và tự lưu % giảm so với giá gốc
+function setItemPriceWithDiscount(item, newPrice) {
+  const base = cartBasePrice(item);
+  item.unit_price = newPrice;
+  if (base > 0 && newPrice < base) {
+    item.list_price = base;
+    item.discount_percent = Math.round(((base - newPrice) / base) * 10000) / 100;
+  } else {
+    item.list_price = null;
+    item.discount_percent = 0;
+  }
+}
+
+/* ---------- Giảm % theo nhóm sản phẩm ---------- */
+function renderGroupDiscount() {
+  const wrap = document.getElementById("groupDiscWrap");
+  if (!wrap) return;
+  const cats = [...new Set(CART.map(i => i.category || ALL_PRODUCTS.find(x => x.id === i.product_id)?.category || "").filter(Boolean))];
+  if (CART.length === 0 || cats.length === 0) { wrap.innerHTML = ""; return; }
+  const prevCat = document.getElementById("gd_cat")?.value, prevVal = document.getElementById("gd_val")?.value || "";
+  wrap.innerHTML = `<div style="margin:10px 0; padding:10px; background:#f8fafc; border:1px dashed var(--border); border-radius:8px;">
+    <div style="font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Giảm % theo nhóm sản phẩm (hiện rõ trên từng dòng)</div>
+    <div style="display:flex; gap:6px;">
+      <select id="gd_cat" style="flex:1; min-width:0;">${cats.map(c => `<option value="${tkEsc(c)}" ${c === prevCat ? "selected" : ""}>${tkEsc(c)}</option>`).join("")}</select>
+      <input id="gd_val" type="number" step="any" min="0" max="100" placeholder="%" value="${tkEsc(prevVal)}" style="width:70px;">
+      <button type="button" class="btn btn-secondary btn-mini" id="gd_apply">Áp dụng</button>
+    </div></div>`;
+  document.getElementById("gd_apply").addEventListener("click", () => {
+    const cat = document.getElementById("gd_cat").value;
+    const pct = Number(document.getElementById("gd_val").value || 0);
+    if (pct < 0 || pct > 100) { alert("% giảm phải từ 0 đến 100."); return; }
+    CART.forEach(item => {
+      const c = item.category || ALL_PRODUCTS.find(x => x.id === item.product_id)?.category || "";
+      if (c !== cat) return;
+      const base = cartBasePrice(item);
+      setItemPriceWithDiscount(item, Math.round(base * (1 - pct / 100)));
+      item.priceEdited = true;
+    });
+    renderCart();
+  });
+}
+
 function editItemPrice(productId) {
   const item = CART.find(i => i.product_id === productId);
   if (!item) return;
   EDIT_ITEM_ID = productId;
 
   document.getElementById("epTitle").textContent = item.name;
-  document.getElementById("epOriginalPrice").textContent = formatVND(item.unit_price);
+  document.getElementById("epOriginalPrice").textContent = formatVND(cartBasePrice(item));
   document.getElementById("ep_newPrice").value = item.unit_price;
   document.getElementById("ep_discValue").value = "";
   setEpDiscType("percent");
@@ -926,7 +973,7 @@ function applyEpDiscount() {
   if (!item) return;
   const val = Number(document.getElementById("ep_discValue").value || 0);
   if (val <= 0) { alert("Nhập số giảm giá trước đã."); return; }
-  const basePrice = item.unit_price;
+  const basePrice = cartBasePrice(item);
   const discount = window.EP_DISC_TYPE === "percent" ? basePrice * (val / 100) : val;
   const newPrice = Math.max(basePrice - discount, 0);
   document.getElementById("ep_newPrice").value = Math.round(newPrice);
@@ -937,7 +984,7 @@ function saveEpPrice() {
   if (!item) return;
   const newPrice = Number(document.getElementById("ep_newPrice").value);
   if (isNaN(newPrice) || newPrice < 0) { alert("Giá không hợp lệ."); return; }
-  item.unit_price = newPrice;
+  setItemPriceWithDiscount(item, newPrice);
   item.priceEdited = true; // Đánh dấu đã sửa giá tay, để không bị ghi đè lại khi đổi khách hàng/loại đơn
   document.getElementById("itemPriceModal").classList.remove("open");
   renderCart();
@@ -953,6 +1000,16 @@ function showAddToast(name, qty) {
 }
 
 /* ---------- Giỏ hàng / Tổng kết ---------- */
+// Giá vốn chốt vào dòng đơn để tính lãi: nếu sản phẩm có "chiết khấu giá vốn lãi" (hàng góp chung như Maxspect)
+// thì = giá bán lẻ x (1 - %), ngược lại = giá vốn thực tế
+function saleCostOf(p) {
+  const d = p?.profit_cost_discount;
+  if (d !== null && d !== undefined && d !== "" && Number(p.retail_price) > 0) {
+    return Math.round(Number(p.retail_price) * (1 - Number(d) / 100));
+  }
+  return Number(p?.cost_price || 0);
+}
+
 function renderCart() {
   const wrap = document.getElementById("cartItems");
   if (CART.length === 0) {
@@ -965,7 +1022,7 @@ function renderCart() {
       <div class="cart-line">
         <div class="cl-info">
           <div class="cl-name">${item.name} ${noCost ? '<span title="Chưa nhập giá vốn cho sản phẩm này — lãi gộp sẽ tính sai" style="color:var(--warning);">⚠️</span>' : ''}</div>
-          <div class="cl-price cl-price-edit" data-id="${item.product_id}">✎ ${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
+          <div class="cl-price cl-price-edit" data-id="${item.product_id}">✎ ${Number(item.discount_percent) > 0 ? `<s style="color:var(--text-mute); font-weight:400;">${formatVND(item.list_price)}</s> <span style="background:#fee2e2; color:var(--danger); font-weight:700; padding:1px 6px; border-radius:6px; font-size:11.5px;">-${Number(item.discount_percent)}%</span> → ` : ""}${formatVND(item.unit_price)} / ${item.unit || 'cái'}</div>
         </div>
         <div class="cl-stepper">
           <button data-id="${item.product_id}" data-d="-1">−</button>
@@ -986,6 +1043,7 @@ function renderCart() {
       el.addEventListener("click", () => editItemPrice(el.dataset.id));
     });
   }
+  renderGroupDiscount();
   updateSummary();
 }
 
@@ -1004,6 +1062,17 @@ function updateSummary() {
   }
   const paid = cash + transfer;
   const debt = Math.max(total - paid, 0);
+
+  // Giảm giá theo từng dòng sản phẩm: hiện giá lẻ trước giảm và tổng số đã giảm (kèm %)
+  const listTotal = CART.reduce((s, i) => s + i.quantity * (Number(i.discount_percent) > 0 && Number(i.list_price) > 0 ? Number(i.list_price) : i.unit_price), 0);
+  const lineDisc = listTotal - subtotal;
+  document.getElementById("listRow").style.display = lineDisc > 0 ? "flex" : "none";
+  document.getElementById("lineDiscRow").style.display = lineDisc > 0 ? "flex" : "none";
+  document.getElementById("sumList").textContent = formatVND(listTotal);
+  document.getElementById("sumLineDisc").textContent = "-" + formatVND(lineDisc);
+  document.getElementById("sumLineDiscPct").textContent = lineDisc > 0 && listTotal > 0 ? "(" + (Math.round((lineDisc / listTotal) * 1000) / 10) + "%)" : "";
+  const discVal = Number(document.getElementById("discountValue").value || 0);
+  document.getElementById("sumDiscLabel").textContent = discount > 0 && DISCOUNT_TYPE === "percent" && discVal > 0 ? "(" + discVal + "%)" : "";
 
   document.getElementById("sumSubtotal").textContent = formatVND(subtotal);
   document.getElementById("discountRow").style.display = discount > 0 ? "flex" : "none";
@@ -1113,11 +1182,22 @@ async function finalizeOrder({ subtotal, discountAmount, discountValue, total, c
     return;
   }
 
+  const anyLineDiscount = CART.some(i => Number(i.discount_percent) > 0);
   const itemRows = CART.map(i => {
     const p = ALL_PRODUCTS.find(x => x.id === i.product_id);
-    return { order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, cost_price_at_sale: Number(p?.cost_price || 0) };
+    const row = { order_id: order.id, product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, cost_price_at_sale: saleCostOf(p) };
+    // Chỉ ghi cột giảm giá khi có dòng giảm % (cần đã chạy migration-27.sql)
+    if (anyLineDiscount) { row.list_price = Number(i.discount_percent) > 0 ? Number(i.list_price) : null; row.discount_percent = Number(i.discount_percent) || 0; }
+    return row;
   });
-  await sb.from("order_items").insert(itemRows);
+  const { error: itemsErr } = await sb.from("order_items").insert(itemRows);
+  if (itemsErr) {
+    await sb.from("orders").delete().eq("id", order.id);
+    alert("Không lưu được sản phẩm của đơn: " + itemsErr.message + "\n\nĐơn chưa được tạo. Nếu anh đang dùng giảm giá % theo dòng, cần chạy migration-27.sql trong Supabase SQL Editor trước.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Tạo đơn hàng";
+    return;
+  }
 
   for (const item of CART) {
     const p = ALL_PRODUCTS.find(x => x.id === item.product_id);
