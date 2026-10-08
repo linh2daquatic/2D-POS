@@ -245,7 +245,7 @@ let CARE_ROWS = [];
     </div>
 
     <div class="modal-overlay" id="orderDetailModal">
-      <div class="modal-box wide">
+      <div class="modal-box xwide">
         <div class="modal-header">
           <h3 id="orderDetailTitle">Chi tiết đơn hàng</h3>
           <span class="modal-close" id="orderDetailClose">✕</span>
@@ -912,7 +912,7 @@ async function showOrderDetail(orderId) {
 
   const { data: items } = await sb
     .from("order_items")
-    .select("id, quantity, unit_price, subtotal, products(name, unit)")
+    .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, products(name, unit)")
     .eq("order_id", orderId);
 
   const { data: payments } = await sb
@@ -955,7 +955,7 @@ function renderOrderDetailBody() {
     ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
     <div class="summary-row total"><span>${debt > 0 ? 'Còn nợ' : 'Trạng thái'}</span><span>${debt > 0 ? formatVND(debt) : 'Đã thanh toán đủ'}</span></div>
     <div style="text-align:right; margin-top:8px;">
-      <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(true)">✎ Sửa giá trị đơn</button>
+      <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(true)">✎ Sửa giá bán${CURRENT_PROFILE?.role === "owner" ? " / giá vốn" : ""}</button>
     </div>
   `;
 
@@ -964,20 +964,22 @@ function renderOrderDetailBody() {
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
     <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
 
-    <table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+    <div class="table-scroll"><table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th>${CURRENT_PROFILE?.role === "owner" ? `<th>Giá vốn</th>` : ""}</tr></thead>
     <tbody>
       ${order.items.map((i, idx) => EDIT_ORDER_MODE ? `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
         <td><input type="number" step="any" class="ed-item-price" data-idx="${idx}" value="${Number(i.unit_price)}" oninput="recalcItemRow(${idx})" style="width:110px;"></td>
         <td id="ip_subtotal_${idx}">${formatVND(Number(i.unit_price) * Number(i.quantity))}</td>
+        ${CURRENT_PROFILE?.role === "owner" ? `<td><input type="number" step="any" min="0" class="ed-item-cost" data-idx="${idx}" value="${Number(i.cost_price_at_sale || 0)}" style="width:100px;"></td>` : ""}
       </tr>` : `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
         <td>${formatVND(i.unit_price)}</td>
         <td>${formatVND(i.subtotal)}</td>
+        ${CURRENT_PROFILE?.role === "owner" ? `<td>${Number(i.cost_price_at_sale || 0) <= 0 ? `<span style="color:var(--warning);" title="Chưa có giá vốn">⚠️ Chưa có</span>` : formatVND(i.cost_price_at_sale)}</td>` : ""}
       </tr>`).join("")}
-    </tbody></table>
+    </tbody></table></div>
 
     <div style="margin-top:14px;">
       ${totalsBlock}
@@ -1051,6 +1053,18 @@ async function saveOrderEdits() {
       if (itemErr) { alert("Lỗi khi lưu đơn giá: " + itemErr.message); return; }
       item.unit_price = price;
       item.subtotal = newSubtotal;
+    }
+  }
+
+  // Giá vốn chốt riêng của từng dòng trong đơn (chỉ chủ cửa hàng)
+  if (CURRENT_PROFILE?.role === "owner") {
+    for (const inp of document.querySelectorAll(".ed-item-cost")) {
+      const cost = Number(inp.value || 0);
+      const item = order.items[Number(inp.dataset.idx)];
+      if (!item || cost < 0 || cost === Number(item.cost_price_at_sale || 0)) continue;
+      const { error: costErr } = await sb.from("order_items").update({ cost_price_at_sale: cost }).eq("id", item.id);
+      if (costErr) { alert("Lỗi khi lưu giá vốn: " + costErr.message); return; }
+      item.cost_price_at_sale = cost;
     }
   }
 
