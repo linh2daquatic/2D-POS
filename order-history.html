@@ -325,10 +325,24 @@ async function showOrderDetail(orderId) {
     .eq("id", orderId)
     .single();
 
-  const { data: items } = await sb
+  // Thử đọc kèm cột giảm giá % (migration-27); nếu DB chưa có cột thì đọc bản cơ bản để đơn vẫn hiển thị đủ
+  let { data: items, error: itemsErr } = await sb
     .from("order_items")
     .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, list_price, discount_percent, products(name, unit, category, retail_price)")
     .eq("order_id", orderId);
+  if (itemsErr) {
+    console.warn("Đọc đầy đủ lỗi, dùng bản cơ bản:", itemsErr.message);
+    ({ data: items, error: itemsErr } = await sb
+      .from("order_items")
+      .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, products(name, unit, category, retail_price)")
+      .eq("order_id", orderId));
+    if (itemsErr) {
+      ({ data: items } = await sb
+        .from("order_items")
+        .select("id, product_id, quantity, unit_price, cost_price_at_sale, subtotal, products(name, unit)")
+        .eq("order_id", orderId));
+    }
+  }
 
   const { data: payments } = await sb
     .from("customer_payments")
