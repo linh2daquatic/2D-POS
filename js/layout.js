@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", href: "index.html", icon: "◱", ownerOnly: false },
   { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
   { key: "tanks", label: "Quản lý bể", href: "tanks.html", icon: "🪸", ownerOnly: false },
+  { key: "payroll", label: "Lương", href: "payroll.html", icon: "💼", ownerOnly: true },
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
 ];
 
