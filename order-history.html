@@ -321,7 +321,7 @@ async function showOrderDetail(orderId) {
 
   const { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("order_code, type, status, total_amount, paid_amount, discount_amount, created_at, customer_id, customers(id, name, phone, address)")
+    .select("order_code, type, status, total_amount, paid_amount, discount_amount, discount_type, discount_value, created_at, customer_id, customers(id, name, phone, address)")
     .eq("id", orderId)
     .single();
 
@@ -352,6 +352,11 @@ async function showOrderDetail(orderId) {
   if (orderErr || !order) { body.innerHTML = `<div class="empty-state">Không tải được đơn hàng.</div>`; return; }
 
   CURRENT_DETAIL_ORDER = { id: orderId, ...order };
+  // Đơn cũ có giảm giá nhưng không lưu loại/giá trị giảm: coi như giảm số tiền cố định để không bị mất khi sửa
+  if (Number(order.discount_amount) > 0 && !(Number(order.discount_value) > 0)) {
+    CURRENT_DETAIL_ORDER.discount_type = "amount";
+    CURRENT_DETAIL_ORDER.discount_value = Number(order.discount_amount);
+  }
   CURRENT_DETAIL_ITEMS = items || [];
   // Giá gốc (trước giảm) của từng dòng: nếu đã có list_price thì dùng, không thì chính là đơn giá hiện tại
   CURRENT_DETAIL_ITEMS.forEach(i => { i._base = Number(i.list_price) > 0 ? Number(i.list_price) : Number(i.unit_price); });
@@ -664,6 +669,34 @@ async function saveEditedPrices(payments) {
   saveBtn.disabled = true;
   saveBtn.textContent = "Đang lưu...";
 
+  // Tính trước tổng tiền mới và hỏi xác nhận TRƯỚC khi ghi bất cứ thứ gì, nếu tổng tiền đơn bị đổi
+  {
+    const preSubtotal = CURRENT_DETAIL_ITEMS.reduce((sum, i) => {
+      const inp = document.querySelector(`.edit-price-input[data-item-id="${i.id}"]`);
+      return sum + Number(i.quantity) * (inp ? Number(inp.value || 0) : Number(i.unit_price));
+    }, 0);
+    const preTotal = preSubtotal - calcEditDiscount(preSubtotal);
+    const oldTot = Number(CURRENT_DETAIL_ORDER.total_amount);
+    const priceInputsChanged = CURRENT_DETAIL_ITEMS.some(i => {
+      const inp = document.querySelector(`.edit-price-input[data-item-id="${i.id}"]`);
+      return inp && Number(inp.value || 0) !== Number(i.unit_price);
+    });
+    const preDiscAmount = calcEditDiscount(preSubtotal);
+    const preDiscValue = Number(document.getElementById("editDiscountValue").value || 0);
+    const discInputsChanged = preDiscAmount > 0
+      ? (EDIT_DISCOUNT_TYPE !== (CURRENT_DETAIL_ORDER.discount_type || null) || preDiscValue !== Number(CURRENT_DETAIL_ORDER.discount_value || 0))
+      : Number(CURRENT_DETAIL_ORDER.discount_amount || 0) > 0;
+    if ((priceInputsChanged || discInputsChanged) && Math.round(preTotal) !== Math.round(oldTot)) {
+      const paidNow = Number(CURRENT_DETAIL_ORDER.paid_amount || 0);
+      const debtAfter = preTotal - paidNow;
+      const msg = `Tổng tiền đơn sẽ đổi từ ${formatVND(oldTot)} thành ${formatVND(preTotal)}.\n` +
+        (debtAfter > 0 ? `Khách đã trả ${formatVND(paidNow)} nên sẽ CÒN NỢ ${formatVND(debtAfter)}.\n` : (debtAfter < 0 ? `Khách đã trả ${formatVND(paidNow)} nên sẽ thành TRẢ DƯ ${formatVND(-debtAfter)}.\n` : "")) +
+        `\nTiếp tục lưu?`;
+      if (!window.confirm(msg)) { saveBtn.disabled = false; saveBtn.textContent = "💾 Lưu giá đã sửa"; return; }
+    }
+  }
+
+  let priceTouched = false;
   const inputs = document.querySelectorAll(".edit-price-input");
   for (const input of inputs) {
     const newPrice = Number(input.value || 0);
@@ -671,6 +704,7 @@ async function saveEditedPrices(payments) {
     const item = CURRENT_DETAIL_ITEMS.find(i => i.id === input.dataset.itemId);
     if (item) {
       item._base = editBaseOf(item.id);
+      if (Number(item.unit_price) !== newPrice) priceTouched = true;
       const pct = item._base > 0 && newPrice < item._base ? Math.round(((item._base - newPrice) / item._base) * 10000) / 100 : 0;
       const hadDiscount = Number(item.discount_percent) > 0;
       if (Number(item.unit_price) !== newPrice || pct !== Number(item.discount_percent || 0) || (pct > 0 && Number(item.list_price) !== item._base)) {
@@ -704,15 +738,25 @@ async function saveEditedPrices(payments) {
   const discountAmount = calcEditDiscount(newSubtotal);
   const newTotal = newSubtotal - discountAmount;
 
-  await sb.from("orders").update({
-    total_amount: newTotal,
-    discount_type: discountAmount > 0 ? EDIT_DISCOUNT_TYPE : null,
-    discount_value: discountAmount > 0 ? discountValue : 0,
-    discount_amount: discountAmount
-  }).eq("id", CURRENT_DETAIL_ORDER.id);
+  // Chỉ cập nhật tổng tiền đơn khi giá bán hoặc giảm giá thực sự thay đổi (sửa riêng giá vốn thì KHÔNG đụng tới tổng tiền / công nợ)
+  const oldTotal = Number(CURRENT_DETAIL_ORDER.total_amount);
+  const oldDiscType = CURRENT_DETAIL_ORDER.discount_type || null;
+  const oldDiscValue = Number(CURRENT_DETAIL_ORDER.discount_value || 0);
+  const discountChanged = discountAmount > 0
+    ? (EDIT_DISCOUNT_TYPE !== oldDiscType || discountValue !== oldDiscValue)
+    : Number(CURRENT_DETAIL_ORDER.discount_amount || 0) > 0;
+  const pricesChanged = priceTouched || discountChanged;
 
-  CURRENT_DETAIL_ORDER.total_amount = newTotal;
-  CURRENT_DETAIL_ORDER.discount_amount = discountAmount;
+  if (pricesChanged) {
+    await sb.from("orders").update({
+      total_amount: newTotal,
+      discount_type: discountAmount > 0 ? EDIT_DISCOUNT_TYPE : null,
+      discount_value: discountAmount > 0 ? discountValue : 0,
+      discount_amount: discountAmount
+    }).eq("id", CURRENT_DETAIL_ORDER.id);
+    CURRENT_DETAIL_ORDER.total_amount = newTotal;
+    CURRENT_DETAIL_ORDER.discount_amount = discountAmount;
+  }
 
   EDIT_PRICE_MODE = false;
   await loadOrders();
