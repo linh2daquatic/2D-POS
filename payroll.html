@@ -162,7 +162,10 @@ async function loadMonth() {
     const src = paid ? e : null;
     STATE[s.id] = {
       base: num(src ? e.base_salary : s.base_salary),
-      insurance: num(src ? e.insurance : s.insurance),
+      insBase: num(src ? e.ins_base : s.ins_base),
+      empPct: src && num(e.ins_base) > 0 ? num(e.ins_emp) / num(e.ins_base) * 100 : (s.ins_emp_pct == null ? 10.5 : num(s.ins_emp_pct)),
+      coPct: src && num(e.ins_base) > 0 ? num(e.ins_co) / num(e.ins_base) * 100 : (s.ins_co_pct == null ? 21.5 : num(s.ins_co_pct)),
+      mode: (e && e.ins_mode) || s.ins_mode || "split",
       allowance: num(src ? e.allowance : s.allowance),
       pct: num(src ? e.profit_percent : s.profit_percent),
       profitBase: src ? num(e.profit_base) : (e && e.status === "draft" ? num(e.profit_base) : (PREV_PROFIT == null ? 0 : PREV_PROFIT)),
@@ -185,55 +188,101 @@ function defaultPayDate() {
 
 function calc(sid) {
   const s = STAFF.find(x => x.id === sid), st = STATE[sid];
+  const owner = s.role_type === "chu";
   const bonus = s.role_type === "qlbh" ? Math.round(Math.max(0, st.profitBase) * st.pct / 100) : 0;
   const lines = [];
-  lines.push({ label: "Lương cơ bản", amt: st.base });
-  if (st.insurance) lines.push({ label: "Bảo hiểm xã hội", amt: st.insurance });
-  if (s.role_type === "qlbh") {
-    lines.push({ label: `${st.pct}% lợi nhuận thuần tháng trước`, amt: bonus, bonus: true });
-  } else {
-    [["layout", "Số lượng layout"], ["promax", "Setup bể ProMax"], ["infinity", "Setup bể Infinity"], ["care", "Chăm sóc bể khách"], ["far", "Chuyến khách ở xa"]]
-      .forEach(([k, l]) => lines.push({ label: l, key: k, cnt: st.cnt[k], rate: st.rate[k], amt: st.cnt[k] * st.rate[k] }));
+  if (!owner) {
+    lines.push({ label: "Lương cơ bản", amt: st.base });
+    if (s.role_type === "qlbh") {
+      lines.push({ label: `${st.pct}% lợi nhuận thuần tháng trước`, amt: bonus, bonus: true });
+    } else {
+      [["layout", "Số lượng layout"], ["promax", "Setup bể ProMax"], ["infinity", "Setup bể Infinity"], ["care", "Chăm sóc bể khách"], ["far", "Chuyến khách ở xa"]]
+        .forEach(([k, l]) => lines.push({ label: l, key: k, cnt: st.cnt[k], rate: st.rate[k], amt: st.cnt[k] * st.rate[k] }));
+    }
+    if (st.allowance) lines.push({ label: "Phụ cấp xăng xe", amt: st.allowance });
+    if (st.adj) lines.push({ label: "Thưởng/phạt" + (st.adjNote ? ` (${st.adjNote})` : ""), amt: st.adj });
   }
-  if (st.allowance) lines.push({ label: "Phụ cấp xăng xe", amt: st.allowance });
-  if (st.adj) lines.push({ label: "Thưởng/phạt" + (st.adjNote ? ` (${st.adjNote})` : ""), amt: st.adj });
-  const total = lines.reduce((a, l) => a + num(l.amt), 0);
-  return { lines, total, bonus };
+  const gross = lines.reduce((a, l) => a + num(l.amt), 0);
+  const emp = Math.round(st.insBase * st.empPct / 100), co = Math.round(st.insBase * st.coPct / 100);
+  const insTotal = emp + co;                       // tổng nộp cơ quan BHXH
+  const shopAll = st.mode === "shop_all";
+  let net = 0, insCost = 0, txs = [];
+  const [y, m] = MONTH.split("-");
+  if (owner) {
+    insCost = co + (shopAll ? emp : 0);            // phần của chủ (nếu không phải shop chịu) là rút vốn cá nhân
+    if (insCost > 0) txs.push({ category: "Bảo hiểm xã hội", amount: insCost, note: `BHXH T${m}/${y} - ${s.name}` });
+    if (!shopAll && emp > 0) txs.push({ category: "Rút vốn / Cá nhân", amount: emp, note: `BHXH phần người lao động T${m}/${y} - ${s.name}` });
+  } else {
+    net = shopAll ? gross : gross - emp;
+    insCost = insTotal;
+    if (net > 0) txs.push({ category: "Lương nhân viên", amount: net, note: `Lương T${m}/${y} - ${s.name}` });
+    if (insTotal > 0) txs.push({ category: "Bảo hiểm xã hội", amount: insTotal, note: `BHXH T${m}/${y} - ${s.name}` });
+  }
+  const cost = net + insCost;                       // chi phí nhân sự tính vào Dashboard
+  return { lines, gross, emp, co, insTotal, net, insCost, cost, total: cost, bonus, txs, owner, shopAll };
+}
+
+function bhxhHtml(sid) {
+  const st = STATE[sid], c = calc(sid), row = (a, b, cls) => `<div class="pay-line"><div>${a}</div><div></div><div></div><div class="amt ${cls || ""}">${b}</div></div>`;
+  let h = "";
+  if (!c.owner) {
+    h += row("<b>Tổng thu nhập (gộp)</b>", fmt(c.gross));
+    if (!c.shopAll && c.emp) h += row(`Trừ BHXH phần nhân viên (${+st.empPct.toFixed(2)}%)`, "−" + fmt(c.emp));
+    h += row("<b>Lương thực nhận (chuyển cho nhân viên)</b>", "<b>" + fmt(c.net) + "</b>");
+  }
+  if (st.insBase > 0) {
+    h += `<div class="hint" style="margin-top:8px;">BHXH tính trên mức ${fmt(st.insBase)}: người lao động ${+st.empPct.toFixed(2)}% = ${fmt(c.emp)} · công ty ${+st.coPct.toFixed(2)}% = ${fmt(c.co)}</div>`;
+    h += row("<b>Nộp cơ quan BHXH (cả hai phần)</b>", "<b>" + fmt(c.insTotal) + "</b>");
+    if (c.shopAll) h += `<div class="hint">Shop đóng 100%: phần nhân viên ${fmt(c.emp)} cũng tính vào chi phí.</div>`;
+    else if (c.owner) h += `<div class="hint">Phần của chủ ${fmt(c.emp)} ghi là "Rút vốn / Cá nhân", không tính vào chi phí Dashboard.</div>`;
+  } else {
+    h += `<div class="hint" style="margin-top:8px;">Chưa nhập mức lương đóng BHXH (vào ⚙ Cài đặt nhân viên).</div>`;
+  }
+  return h;
 }
 
 function renderSheet() {
   const sheet = document.getElementById("sheet");
   if (!STAFF.length) { sheet.innerHTML = '<div class="panel"><div class="panel-body">Chưa có nhân viên. Bấm "+ Thêm nhân viên".</div></div>'; return; }
   let grand = 0;
+  const ROLE = { qlbh: "Quản lý bán hàng", ky_thuat: "Kỹ thuật", chu: "Chủ (chỉ đóng BHXH)" };
   sheet.innerHTML = STAFF.map(s => {
     const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
     grand += c.total;
     const dis = paid ? "disabled" : "";
-    let rows = `<div class="pay-line head"><div>Khoản</div><div style="text-align:right;">Số lượng</div><div style="text-align:right;">Đơn giá</div><div style="text-align:right;">Thành tiền</div></div>`;
-    rows += `<div class="pay-line"><div>Lương cơ bản</div><div></div><div></div><div class="amt">${fmt(st.base)}</div></div>`;
-    if (st.insurance) rows += `<div class="pay-line"><div>Bảo hiểm xã hội</div><div></div><div></div><div class="amt">${fmt(st.insurance)}</div></div>`;
-    if (s.role_type === "qlbh") {
-      rows += `<div class="pay-line"><div>${st.pct}% lợi nhuận thuần tháng trước<div class="hint">Lợi nhuận thuần tháng trước (Dashboard): ${PREV_PROFIT == null ? "chưa tính được" : fmt(PREV_PROFIT)}</div></div><div></div>
-        <div><input type="number" ${dis} value="${st.profitBase}" oninput="setField('${s.id}','profitBase',this.value)" title="Có thể sửa tay"></div>
-        <div class="amt" id="bonus_${s.id}">${fmt(c.bonus)}</div></div>`;
-    } else {
-      c.lines.filter(l => l.key).forEach(l => {
-        rows += `<div class="pay-line"><div>${l.label}</div>
-          <div><input type="number" min="0" ${dis} value="${l.cnt}" oninput="setCnt('${s.id}','${l.key}',this.value)"></div>
-          <div class="rate">${fmt(l.rate)}</div><div class="amt" id="amt_${s.id}_${l.key}">${fmt(l.amt)}</div></div>`;
-      });
+    let rows = "";
+    if (!c.owner) {
+      rows += `<div class="pay-line head"><div>Khoản</div><div style="text-align:right;">Số lượng</div><div style="text-align:right;">Đơn giá</div><div style="text-align:right;">Thành tiền</div></div>`;
+      rows += `<div class="pay-line"><div>Lương cơ bản</div><div></div><div></div><div class="amt">${fmt(st.base)}</div></div>`;
+      if (s.role_type === "qlbh") {
+        rows += `<div class="pay-line"><div>${st.pct}% lợi nhuận thuần tháng trước<div class="hint">Lợi nhuận thuần tháng trước (Dashboard): ${PREV_PROFIT == null ? "chưa tính được" : fmt(PREV_PROFIT)}</div></div><div></div>
+          <div><input type="number" ${dis} value="${st.profitBase}" oninput="setField('${s.id}','profitBase',this.value)" title="Có thể sửa tay"></div>
+          <div class="amt" id="bonus_${s.id}">${fmt(c.bonus)}</div></div>`;
+      } else {
+        c.lines.filter(l => l.key).forEach(l => {
+          rows += `<div class="pay-line"><div>${l.label}</div>
+            <div><input type="number" min="0" ${dis} value="${l.cnt}" oninput="setCnt('${s.id}','${l.key}',this.value)"></div>
+            <div class="rate">${fmt(l.rate)}</div><div class="amt" id="amt_${s.id}_${l.key}">${fmt(l.amt)}</div></div>`;
+        });
+      }
+      if (st.allowance) rows += `<div class="pay-line"><div>Phụ cấp xăng xe</div><div></div><div></div><div class="amt">${fmt(st.allowance)}</div></div>`;
+      rows += `<div class="pay-line"><div>Thưởng / phạt <input type="text" ${dis} placeholder="Ghi chú" value="${(st.adjNote || "").replace(/"/g, "&quot;")}" oninput="setField('${s.id}','adjNote',this.value,true)" style="margin-top:4px; text-align:left;"></div><div></div>
+        <div><input type="number" ${dis} value="${st.adj}" oninput="setField('${s.id}','adj',this.value)" title="Số âm = phạt"></div><div class="amt">${fmt(st.adj)}</div></div>`;
     }
-    if (st.allowance) rows += `<div class="pay-line"><div>Phụ cấp xăng xe</div><div></div><div></div><div class="amt">${fmt(st.allowance)}</div></div>`;
-    rows += `<div class="pay-line"><div>Thưởng / phạt <input type="text" ${dis} placeholder="Ghi chú" value="${(st.adjNote || "").replace(/"/g, "&quot;")}" oninput="setField('${s.id}','adjNote',this.value,true)" style="margin-top:4px; text-align:left;"></div><div></div>
-      <div><input type="number" ${dis} value="${st.adj}" oninput="setField('${s.id}','adj',this.value)" title="Số âm = phạt"></div><div class="amt">${fmt(st.adj)}</div></div>`;
+    const modeSel = `<div class="flex" style="gap:8px; align-items:center; margin:12px 0 4px;"><label class="hint" style="margin:0;">Cách đóng BHXH:</label>
+      <select ${dis} onchange="setMode('${s.id}', this.value)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
+        <option value="split" ${st.mode !== "shop_all" ? "selected" : ""}>Theo luật: nhân viên chịu ${+st.empPct.toFixed(2)}% (trừ vào lương), shop ${+st.coPct.toFixed(2)}%</option>
+        <option value="shop_all" ${st.mode === "shop_all" ? "selected" : ""}>Shop đóng 100% (không trừ lương nhân viên)</option></select></div>`;
     return `<details class="staff-card" ${OPEN_CARDS.has(s.id) ? "open" : ""} ontoggle="toggleCard('${s.id}', this.open)">
-      <summary><div class="sum-left">${s.name} <span class="hint" style="font-weight:400;">· ${s.role_type === "qlbh" ? "Quản lý bán hàng" : "Kỹ thuật"}</span></div>
+      <summary><div class="sum-left">${s.name} <span class="hint" style="font-weight:400;">· ${ROLE[s.role_type] || ""}</span></div>
         <div class="sum-right">${paid ? `<span class="tag-paid">✔ Đã chốt${e.paid_date ? " " + formatDate(e.paid_date) : ""}</span>` : '<span class="tag-draft">Chưa chốt</span>'}
         <span class="sum-amt" id="sum_${s.id}">${fmt(c.total)}</span></div></summary>
       <div class="panel-body"><div style="text-align:right; margin-bottom:6px;"><button class="btn btn-secondary btn-mini" onclick="openStaff('${s.id}')">⚙ Cài đặt nhân viên</button></div>${rows}
-        <div class="pay-total"><span>Tổng lương</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
+        ${modeSel}
+        <div id="bh_${s.id}">${bhxhHtml(s.id)}</div>
+        <div class="pay-total"><span>Chi phí nhân sự (tính vào Dashboard)</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
         <div class="staff-actions">
-          ${paid ? `<span class="hint">Đã trừ vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
+          ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
             <button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy chốt</button>` : `
             <label class="hint">Ngày chi</label><input type="date" value="${st.payDate}" onchange="setField('${s.id}','payDate',this.value,true)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
             <select onchange="setField('${s.id}','method',this.value,true)" style="padding:7px; border:1px solid var(--border); border-radius:6px;">
@@ -241,9 +290,9 @@ function renderSheet() {
             <button class="btn btn-secondary" onclick="saveEntry('${s.id}')">Lưu nháp</button>
             <button class="btn btn-primary" onclick="closePayroll('${s.id}')">✔ Chốt lương</button>`}
         </div>
-        ${paid ? "" : `<div class="hint">Ngày chi quyết định tháng nào Dashboard trừ khoản này (Dashboard tính theo ngày ghi chi). Muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
+        ${paid ? "" : `<div class="hint">Chốt sẽ ghi ${c.txs.length} khoản chi vào Quỹ (lương thực nhận và BHXH tách riêng). Ngày chi quyết định tháng nào Dashboard trừ; muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
       </div></details>`;
-  }).join("") + `<div class="panel"><div class="panel-body"><div class="pay-total" style="padding:0;"><span>Tổng lương tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</span><span id="grandTotal">${fmt(grand)}</span></div></div></div>`;
+  }).join("") + `<div class="panel"><div class="panel-body"><div class="pay-total" style="padding:0;"><span>Tổng chi phí nhân sự tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</span><span id="grandTotal">${fmt(grand)}</span></div></div></div>`;
 }
 
 function refreshTotals() {
@@ -253,61 +302,73 @@ function refreshTotals() {
     const t = document.getElementById("total_" + s.id); if (t) t.textContent = fmt(c.total);
     const sm = document.getElementById("sum_" + s.id); if (sm) sm.textContent = fmt(c.total);
     const b = document.getElementById("bonus_" + s.id); if (b) b.textContent = fmt(c.bonus);
+    const bh = document.getElementById("bh_" + s.id); if (bh) bh.innerHTML = bhxhHtml(s.id);
     c.lines.filter(l => l.key).forEach(l => { const a = document.getElementById(`amt_${s.id}_${l.key}`); if (a) a.textContent = fmt(l.amt); });
   });
   const g = document.getElementById("grandTotal"); if (g) g.textContent = fmt(grand);
 }
+function setMode(sid, v) { STATE[sid].mode = v; refreshTotals(); }
 function setCnt(sid, k, v) { STATE[sid].cnt[k] = num(v); refreshTotals(); }
 function setField(sid, k, v, raw) { STATE[sid][k] = raw ? v : num(v); if (!raw) refreshTotals(); else if (k === "adjNote") {} }
 
 function entryPayload(sid, status) {
   const st = STATE[sid], c = calc(sid), { first } = monthRange(MONTH);
   return {
-    staff_id: sid, month: first, base_salary: st.base, insurance: st.insurance, profit_base: st.profitBase, profit_percent: st.pct, profit_bonus: c.bonus,
+    staff_id: sid, month: first, base_salary: st.base, insurance: c.insTotal, profit_base: st.profitBase, profit_percent: st.pct, profit_bonus: c.bonus,
     cnt_layout: st.cnt.layout, cnt_promax: st.cnt.promax, cnt_infinity: st.cnt.infinity, cnt_care: st.cnt.care, cnt_far: st.cnt.far,
     rate_layout: st.rate.layout, rate_promax: st.rate.promax, rate_infinity: st.rate.infinity, rate_care: st.rate.care, rate_far: st.rate.far,
-    allowance: st.allowance, adjustment: st.adj, adjustment_note: st.adjNote || null, total: c.total,
+    allowance: st.allowance, adjustment: st.adj, adjustment_note: st.adjNote || null, total: c.cost,
+    ins_base: st.insBase, ins_emp: c.emp, ins_co: c.co, ins_mode: st.mode, net_salary: c.net, ins_total: c.insCost,
     status, method: st.method, paid_date: status === "paid" ? st.payDate : null
   };
 }
 
 async function saveEntry(sid) {
   const { error } = await sb.from("payroll_entries").upsert(entryPayload(sid, "draft"), { onConflict: "staff_id,month" });
-  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  if (error) { alert("Lỗi khi lưu: " + error.message + "\nBạn đã chạy migration-30.sql chưa?"); return; }
   await loadMonth(); loadHistory();
 }
 
 async function closePayroll(sid) {
   const s = STAFF.find(x => x.id === sid), st = STATE[sid], c = calc(sid);
-  if (c.total <= 0) { alert("Tổng lương bằng 0, không thể chốt."); return; }
+  if (!c.txs.length) { alert("Không có khoản nào để chi, không thể chốt."); return; }
+  if (c.net < 0) { alert("Lương thực nhận bị âm (BHXH phần nhân viên lớn hơn tổng thu nhập). Kiểm tra lại."); return; }
   if (!st.payDate) { alert("Chọn ngày chi."); return; }
-  if (!confirm(`Chốt lương ${s.name}: ${fmt(c.total)}\nGhi chi ${st.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(st.payDate)}. Quỹ và Dashboard sẽ tự trừ. Tiếp tục?`)) return;
   const old = ENTRIES[sid];
   if (old && old.status === "paid") { alert("Lương này đã được chốt rồi."); return; }
-  const [y, m] = MONTH.split("-");
+  const list = c.txs.map(t => `• ${t.category}: ${fmt(t.amount)}`).join("\n");
+  if (!confirm(`Chốt ${s.name}\n${list}\nChi ${st.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(st.payDate)}.\nChi phí nhân sự tính vào Dashboard: ${fmt(c.cost)}. Tiếp tục?`)) return;
   const createdAt = new Date(st.payDate + "T12:00:00").toISOString();
-  const { data: tx, error: txErr } = await sb.from("cash_transactions").insert({
-    type: "expense", method: st.method, category: "Lương nhân viên", amount: c.total,
-    note: `Lương T${m}/${y} - ${s.name}`, created_by: CURRENT_PROFILE.id, created_at: createdAt
-  }).select("id").single();
-  if (txErr) { alert("Lỗi khi ghi chi: " + txErr.message); return; }
-  const payload = entryPayload(sid, "paid"); payload.cash_tx_id = tx.id;
+  const ids = [];
+  for (const t of c.txs) {
+    const { data: tx, error: txErr } = await sb.from("cash_transactions").insert({
+      type: "expense", method: st.method, category: t.category, amount: t.amount,
+      note: t.note, created_by: CURRENT_PROFILE.id, created_at: createdAt
+    }).select("id").single();
+    if (txErr) {
+      if (ids.length) await sb.from("cash_transactions").delete().in("id", ids);
+      alert("Lỗi khi ghi chi (đã hoàn tác): " + txErr.message); return;
+    }
+    ids.push(tx.id);
+  }
+  const payload = entryPayload(sid, "paid"); payload.cash_tx_id = ids[0]; payload.tx_ids = ids;
   const { error } = await sb.from("payroll_entries").upsert(payload, { onConflict: "staff_id,month" });
   if (error) {
-    await sb.from("cash_transactions").delete().eq("id", tx.id);
-    alert("Lỗi khi chốt lương (đã hoàn tác khoản chi): " + error.message); return;
+    await sb.from("cash_transactions").delete().in("id", ids);
+    alert("Lỗi khi chốt lương (đã hoàn tác các khoản chi): " + error.message + "\nBạn đã chạy migration-30.sql chưa?"); return;
   }
   await loadMonth(); loadHistory();
 }
 
 async function undoClose(sid) {
   const e = ENTRIES[sid]; if (!e) return;
-  if (!confirm("Hủy chốt? Khoản chi lương tương ứng trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
-  if (e.cash_tx_id) {
-    const { error } = await sb.from("cash_transactions").delete().eq("id", e.cash_tx_id);
+  if (!confirm("Hủy chốt? Các khoản chi lương và BHXH tương ứng trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
+  const ids = Array.isArray(e.tx_ids) && e.tx_ids.length ? e.tx_ids : (e.cash_tx_id ? [e.cash_tx_id] : []);
+  if (ids.length) {
+    const { error } = await sb.from("cash_transactions").delete().in("id", ids);
     if (error) { alert("Lỗi khi xóa khoản chi: " + error.message); return; }
   }
-  const { error } = await sb.from("payroll_entries").update({ status: "draft", paid_date: null, cash_tx_id: null }).eq("id", e.id);
+  const { error } = await sb.from("payroll_entries").update({ status: "draft", paid_date: null, cash_tx_id: null, tx_ids: [] }).eq("id", e.id);
   if (error) { alert("Lỗi: " + error.message); return; }
   await loadMonth(); loadHistory();
 }
@@ -315,15 +376,16 @@ async function undoClose(sid) {
 async function loadHistory() {
   const box = document.getElementById("history");
   const [er, sr] = await Promise.all([
-    sb.from("payroll_entries").select("staff_id, month, total, status").order("month", { ascending: false }),
+    sb.from("payroll_entries").select("staff_id, month, total, ins_total, status").order("month", { ascending: false }),
     sb.from("payroll_staff").select("id, name")
   ]);
   if (er.error) { box.innerHTML = ""; return; }
   const names = {}; (sr.data || []).forEach(s => names[s.id] = s.name);
   const byMonth = {};
   (er.data || []).forEach(x => {
-    const m = byMonth[x.month] = byMonth[x.month] || { paid: 0, draft: 0, per: {} };
+    const m = byMonth[x.month] = byMonth[x.month] || { paid: 0, draft: 0, ins: 0, per: {} };
     if (x.status === "paid") m.paid += num(x.total); else m.draft += num(x.total);
+    m.ins += num(x.ins_total);
     m.per[x.staff_id] = (m.per[x.staff_id] || 0) + num(x.total);
   });
   const keys = Object.keys(byMonth).sort().reverse();
@@ -331,36 +393,47 @@ async function loadHistory() {
   const ids = Object.keys(names);
   const tot = k => byMonth[k].paid + byMonth[k].draft;
   const thisYear = String(new Date().getFullYear());
-  const yearKeys = keys.filter(k => k.startsWith(thisYear));
-  const yearTotal = yearKeys.reduce((a, k) => a + tot(k), 0);
+  const yearTotal = keys.filter(k => k.startsWith(thisYear)).reduce((a, k) => a + tot(k), 0);
   const allTotal = keys.reduce((a, k) => a + tot(k), 0);
   const avg = keys.length ? allTotal / keys.length : 0;
   box.innerHTML = `<div class="stat-row">
-      <div class="stat-mini"><div class="l">Tổng chi lương năm ${thisYear}</div><div class="v">${fmt(yearTotal)}</div></div>
+      <div class="stat-mini"><div class="l">Chi phí nhân sự năm ${thisYear}</div><div class="v">${fmt(yearTotal)}</div></div>
       <div class="stat-mini"><div class="l">Trung bình / tháng</div><div class="v">${fmt(avg)}</div></div>
-      <div class="stat-mini"><div class="l">Tổng chi lương mọi tháng</div><div class="v">${fmt(allTotal)}</div></div>
+      <div class="stat-mini"><div class="l">Tổng mọi tháng</div><div class="v">${fmt(allTotal)}</div></div>
     </div>
-    <table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Tổng chi lương</th><th style="text-align:right;">Trong đó đã chốt</th></tr></thead><tbody>` +
-    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid)}${byMonth[k].draft ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
-    `<tr><td style="font-weight:700;">Cộng</td>${ids.map(i => `<td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + num(byMonth[k].per[i]), 0))}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(allTotal)}</td><td></td></tr></tbody></table>`;
+    <table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Lương thực nhận</th><th style="text-align:right;">BHXH</th><th style="text-align:right;">Tổng chi phí nhân sự</th><th style="text-align:right;">Trong đó đã chốt</th></tr></thead><tbody>` +
+    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right;">${fmt(tot(k) - byMonth[k].ins)}</td><td style="text-align:right;">${fmt(byMonth[k].ins)}</td><td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid)}${byMonth[k].draft ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
+    `<tr><td style="font-weight:700;">Cộng</td>${ids.map(i => `<td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + num(byMonth[k].per[i]), 0))}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(allTotal - keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(allTotal)}</td><td></td></tr></tbody></table>`;
 }
 
 // ---------- Cài đặt nhân viên ----------
 function openStaff(id) {
   EDIT_STAFF_ID = id;
-  const s = id ? STAFF.find(x => x.id === id) : { name: "", role_type: "ky_thuat", base_salary: 0, insurance: 0, profit_percent: 0, allowance: 0, rate_layout: 0, rate_promax: 0, rate_infinity: 0, rate_care: 0, rate_far: 0 };
+  const s = id ? STAFF.find(x => x.id === id) : { name: "", role_type: "ky_thuat", base_salary: 0, profit_percent: 0, allowance: 0, rate_layout: 0, rate_promax: 0, rate_infinity: 0, rate_care: 0, rate_far: 0, ins_base: 0, ins_emp_pct: 10.5, ins_co_pct: 21.5, ins_mode: "split" };
   document.getElementById("staffTitle").textContent = id ? "Cài đặt: " + s.name : "Thêm nhân viên";
-  const f = (k, label, v) => `<div class="field"><label>${label}</label><input type="number" id="sf_${k}" value="${num(v)}"></div>`;
+  const f = (k, label, v) => `<div class="field"><label>${label}</label><input type="number" step="any" id="sf_${k}" value="${num(v)}"></div>`;
   document.getElementById("staffBody").innerHTML = `
     <div class="field"><label>Tên</label><input type="text" id="sf_name" value="${(s.name || "").replace(/"/g, "&quot;")}"></div>
-    <div class="field"><label>Loại</label><select id="sf_role" onchange="toggleRole()"><option value="qlbh" ${s.role_type === "qlbh" ? "selected" : ""}>Quản lý bán hàng (lương cứng + % lợi nhuận)</option><option value="ky_thuat" ${s.role_type === "ky_thuat" ? "selected" : ""}>Kỹ thuật (theo số lượt)</option></select></div>
-    <div class="row-2">${f("base", "Lương cơ bản", s.base_salary)}${f("ins", "Bảo hiểm xã hội / tháng", s.insurance)}</div>
-    <div class="row-2">${f("allow", "Phụ cấp xăng xe / tháng", s.allowance)}<div id="sf_pctWrap">${f("pct", "% lợi nhuận thuần tháng trước", s.profit_percent)}</div></div>
+    <div class="field"><label>Loại</label><select id="sf_role" onchange="toggleRole()">
+      <option value="qlbh" ${s.role_type === "qlbh" ? "selected" : ""}>Quản lý bán hàng (lương cứng + % lợi nhuận)</option>
+      <option value="ky_thuat" ${s.role_type === "ky_thuat" ? "selected" : ""}>Kỹ thuật (theo số lượt)</option>
+      <option value="chu" ${s.role_type === "chu" ? "selected" : ""}>Chủ cửa hàng (chỉ đóng BHXH, không có lương)</option></select></div>
+    <div id="sf_salary"><div class="row-2">${f("base", "Lương cơ bản", s.base_salary)}${f("allow", "Phụ cấp xăng xe / tháng", s.allowance)}</div></div>
+    <div id="sf_pctWrap">${f("pct", "% lợi nhuận thuần tháng trước", s.profit_percent)}</div>
     <div id="sf_rates">
       <div class="hint" style="margin-bottom:8px;">Đơn giá mỗi lượt (đổi được bất cứ lúc nào; tháng đã chốt giữ nguyên đơn giá cũ):</div>
       <div class="row-2">${f("rl", "Layout", s.rate_layout)}${f("rp", "Setup bể ProMax", s.rate_promax)}</div>
       <div class="row-2">${f("ri", "Setup bể Infinity", s.rate_infinity)}${f("rc", "Chăm sóc bể khách", s.rate_care)}</div>
       ${f("rf", "Khách ở xa (mỗi chuyến)", s.rate_far)}
+    </div>
+    <div style="border-top:1px solid var(--border); margin:10px 0; padding-top:12px;">
+      <div style="font-weight:600; margin-bottom:8px;">Bảo hiểm xã hội</div>
+      ${f("insbase", "Mức lương đóng BHXH", s.ins_base)}
+      <div class="row-2">${f("emppct", "Người lao động đóng (%)", s.ins_emp_pct == null ? 10.5 : s.ins_emp_pct)}${f("copct", "Công ty đóng (%)", s.ins_co_pct == null ? 21.5 : s.ins_co_pct)}</div>
+      <div class="field"><label>Mặc định</label><select id="sf_mode">
+        <option value="split" ${s.ins_mode !== "shop_all" ? "selected" : ""}>Theo luật: phần người lao động trừ vào lương</option>
+        <option value="shop_all" ${s.ins_mode === "shop_all" ? "selected" : ""}>Shop đóng 100% (không trừ lương)</option></select>
+        <div class="hint">Mỗi tháng vẫn đổi được ngay trên bảng lương. Muốn shop chỉ đóng 21,5%, chọn "Theo luật".</div></div>
     </div>
     <div class="hint">Thay đổi áp dụng cho các tháng chưa chốt.</div>
     <div class="staff-actions">
@@ -371,21 +444,24 @@ function openStaff(id) {
   document.getElementById("staffModal").classList.add("open");
 }
 function toggleRole() {
-  const q = document.getElementById("sf_role").value === "qlbh";
-  document.getElementById("sf_pctWrap").style.display = q ? "" : "none";
-  document.getElementById("sf_rates").style.display = q ? "none" : "";
+  const r = document.getElementById("sf_role").value;
+  document.getElementById("sf_salary").style.display = r === "chu" ? "none" : "";
+  document.getElementById("sf_pctWrap").style.display = r === "qlbh" ? "" : "none";
+  document.getElementById("sf_rates").style.display = r === "ky_thuat" ? "" : "none";
 }
 function closeStaff() { document.getElementById("staffModal").classList.remove("open"); }
 async function saveStaff() {
   const g = k => num(document.getElementById("sf_" + k).value);
   const name = document.getElementById("sf_name").value.trim();
   if (!name) { alert("Nhập tên nhân viên."); return; }
+  const role = document.getElementById("sf_role").value;
   const row = {
-    name, role_type: document.getElementById("sf_role").value, base_salary: g("base"), insurance: g("ins"), allowance: g("allow"), profit_percent: g("pct"),
-    rate_layout: g("rl"), rate_promax: g("rp"), rate_infinity: g("ri"), rate_care: g("rc"), rate_far: g("rf")
+    name, role_type: role, base_salary: role === "chu" ? 0 : g("base"), allowance: role === "chu" ? 0 : g("allow"), profit_percent: g("pct"),
+    rate_layout: g("rl"), rate_promax: g("rp"), rate_infinity: g("ri"), rate_care: g("rc"), rate_far: g("rf"),
+    ins_base: g("insbase"), ins_emp_pct: g("emppct"), ins_co_pct: g("copct"), ins_mode: document.getElementById("sf_mode").value
   };
   const { error } = EDIT_STAFF_ID ? await sb.from("payroll_staff").update(row).eq("id", EDIT_STAFF_ID) : await sb.from("payroll_staff").insert(row);
-  if (error) { alert("Lỗi: " + error.message); return; }
+  if (error) { alert("Lỗi: " + error.message + "\nBạn đã chạy migration-30.sql chưa?"); return; }
   closeStaff(); await loadMonth(); loadHistory();
 }
 async function deactivateStaff() {
