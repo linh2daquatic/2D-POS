@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lương — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:560px; max-height:88vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.pay-line { display:grid; grid-template-columns:1.6fr 90px 120px 130px; gap:8px; align-items:center; padding:6px 0; border-bottom:1px dashed var(--border); font-size:13.5px; }
+.pay-line.head { font-size:11.5px; color:var(--text-mute); text-transform:uppercase; border-bottom:1px solid var(--border); }
+.pay-line input { width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13.5px; text-align:right; }
+.pay-line .amt { text-align:right; font-weight:600; }
+.pay-line .rate { text-align:right; color:var(--text-mute); }
+.pay-total { display:flex; justify-content:space-between; font-family:var(--font-display); font-size:20px; font-weight:700; padding:12px 0 4px; }
+.staff-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+.tag-paid { background:#ecfdf5; color:var(--success); padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+.tag-draft { background:#fff7ed; color:#c2410c; padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+.hint { font-size:12px; color:var(--text-mute); margin-top:4px; }
+@media (max-width:640px){ .pay-line { grid-template-columns:1.4fr 70px 100px 110px; font-size:12.5px; } }
+</style>
+</head>
+<body>
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let STAFF = [];
+let ENTRIES = {};      // staff_id -> entry của tháng đang xem
+let MONTH = null;      // "YYYY-MM"
+let PREV_PROFIT = null; // lợi nhuận thuần tháng trước
+let STATE = {};        // staff_id -> giá trị đang nhập
+let EDIT_STAFF_ID = null;
+const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ", "Rút vốn / Cá nhân"];
+const num = v => Number(v) || 0;
+const fmt = v => formatVND(Math.round(num(v)));
+
+(async () => {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+  if (CURRENT_PROFILE.role !== "owner") { alert("Chỉ Chủ cửa hàng mới xem được bảng lương."); location.href = "index.html"; return; }
+  renderLayout({ activePage: "payroll", profile: CURRENT_PROFILE, title: "Bảng lương", subtitle: "Tính lương, chốt lương và theo dõi qua các tháng" });
+  const now = new Date();
+  MONTH = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+  document.getElementById("pageContent").innerHTML = `
+    <div class="flex" style="justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div class="flex" style="gap:10px; align-items:center;">
+        <label style="font-weight:600;">Tháng</label>
+        <input type="month" id="monthInput" value="${MONTH}" style="padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
+      </div>
+      <div class="flex" style="gap:8px;">
+        <button class="btn btn-secondary" onclick="openStaff(null)">+ Thêm nhân viên</button>
+      </div>
+    </div>
+    <div id="sheet"></div>
+    <div class="panel" style="margin-top:20px;">
+      <div class="panel-header"><h2>📈 Tổng lương qua các tháng</h2></div>
+      <div class="panel-body table-scroll" id="history"></div>
+    </div>
+    <div class="modal-overlay" id="staffModal"><div class="modal-box">
+      <div class="modal-header"><h3 id="staffTitle">Nhân viên</h3><span class="modal-close" onclick="closeStaff()">×</span></div>
+      <div class="modal-body" id="staffBody"></div>
+    </div></div>`;
+  document.getElementById("monthInput").addEventListener("change", e => { MONTH = e.target.value || MONTH; loadMonth(); });
+  await loadMonth();
+  loadHistory();
+})();
+
+function monthRange(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return { start: new Date(y, m - 1, 1), end: new Date(y, m, 0, 23, 59, 59), first: `${y}-${String(m).padStart(2, "0")}-01` };
+}
+
+async function fetchAll(buildQuery) {
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return out;
+}
+
+// Lợi nhuận thuần của 1 tháng — cùng công thức với Dashboard
+async function netProfitOf(ym) {
+  const { start, end } = monthRange(ym);
+  const s = start.toISOString(), e = end.toISOString();
+  const items = await fetchAll(() => sb.from("order_items")
+    .select("quantity, unit_price, cost_price_at_sale, orders!inner(created_at,status)")
+    .eq("orders.status", "completed").gte("orders.created_at", s).lte("orders.created_at", e).order("id"));
+  let gross = 0;
+  items.forEach(i => { gross += num(i.quantity) * (num(i.unit_price) - num(i.cost_price_at_sale)); });
+  const tx = await fetchAll(() => sb.from("cash_transactions").select("category, amount").eq("type", "expense")
+    .gte("created_at", s).lte("created_at", e).order("created_at"));
+  const fixed = tx.filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category)).reduce((a, t) => a + num(t.amount), 0);
+  const { data: zero } = await sb.from("orders").select("id").eq("status", "completed").eq("total_amount", 0).gte("created_at", s).lte("created_at", e);
+  let zeroCost = 0;
+  const ids = (zero || []).map(o => o.id);
+  if (ids.length) {
+    const { data } = await sb.from("order_items").select("quantity, cost_price_at_sale").in("order_id", ids);
+    zeroCost = (data || []).reduce((a, i) => a + num(i.quantity) * num(i.cost_price_at_sale), 0);
+  }
+  const { data: wo } = await sb.from("stock_adjustments").select("cost_value").gte("created_at", s).lte("created_at", e);
+  const writeOff = (wo || []).reduce((a, w) => a + num(w.cost_value), 0);
+  return gross - (fixed + zeroCost + writeOff);
+}
+
+async function loadMonth() {
+  const sheet = document.getElementById("sheet");
+  sheet.innerHTML = '<div class="panel"><div class="panel-body">Đang tải...</div></div>';
+  const { first } = monthRange(MONTH);
+  const [sr, er] = await Promise.all([
+    sb.from("payroll_staff").select("*").eq("active", true).order("created_at"),
+    sb.from("payroll_entries").select("*").eq("month", first)
+  ]);
+  if (sr.error || er.error) {
+    sheet.innerHTML = `<div class="panel"><div class="panel-body" style="color:var(--danger);">Lỗi: ${(sr.error || er.error).message}<br>Bạn đã chạy migration-29.sql trong Supabase chưa?</div></div>`;
+    return;
+  }
+  STAFF = sr.data || [];
+  ENTRIES = {}; (er.data || []).forEach(x => ENTRIES[x.staff_id] = x);
+  PREV_PROFIT = null;
+  if (STAFF.some(s => s.role_type === "qlbh")) {
+    const [y, m] = MONTH.split("-").map(Number);
+    const pd = new Date(y, m - 2, 1);
+    const pym = pd.getFullYear() + "-" + String(pd.getMonth() + 1).padStart(2, "0");
+    try { PREV_PROFIT = await netProfitOf(pym); } catch (e) { console.warn(e); }
+  }
+  STATE = {};
+  STAFF.forEach(s => {
+    const e = ENTRIES[s.id];
+    const paid = e && e.status === "paid";
+    const src = paid ? e : null;
+    STATE[s.id] = {
+      base: num(src ? e.base_salary : s.base_salary),
+      insurance: num(src ? e.insurance : s.insurance),
+      allowance: num(src ? e.allowance : s.allowance),
+      pct: num(src ? e.profit_percent : s.profit_percent),
+      profitBase: src ? num(e.profit_base) : (e && e.status === "draft" ? num(e.profit_base) : (PREV_PROFIT == null ? 0 : PREV_PROFIT)),
+      rate: {
+        layout: num(src ? e.rate_layout : s.rate_layout), promax: num(src ? e.rate_promax : s.rate_promax),
+        infinity: num(src ? e.rate_infinity : s.rate_infinity), care: num(src ? e.rate_care : s.rate_care), far: num(src ? e.rate_far : s.rate_far)
+      },
+      cnt: e ? { layout: num(e.cnt_layout), promax: num(e.cnt_promax), infinity: num(e.cnt_infinity), care: num(e.cnt_care), far: num(e.cnt_far) } : { layout: 0, promax: 0, infinity: 0, care: 0, far: 0 },
+      adj: e ? num(e.adjustment) : 0, adjNote: e ? (e.adjustment_note || "") : "",
+      payDate: e && e.paid_date ? e.paid_date : defaultPayDate(), method: e && e.method ? e.method : "cash"
+    };
+  });
+  renderSheet();
+}
+
+function defaultPayDate() {
+  const t = new Date();
+  return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+}
+
+function calc(sid) {
+  const s = STAFF.find(x => x.id === sid), st = STATE[sid];
+  const bonus = s.role_type === "qlbh" ? Math.round(Math.max(0, st.profitBase) * st.pct / 100) : 0;
+  const lines = [];
+  lines.push({ label: "Lương cơ bản", amt: st.base });
+  if (st.insurance) lines.push({ label: "Bảo hiểm xã hội", amt: st.insurance });
+  if (s.role_type === "qlbh") {
+    lines.push({ label: `${st.pct}% lợi nhuận thuần tháng trước`, amt: bonus, bonus: true });
+  } else {
+    [["layout", "Số lượng layout"], ["promax", "Setup bể ProMax"], ["infinity", "Setup bể Infinity"], ["care", "Chăm sóc bể khách"], ["far", "Chuyến khách ở xa"]]
+      .forEach(([k, l]) => lines.push({ label: l, key: k, cnt: st.cnt[k], rate: st.rate[k], amt: st.cnt[k] * st.rate[k] }));
+  }
+  if (st.allowance) lines.push({ label: "Phụ cấp xăng xe", amt: st.allowance });
+  if (st.adj) lines.push({ label: "Thưởng/phạt" + (st.adjNote ? ` (${st.adjNote})` : ""), amt: st.adj });
+  const total = lines.reduce((a, l) => a + num(l.amt), 0);
+  return { lines, total, bonus };
+}
+
+function renderSheet() {
+  const sheet = document.getElementById("sheet");
+  if (!STAFF.length) { sheet.innerHTML = '<div class="panel"><div class="panel-body">Chưa có nhân viên. Bấm "+ Thêm nhân viên".</div></div>'; return; }
+  let grand = 0;
+  sheet.innerHTML = STAFF.map(s => {
+    const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
+    grand += c.total;
+    const dis = paid ? "disabled" : "";
+    let rows = `<div class="pay-line head"><div>Khoản</div><div style="text-align:right;">Số lượng</div><div style="text-align:right;">Đơn giá</div><div style="text-align:right;">Thành tiền</div></div>`;
+    rows += `<div class="pay-line"><div>Lương cơ bản</div><div></div><div></div><div class="amt">${fmt(st.base)}</div></div>`;
+    if (st.insurance) rows += `<div class="pay-line"><div>Bảo hiểm xã hội</div><div></div><div></div><div class="amt">${fmt(st.insurance)}</div></div>`;
+    if (s.role_type === "qlbh") {
+      rows += `<div class="pay-line"><div>${st.pct}% lợi nhuận thuần tháng trước<div class="hint">Lợi nhuận thuần tháng trước (Dashboard): ${PREV_PROFIT == null ? "chưa tính được" : fmt(PREV_PROFIT)}</div></div><div></div>
+        <div><input type="number" ${dis} value="${st.profitBase}" oninput="setField('${s.id}','profitBase',this.value)" title="Có thể sửa tay"></div>
+        <div class="amt" id="bonus_${s.id}">${fmt(c.bonus)}</div></div>`;
+    } else {
+      c.lines.filter(l => l.key).forEach(l => {
+        rows += `<div class="pay-line"><div>${l.label}</div>
+          <div><input type="number" min="0" ${dis} value="${l.cnt}" oninput="setCnt('${s.id}','${l.key}',this.value)"></div>
+          <div class="rate">${fmt(l.rate)}</div><div class="amt" id="amt_${s.id}_${l.key}">${fmt(l.amt)}</div></div>`;
+      });
+    }
+    if (st.allowance) rows += `<div class="pay-line"><div>Phụ cấp xăng xe</div><div></div><div></div><div class="amt">${fmt(st.allowance)}</div></div>`;
+    rows += `<div class="pay-line"><div>Thưởng / phạt <input type="text" ${dis} placeholder="Ghi chú" value="${(st.adjNote || "").replace(/"/g, "&quot;")}" oninput="setField('${s.id}','adjNote',this.value,true)" style="margin-top:4px; text-align:left;"></div><div></div>
+      <div><input type="number" ${dis} value="${st.adj}" oninput="setField('${s.id}','adj',this.value)" title="Số âm = phạt"></div><div class="amt">${fmt(st.adj)}</div></div>`;
+    return `<div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h2>${s.name} <span class="hint" style="font-weight:400;">· ${s.role_type === "qlbh" ? "Quản lý bán hàng" : "Kỹ thuật"}</span></h2>
+        <div>${paid ? `<span class="tag-paid">✔ Đã chốt ${e.paid_date ? formatDate(e.paid_date) : ""}</span>` : '<span class="tag-draft">Chưa chốt</span>'}
+        <button class="btn btn-secondary btn-mini" style="margin-left:8px;" onclick="openStaff('${s.id}')">⚙ Cài đặt</button></div></div>
+      <div class="panel-body">${rows}
+        <div class="pay-total"><span>Tổng lương</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
+        <div class="staff-actions">
+          ${paid ? `<span class="hint">Đã trừ vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
+            <button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy chốt</button>` : `
+            <label class="hint">Ngày chi</label><input type="date" value="${st.payDate}" onchange="setField('${s.id}','payDate',this.value,true)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
+            <select onchange="setField('${s.id}','method',this.value,true)" style="padding:7px; border:1px solid var(--border); border-radius:6px;">
+              <option value="cash" ${st.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${st.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
+            <button class="btn btn-secondary" onclick="saveEntry('${s.id}')">Lưu nháp</button>
+            <button class="btn btn-primary" onclick="closePayroll('${s.id}')">✔ Chốt lương</button>`}
+        </div>
+        ${paid ? "" : `<div class="hint">Ngày chi quyết định tháng nào Dashboard trừ khoản này (Dashboard tính theo ngày ghi chi). Muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
+      </div></div>`;
+  }).join("") + `<div class="panel"><div class="panel-body"><div class="pay-total" style="padding:0;"><span>Tổng lương tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</span><span id="grandTotal">${fmt(grand)}</span></div></div></div>`;
+}
+
+function refreshTotals() {
+  let grand = 0;
+  STAFF.forEach(s => {
+    const c = calc(s.id); grand += c.total;
+    const t = document.getElementById("total_" + s.id); if (t) t.textContent = fmt(c.total);
+    const b = document.getElementById("bonus_" + s.id); if (b) b.textContent = fmt(c.bonus);
+    c.lines.filter(l => l.key).forEach(l => { const a = document.getElementById(`amt_${s.id}_${l.key}`); if (a) a.textContent = fmt(l.amt); });
+  });
+  const g = document.getElementById("grandTotal"); if (g) g.textContent = fmt(grand);
+}
+function setCnt(sid, k, v) { STATE[sid].cnt[k] = num(v); refreshTotals(); }
+function setField(sid, k, v, raw) { STATE[sid][k] = raw ? v : num(v); if (!raw) refreshTotals(); else if (k === "adjNote") {} }
+
+function entryPayload(sid, status) {
+  const st = STATE[sid], c = calc(sid), { first } = monthRange(MONTH);
+  return {
+    staff_id: sid, month: first, base_salary: st.base, insurance: st.insurance, profit_base: st.profitBase, profit_percent: st.pct, profit_bonus: c.bonus,
+    cnt_layout: st.cnt.layout, cnt_promax: st.cnt.promax, cnt_infinity: st.cnt.infinity, cnt_care: st.cnt.care, cnt_far: st.cnt.far,
+    rate_layout: st.rate.layout, rate_promax: st.rate.promax, rate_infinity: st.rate.infinity, rate_care: st.rate.care, rate_far: st.rate.far,
+    allowance: st.allowance, adjustment: st.adj, adjustment_note: st.adjNote || null, total: c.total,
+    status, method: st.method, paid_date: status === "paid" ? st.payDate : null
+  };
+}
+
+async function saveEntry(sid) {
+  const { error } = await sb.from("payroll_entries").upsert(entryPayload(sid, "draft"), { onConflict: "staff_id,month" });
+  if (error) { alert("Lỗi khi lưu: " + error.message); return; }
+  await loadMonth(); loadHistory();
+}
+
+async function closePayroll(sid) {
+  const s = STAFF.find(x => x.id === sid), st = STATE[sid], c = calc(sid);
+  if (c.total <= 0) { alert("Tổng lương bằng 0, không thể chốt."); return; }
+  if (!st.payDate) { alert("Chọn ngày chi."); return; }
+  if (!confirm(`Chốt lương ${s.name}: ${fmt(c.total)}\nGhi chi ${st.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(st.payDate)}. Quỹ và Dashboard sẽ tự trừ. Tiếp tục?`)) return;
+  const old = ENTRIES[sid];
+  if (old && old.status === "paid") { alert("Lương này đã được chốt rồi."); return; }
+  const [y, m] = MONTH.split("-");
+  const createdAt = new Date(st.payDate + "T12:00:00").toISOString();
+  const { data: tx, error: txErr } = await sb.from("cash_transactions").insert({
+    type: "expense", method: st.method, category: "Lương nhân viên", amount: c.total,
+    note: `Lương T${m}/${y} - ${s.name}`, created_by: CURRENT_PROFILE.id, created_at: createdAt
+  }).select("id").single();
+  if (txErr) { alert("Lỗi khi ghi chi: " + txErr.message); return; }
+  const payload = entryPayload(sid, "paid"); payload.cash_tx_id = tx.id;
+  const { error } = await sb.from("payroll_entries").upsert(payload, { onConflict: "staff_id,month" });
+  if (error) {
+    await sb.from("cash_transactions").delete().eq("id", tx.id);
+    alert("Lỗi khi chốt lương (đã hoàn tác khoản chi): " + error.message); return;
+  }
+  await loadMonth(); loadHistory();
+}
+
+async function undoClose(sid) {
+  const e = ENTRIES[sid]; if (!e) return;
+  if (!confirm("Hủy chốt? Khoản chi lương tương ứng trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
+  if (e.cash_tx_id) {
+    const { error } = await sb.from("cash_transactions").delete().eq("id", e.cash_tx_id);
+    if (error) { alert("Lỗi khi xóa khoản chi: " + error.message); return; }
+  }
+  const { error } = await sb.from("payroll_entries").update({ status: "draft", paid_date: null, cash_tx_id: null }).eq("id", e.id);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  await loadMonth(); loadHistory();
+}
+
+async function loadHistory() {
+  const box = document.getElementById("history");
+  const [er, sr] = await Promise.all([
+    sb.from("payroll_entries").select("staff_id, month, total, status").order("month", { ascending: false }),
+    sb.from("payroll_staff").select("id, name")
+  ]);
+  if (er.error) { box.innerHTML = ""; return; }
+  const names = {}; (sr.data || []).forEach(s => names[s.id] = s.name);
+  const byMonth = {};
+  (er.data || []).forEach(x => {
+    const m = byMonth[x.month] = byMonth[x.month] || { paid: 0, draft: 0, per: {} };
+    if (x.status === "paid") m.paid += num(x.total); else m.draft += num(x.total);
+    m.per[x.staff_id] = (m.per[x.staff_id] || 0) + num(x.total);
+  });
+  const keys = Object.keys(byMonth).sort().reverse();
+  if (!keys.length) { box.innerHTML = '<div class="hint">Chưa có tháng nào được lưu.</div>'; return; }
+  const ids = Object.keys(names);
+  box.innerHTML = `<table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Đã chốt</th><th style="text-align:right;">Chưa chốt</th></tr></thead><tbody>` +
+    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(byMonth[k].paid)}</td><td style="text-align:right; color:var(--text-mute);">${byMonth[k].draft ? fmt(byMonth[k].draft) : "—"}</td></tr>`).join("") + "</tbody></table>";
+}
+
+// ---------- Cài đặt nhân viên ----------
+function openStaff(id) {
+  EDIT_STAFF_ID = id;
+  const s = id ? STAFF.find(x => x.id === id) : { name: "", role_type: "ky_thuat", base_salary: 0, insurance: 0, profit_percent: 0, allowance: 0, rate_layout: 0, rate_promax: 0, rate_infinity: 0, rate_care: 0, rate_far: 0 };
+  document.getElementById("staffTitle").textContent = id ? "Cài đặt: " + s.name : "Thêm nhân viên";
+  const f = (k, label, v) => `<div class="field"><label>${label}</label><input type="number" id="sf_${k}" value="${num(v)}"></div>`;
+  document.getElementById("staffBody").innerHTML = `
+    <div class="field"><label>Tên</label><input type="text" id="sf_name" value="${(s.name || "").replace(/"/g, "&quot;")}"></div>
+    <div class="field"><label>Loại</label><select id="sf_role" onchange="toggleRole()"><option value="qlbh" ${s.role_type === "qlbh" ? "selected" : ""}>Quản lý bán hàng (lương cứng + % lợi nhuận)</option><option value="ky_thuat" ${s.role_type === "ky_thuat" ? "selected" : ""}>Kỹ thuật (theo số lượt)</option></select></div>
+    <div class="row-2">${f("base", "Lương cơ bản", s.base_salary)}${f("ins", "Bảo hiểm xã hội / tháng", s.insurance)}</div>
+    <div class="row-2">${f("allow", "Phụ cấp xăng xe / tháng", s.allowance)}<div id="sf_pctWrap">${f("pct", "% lợi nhuận thuần tháng trước", s.profit_percent)}</div></div>
+    <div id="sf_rates">
+      <div class="hint" style="margin-bottom:8px;">Đơn giá mỗi lượt (đổi được bất cứ lúc nào; tháng đã chốt giữ nguyên đơn giá cũ):</div>
+      <div class="row-2">${f("rl", "Layout", s.rate_layout)}${f("rp", "Setup bể ProMax", s.rate_promax)}</div>
+      <div class="row-2">${f("ri", "Setup bể Infinity", s.rate_infinity)}${f("rc", "Chăm sóc bể khách", s.rate_care)}</div>
+      ${f("rf", "Khách ở xa (mỗi chuyến)", s.rate_far)}
+    </div>
+    <div class="hint">Thay đổi áp dụng cho các tháng chưa chốt.</div>
+    <div class="staff-actions">
+      <button class="btn btn-primary" onclick="saveStaff()">Lưu</button>
+      ${id ? '<button class="btn btn-secondary" onclick="deactivateStaff()">Ngừng làm việc</button>' : ""}
+    </div>`;
+  toggleRole();
+  document.getElementById("staffModal").classList.add("open");
+}
+function toggleRole() {
+  const q = document.getElementById("sf_role").value === "qlbh";
+  document.getElementById("sf_pctWrap").style.display = q ? "" : "none";
+  document.getElementById("sf_rates").style.display = q ? "none" : "";
+}
+function closeStaff() { document.getElementById("staffModal").classList.remove("open"); }
+async function saveStaff() {
+  const g = k => num(document.getElementById("sf_" + k).value);
+  const name = document.getElementById("sf_name").value.trim();
+  if (!name) { alert("Nhập tên nhân viên."); return; }
+  const row = {
+    name, role_type: document.getElementById("sf_role").value, base_salary: g("base"), insurance: g("ins"), allowance: g("allow"), profit_percent: g("pct"),
+    rate_layout: g("rl"), rate_promax: g("rp"), rate_infinity: g("ri"), rate_care: g("rc"), rate_far: g("rf")
+  };
+  const { error } = EDIT_STAFF_ID ? await sb.from("payroll_staff").update(row).eq("id", EDIT_STAFF_ID) : await sb.from("payroll_staff").insert(row);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  closeStaff(); await loadMonth(); loadHistory();
+}
+async function deactivateStaff() {
+  if (!confirm("Ngừng làm việc? Lịch sử lương vẫn được giữ.")) return;
+  const { error } = await sb.from("payroll_staff").update({ active: false }).eq("id", EDIT_STAFF_ID);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  closeStaff(); await loadMonth(); loadHistory();
+}
+</script>
+</body>
+</html>
