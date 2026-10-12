@@ -85,6 +85,7 @@
 
 <script src="js/supabase-client.js"></script>
 <script src="js/layout.js"></script>
+<script src="js/product-photos.js"></script>
 <script>
 let CURRENT_PROFILE = null;
 let ALL_PRODUCTS = [];
@@ -602,6 +603,7 @@ function renderProductTableHtml(list, isOwner, inactiveMode) {
           <td>${formatVND(p.retail_price)}</td>
           <td>${formatVND(p.wholesale_price)}</td>
           <td><div class="row-actions">
+            <span class="btn btn-secondary btn-mini" onclick="openPhotoModal('${p.id}')" title="Ảnh sản phẩm (dùng để đăng bài)">📷${(Array.isArray(p.images) && p.images.length) ? ' ' + p.images.length : ''}</span>
             <span class="btn btn-secondary btn-mini" onclick="quickAdjust('${p.id}')" title="Nhập/Xuất kho nhanh">±Kho</span>
             <span class="btn btn-secondary btn-mini" onclick="openWriteOffModal('${p.id}')" title="Ghi nhận hao hụt / sử dụng nội bộ">🗑️ Hao hụt</span>
             <span class="btn btn-secondary btn-mini" onclick="openModal('${p.id}')">Sửa</span>
