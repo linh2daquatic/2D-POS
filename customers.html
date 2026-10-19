@@ -908,11 +908,18 @@ async function showOrderDetail(orderId) {
   EDIT_ORDER_MODE = false;
   SHOW_COST_C = false;
 
-  const { data: order, error: orderErr } = await sb
+  let { data: order, error: orderErr } = await sb
     .from("orders")
-    .select("id, order_code, type, total_amount, paid_amount, discount_amount, created_at, customer_id, customers(name, phone, address)")
+    .select("id, order_code, type, total_amount, paid_amount, discount_amount, discount_type, discount_value, created_at, customer_id, customers(name, phone, address)")
     .eq("id", orderId)
     .single();
+  if (orderErr) {
+    ({ data: order, error: orderErr } = await sb
+      .from("orders")
+      .select("id, order_code, type, total_amount, paid_amount, discount_amount, created_at, customer_id, customers(name, phone, address)")
+      .eq("id", orderId)
+      .single());
+  }
 
   // Thử đọc kèm cột giảm giá % (migration-27); nếu DB chưa có cột thì đọc bản cơ bản để đơn vẫn hiển thị đủ
   let { data: items, error: itemsErr } = await sb
@@ -942,6 +949,7 @@ async function showOrderDetail(orderId) {
 function toggleEditOrder(on) {
   EDIT_ORDER_MODE = on;
   renderOrderDetailBody();
+  if (on) updateEditTotalFromItems();
 }
 
 let SHOW_COST_C = false; // mặc định ẩn giá vốn để chụp màn hình gửi khách
@@ -956,14 +964,19 @@ function renderOrderDetailBody() {
   const debt = Number(order.total_amount) - Number(order.paid_amount);
 
   const totalsBlock = EDIT_ORDER_MODE ? `
-    <div class="field"><label>Giảm giá</label><input id="ed_discount" type="number" step="any" value="${Number(order.discount_amount) || 0}" oninput="updateEditTotalFromItems()"></div>
+    <div class="field"><label>Giảm giá toàn đơn</label>
+      <div class="flex gap-8"><input id="ed_discount" type="number" step="any" min="0" value="${editDiscInit(order).value}" oninput="updateEditTotalFromItems()" style="flex:1;">
+        <select id="ed_disc_type" onchange="changeDiscType()" style="padding:8px; border:1px solid var(--border); border-radius:8px;">
+          <option value="amount" ${editDiscInit(order).type === "amount" ? "selected" : ""}>₫</option>
+          <option value="percent" ${editDiscInit(order).type === "percent" ? "selected" : ""}>%</option></select></div>
+      <div id="ed_disc_hint" style="font-size:12px; color:var(--text-mute); margin-top:4px;"></div></div>
     <div class="field"><label>Tổng tiền (sau giảm giá)</label><input id="ed_total" type="number" step="any" value="${Number(order.total_amount) || 0}"></div>
     <div class="flex gap-8" style="justify-content:flex-end; margin-top:10px;">
       <button type="button" class="btn btn-secondary btn-mini" onclick="toggleEditOrder(false)">Hủy</button>
       <button type="button" class="btn btn-primary btn-mini" onclick="saveOrderEdits()">Lưu</button>
     </div>
   ` : `
-    ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
+    ${Number(order.discount_amount) > 0 ? `<div class="summary-row"><span>Giảm giá${order.discount_type === "percent" && Number(order.discount_value) > 0 ? ` (${Number(order.discount_value)}%)` : ""}</span><span>-${formatVND(order.discount_amount)}</span></div>` : ""}
     <div class="summary-row"><span>Tổng tiền</span><span>${formatVND(order.total_amount)}</span></div>
     ${cashPaid > 0 ? `<div class="summary-row"><span>💵 Đã trả tiền mặt</span><span>${formatVND(cashPaid)}</span></div>` : ""}
     ${transferPaid > 0 ? `<div class="summary-row"><span>🏦 Đã trả chuyển khoản</span><span>${formatVND(transferPaid)}</span></div>` : ""}
@@ -1038,17 +1051,48 @@ function recalcItemRow(idx, src) {
   updateEditTotalFromItems();
 }
 
+function editDiscInit(order) {
+  // Đơn cũ không có discount_value -> coi là giảm theo số tiền
+  if (order.discount_type === "percent" && Number(order.discount_value) > 0) return { type: "percent", value: Number(order.discount_value) };
+  return { type: "amount", value: Number(order.discount_amount) || 0 };
+}
+
+function editSubtotalSum() {
+  const order = CURRENT_DEBT_ORDER;
+  let sum = 0;
+  document.querySelectorAll(".ed-item-price").forEach(inp => {
+    sum += Number(inp.value || 0) * Number(order.items[Number(inp.dataset.idx)].quantity);
+  });
+  return sum;
+}
+
+function editDiscountAmount(subtotalSum) {
+  const type = document.getElementById("ed_disc_type")?.value || "amount";
+  let v = Number(document.getElementById("ed_discount")?.value || 0);
+  if (type === "percent") { v = Math.min(Math.max(v, 0), 100); return Math.round(subtotalSum * v / 100); }
+  return Math.max(v, 0);
+}
+
+function changeDiscType() {
+  // Đổi qua lại giữa ₫ và %, giữ nguyên số tiền giảm tương đương
+  const sub = editSubtotalSum();
+  const input = document.getElementById("ed_discount");
+  const type = document.getElementById("ed_disc_type").value;
+  const cur = Number(input.value || 0);
+  if (type === "percent") input.value = sub > 0 ? Math.round((cur / sub) * 10000) / 100 : 0;
+  else input.value = Math.round(sub * Math.min(Math.max(cur, 0), 100) / 100);
+  updateEditTotalFromItems();
+}
+
 function updateEditTotalFromItems() {
   const order = CURRENT_DEBT_ORDER;
   if (!order) return;
-  let subtotalSum = 0;
-  document.querySelectorAll(".ed-item-price").forEach(inp => {
-    const idx = Number(inp.dataset.idx);
-    subtotalSum += Number(inp.value || 0) * Number(order.items[idx].quantity);
-  });
-  const discount = Number(document.getElementById("ed_discount")?.value || 0);
+  const subtotalSum = editSubtotalSum();
+  const discount = editDiscountAmount(subtotalSum);
   const totalInput = document.getElementById("ed_total");
   if (totalInput) totalInput.value = Math.max(subtotalSum - discount, 0);
+  const hint = document.getElementById("ed_disc_hint");
+  if (hint) hint.textContent = `Tiền hàng ${formatVND(subtotalSum)} − giảm ${formatVND(discount)}`;
 }
 
 async function saveOrderEdits() {
@@ -1063,7 +1107,10 @@ async function saveOrderEdits() {
     newItemValues.push({ idx: Number(inp.dataset.idx), price });
   }
 
-  const newDiscount = Number(document.getElementById("ed_discount").value || 0);
+  const newDiscType = document.getElementById("ed_disc_type").value;
+  const newDiscValue = Number(document.getElementById("ed_discount").value || 0);
+  if (newDiscType === "percent" && newDiscValue > 100) { alert("Giảm giá % không được quá 100."); return; }
+  const newDiscount = editDiscountAmount(editSubtotalSum());
   const newTotal = Number(document.getElementById("ed_total").value || 0);
 
   if (newTotal < 0 || newDiscount < 0) { alert("Giá trị không hợp lệ."); return; }
@@ -1107,9 +1154,12 @@ async function saveOrderEdits() {
     }
   }
 
-  const { error } = await sb.from("orders").update({ discount_amount: newDiscount, total_amount: newTotal }).eq("id", order.id);
+  const upd = { discount_amount: newDiscount, total_amount: newTotal };
+  if ("discount_type" in order) { upd.discount_type = newDiscType; upd.discount_value = newDiscValue; }
+  const { error } = await sb.from("orders").update(upd).eq("id", order.id);
   if (error) { alert("Lỗi khi lưu: " + error.message); return; }
 
+  if ("discount_type" in order) { order.discount_type = newDiscType; order.discount_value = newDiscValue; }
   order.discount_amount = newDiscount;
   order.total_amount = newTotal;
   EDIT_ORDER_MODE = false;
