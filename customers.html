@@ -978,12 +978,14 @@ function renderOrderDetailBody() {
     <div class="summary-row"><span>Ngày</span><span>${formatDateTime(order.created_at)}</span></div>
     <div class="summary-row"><span>Loại đơn</span><span class="badge ${order.type}">${order.type === 'wholesale' ? 'Bán buôn' : 'Bán lẻ'}</span></div>
 
-    <div class="table-scroll"><table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th>${showCostCol ? `<th>Giá vốn</th>` : ""}</tr></thead>
+    <div class="table-scroll"><table style="margin-top:12px;"><thead><tr><th>Sản phẩm</th><th>SL</th>${EDIT_ORDER_MODE ? `<th>Giá gốc</th><th>Giảm %</th>` : ""}<th>Đơn giá</th><th>Thành tiền</th>${showCostCol ? `<th>Giá vốn</th>` : ""}</tr></thead>
     <tbody>
       ${order.items.map((i, idx) => EDIT_ORDER_MODE ? `<tr>
         <td>${i.products?.name || '—'}</td>
         <td>${i.quantity} ${i.products?.unit || ''}</td>
-        <td><input type="number" step="any" class="ed-item-price" data-idx="${idx}" value="${Number(i.unit_price)}" oninput="recalcItemRow(${idx})" style="width:110px;"></td>
+        <td><input type="number" step="any" min="0" class="ed-item-base" data-idx="${idx}" value="${Number(i.list_price) > 0 ? Number(i.list_price) : Number(i.unit_price)}" oninput="recalcItemRow(${idx},'base')" style="width:105px;"></td>
+        <td><input type="number" step="any" min="0" max="100" class="ed-item-pct" data-idx="${idx}" value="${Number(i.list_price) > 0 && Number(i.discount_percent) > 0 ? Number(i.discount_percent) : 0}" oninput="recalcItemRow(${idx},'pct')" style="width:70px;"> %</td>
+        <td><input type="number" step="any" class="ed-item-price" data-idx="${idx}" value="${Number(i.unit_price)}" oninput="recalcItemRow(${idx},'price')" style="width:110px;"></td>
         <td id="ip_subtotal_${idx}">${formatVND(Number(i.unit_price) * Number(i.quantity))}</td>
         ${showCostCol ? `<td><input type="number" step="any" min="0" class="ed-item-cost" data-idx="${idx}" value="${Number(i.cost_price_at_sale || 0)}" style="width:100px;"></td>` : ""}
       </tr>` : `<tr>
@@ -1016,11 +1018,20 @@ function renderOrderDetailBody() {
   `;
 }
 
-function recalcItemRow(idx) {
+function recalcItemRow(idx, src) {
   const order = CURRENT_DEBT_ORDER;
   if (!order) return;
-  const input = document.querySelector(`.ed-item-price[data-idx="${idx}"]`);
-  const price = Number(input.value || 0);
+  const q = c => document.querySelector(`.${c}[data-idx="${idx}"]`);
+  const baseEl = q("ed-item-base"), pctEl = q("ed-item-pct"), priceEl = q("ed-item-price");
+  const base = Number(baseEl.value || 0);
+  if (src === "pct" || src === "base") {
+    const pct = Math.min(Math.max(Number(pctEl.value || 0), 0), 100);
+    priceEl.value = Math.round(base * (1 - pct / 100));
+  } else if (src === "price") {
+    const price = Number(priceEl.value || 0);
+    pctEl.value = base > 0 && price < base ? Math.round(((base - price) / base) * 10000) / 100 : 0;
+  }
+  const price = Number(priceEl.value || 0);
   const qty = Number(order.items[idx].quantity);
   const cell = document.getElementById(`ip_subtotal_${idx}`);
   if (cell) cell.textContent = formatVND(price * qty);
@@ -1060,21 +1071,27 @@ async function saveOrderEdits() {
     if (!confirm(`Tổng tiền mới (${formatVND(newTotal)}) thấp hơn số khách đã trả (${formatVND(order.paid_amount)}) cho đơn này. Vẫn lưu?`)) return;
   }
 
-  // Lưu đơn giá từng dòng sản phẩm đã sửa
+  // Lưu đơn giá + giá gốc/giảm % từng dòng sản phẩm đã sửa
   for (const { idx, price } of newItemValues) {
     const item = order.items[idx];
     const newSubtotal = price * Number(item.quantity);
-    if (price !== Number(item.unit_price) || newSubtotal !== Number(item.subtotal)) {
+    const baseEl = document.querySelector(`.ed-item-base[data-idx="${idx}"]`);
+    const base = baseEl ? Number(baseEl.value || 0) : 0;
+    const hasDiscCols = "discount_percent" in item;   // chỉ ghi khi DB đã có cột (migration-27)
+    let newList = null, newPct = 0;
+    if (hasDiscCols && base > price) {
+      newList = base;
+      newPct = Math.round(((base - price) / base) * 10000) / 100;
+    }
+    const listChanged = hasDiscCols && (Number(item.list_price || 0) !== Number(newList || 0) || Number(item.discount_percent || 0) !== newPct);
+    if (price !== Number(item.unit_price) || newSubtotal !== Number(item.subtotal) || listChanged) {
       const upd = { unit_price: price };
-      if (Number(item.list_price) > 0) {
-        const pct = price < Number(item.list_price) ? Math.round(((Number(item.list_price) - price) / Number(item.list_price)) * 10000) / 100 : 0;
-        upd.discount_percent = pct; if (pct === 0) upd.list_price = null;
-        item.discount_percent = pct; if (pct === 0) item.list_price = null;
-      }
+      if (hasDiscCols) { upd.list_price = newList; upd.discount_percent = newPct; }
       const { error: itemErr } = await sb.from("order_items").update(upd).eq("id", item.id);
       if (itemErr) { alert("Lỗi khi lưu đơn giá: " + itemErr.message); return; }
       item.unit_price = price;
       item.subtotal = newSubtotal;
+      if (hasDiscCols) { item.list_price = newList; item.discount_percent = newPct; }
     }
   }
 
