@@ -965,8 +965,8 @@ function renderOrderDetailBody() {
 
   const totalsBlock = EDIT_ORDER_MODE ? `
     <div class="field"><label>Giảm giá toàn đơn</label>
-      <div class="flex gap-8"><input id="ed_discount" type="number" step="any" min="0" value="${editDiscInit(order).value}" oninput="updateEditTotalFromItems()" style="flex:1;">
-        <select id="ed_disc_type" onchange="changeDiscType()" style="padding:8px; border:1px solid var(--border); border-radius:8px;">
+      <div style="display:grid; grid-template-columns:minmax(0,1fr) 84px; gap:8px;"><input id="ed_discount" type="number" step="any" min="0" value="${editDiscInit(order).value}" oninput="updateEditTotalFromItems()">
+        <select id="ed_disc_type" onchange="changeDiscType()">
           <option value="amount" ${editDiscInit(order).type === "amount" ? "selected" : ""}>₫</option>
           <option value="percent" ${editDiscInit(order).type === "percent" ? "selected" : ""}>%</option></select></div>
       <div id="ed_disc_hint" style="font-size:12px; color:var(--text-mute); margin-top:4px;"></div></div>
