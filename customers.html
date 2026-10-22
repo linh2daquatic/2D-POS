@@ -137,7 +137,10 @@ let CARE_ROWS = [];
 
     <div id="debtTab" style="display:none;">
       <div class="stat-grid" id="statGrid"></div>
-      <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm khách hàng..." style="margin-bottom:16px;">
+      <div class="flex" style="justify-content:space-between; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+        <input class="search-bar" id="debtSearchInput" placeholder="🔍 Tìm khách hàng...">
+        <button type="button" class="btn btn-primary" onclick="openDebtModal()">+ Thêm nợ</button>
+      </div>
       <div id="debtListWrap"><div class="empty-state"><div class="icon">⏳</div>Đang tải...</div></div>
     </div>
 
@@ -207,6 +210,33 @@ let CARE_ROWS = [];
           <span class="modal-close" id="dupClose">✕</span>
         </div>
         <div class="modal-body" id="dupBody"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="debtModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="debtModalTitle">Thêm nợ thủ công</h3>
+          <span class="modal-close" onclick="closeDebtModal()">✕</span>
+        </div>
+        <div class="modal-body">
+          <div class="field"><label>Khách hàng</label>
+            <input id="md_customer" list="md_customer_list" placeholder="Gõ tên hoặc SĐT rồi chọn khách..." autocomplete="off">
+            <datalist id="md_customer_list"></datalist></div>
+          <div class="pay-method-row">
+            <div class="field"><label>Số tiền nợ</label><input id="md_amount" type="number" step="any" min="0" value="0"></div>
+            <div class="field"><label>Ngày nợ</label><input id="md_date" type="date"></div>
+          </div>
+          <div class="field"><label>Ghi chú</label><input id="md_note" placeholder="VD: Nợ cũ trước khi dùng POS, ứng tiền hàng..."></div>
+          <label style="display:flex; gap:8px; align-items:flex-start; font-weight:500; cursor:pointer;">
+            <input type="checkbox" id="md_to_fund" checked style="width:auto; margin-top:3px;">
+            <span>Khi khách trả nợ này, ghi thu vào Quỹ<br><span style="font-size:12px; color:var(--text-mute);">Bỏ tick nếu tiền đã thu từ trước (Quỹ sẽ không tăng thêm)</span></span></label>
+          <div style="font-size:12px; color:var(--text-mute); margin-top:10px;">Nợ thủ công không tính vào doanh thu, lợi nhuận hay số đơn trên Dashboard.</div>
+          <div class="flex gap-8" style="margin-top:16px; justify-content:flex-end;">
+            <button type="button" class="btn btn-secondary" onclick="closeDebtModal()">Hủy</button>
+            <button type="button" class="btn btn-primary" id="debtSaveBtn" onclick="saveDebt()">Lưu</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -719,35 +749,54 @@ function renderTankBuyers(filter) {
   });
 }
 
+let DEBT_CUSTOMERS = [];
+let MANUAL_DEBT_ROWS = [];
+let EDIT_DEBT_ID = null;
+const dEsc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
 async function loadDebts() {
   const { data: customers } = await sb.from("customers").select("*");
+  DEBT_CUSTOMERS = customers || [];
   const { data: orders } = await sb.from("orders")
     .select("id, order_code, type, total_amount, paid_amount, created_at, customer_id")
     .eq("status", "completed")
     .not("customer_id", "is", null)
     .order("created_at", { ascending: true });
 
+  // Nợ thủ công (migration-31). Nếu bảng chưa có thì bỏ qua để trang vẫn chạy.
+  MANUAL_DEBT_ROWS = [];
+  try {
+    const { data: md, error: mdErr } = await sb.from("customer_debts").select("*").order("debt_date", { ascending: true });
+    if (!mdErr) MANUAL_DEBT_ROWS = md || [];
+  } catch (e) { console.warn("customer_debts:", e); }
+
   const byCustomer = {};
+  const slot = id => (byCustomer[id] = byCustomer[id] || { orders: [], manual: [] });
   (orders || []).forEach(o => {
     const debt = Number(o.total_amount) - Number(o.paid_amount);
     if (debt <= 0) return;
-    if (!byCustomer[o.customer_id]) byCustomer[o.customer_id] = [];
-    byCustomer[o.customer_id].push({ ...o, debt });
+    slot(o.customer_id).orders.push({ ...o, debt });
+  });
+  MANUAL_DEBT_ROWS.forEach(m => {
+    const debt = Number(m.amount) - Number(m.paid_amount || 0);
+    if (debt <= 0) return;
+    slot(m.customer_id).manual.push({ ...m, debt });
   });
 
   DEBT_LIST = Object.keys(byCustomer).map(custId => {
-    const customer = (customers || []).find(c => c.id === custId);
-    const ordersForCustomer = byCustomer[custId];
-    const totalDebt = ordersForCustomer.reduce((s, o) => s + o.debt, 0);
-    return { customer, orders: ordersForCustomer, totalDebt };
+    const customer = DEBT_CUSTOMERS.find(c => c.id === custId);
+    const { orders: os, manual } = byCustomer[custId];
+    const totalDebt = os.reduce((s, o) => s + o.debt, 0) + manual.reduce((s, m) => s + m.debt, 0);
+    return { customer, orders: os, manual, totalDebt };
   }).filter(x => x.customer).sort((a, b) => b.totalDebt - a.totalDebt);
 
   renderDebtStats();
-  renderDebtList("");
+  renderDebtList(document.getElementById("debtSearchInput")?.value || "");
 }
 
 function renderDebtStats() {
   const total = DEBT_LIST.reduce((s, x) => s + x.totalDebt, 0);
+  const manualTotal = DEBT_LIST.reduce((s, x) => s + x.manual.reduce((a, m) => a + m.debt, 0), 0);
   document.getElementById("statGrid").innerHTML = `
     <div class="stat-card danger-card">
       <div class="label">Tổng công nợ khách hàng</div>
@@ -757,6 +806,10 @@ function renderDebtStats() {
       <div class="label">Số khách đang nợ</div>
       <div class="value">${DEBT_LIST.length}</div>
     </div>
+    ${manualTotal > 0 ? `<div class="stat-card">
+      <div class="label">Trong đó nợ thủ công</div>
+      <div class="value">${formatVND(manualTotal)}</div>
+    </div>` : ""}
   `;
 }
 
@@ -777,7 +830,7 @@ function renderDebtList(filter) {
       <div class="debt-card-head" data-idx="${idx}">
         <div>
           <div class="debt-card-name">${x.customer.name}</div>
-          <div class="debt-card-sub">${x.customer.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa thanh toán hết</div>
+          <div class="debt-card-sub">${x.customer.phone || 'Không có SĐT'} · ${x.orders.length} đơn chưa thanh toán hết${x.manual.length ? ` · ${x.manual.length} khoản nợ thủ công` : ""}</div>
         </div>
         <div class="flex gap-12">
           <div class="debt-card-amount">${formatVND(x.totalDebt)}</div>
@@ -789,6 +842,14 @@ function renderDebtList(filter) {
           <div class="debt-order-row order-row-clickable" data-order-id="${o.id}" style="border-radius:6px; padding:7px 6px;">
             <span>${o.order_code} · ${formatDateTime(o.created_at)} · <span class="badge ${o.type}" style="padding:1px 8px;">${o.type === 'wholesale' ? 'Buôn' : 'Lẻ'}</span></span>
             <span>Nợ: <strong>${formatVND(o.debt)}</strong> / Tổng ${formatVND(o.total_amount)}</span>
+          </div>
+        `).join("")}
+        ${x.manual.map(m => `
+          <div class="debt-order-row" style="padding:7px 6px; gap:10px; align-items:center;">
+            <span><span class="badge" style="background:#fef3c7; color:#92400e; padding:1px 8px;">Nợ thủ công</span> ${formatDate(m.debt_date)}${m.note ? " · " + dEsc(m.note) : ""}</span>
+            <span style="white-space:nowrap;">Nợ: <strong>${formatVND(m.debt)}</strong> / Gốc ${formatVND(m.amount)}
+              <button type="button" class="btn btn-secondary btn-mini" onclick="event.stopPropagation(); openDebtModal('${m.id}')">✎ Sửa</button>
+              <button type="button" class="btn btn-secondary btn-mini" onclick="event.stopPropagation(); deleteDebt('${m.id}')">🗑</button></span>
           </div>
         `).join("")}
       </div>
@@ -844,37 +905,50 @@ async function submitPayment() {
   const note = document.getElementById("pay_note").value.trim();
 
   let cashLeft = cash, transferLeft = transfer;
-  for (const o of PAY_CUSTOMER.orders) {
+  let fundCash = 0, fundTransfer = 0;   // phần tiền được ghi vào Quỹ
+  // Trả nợ theo thứ tự cũ trước: gộp đơn hàng và nợ thủ công theo ngày
+  const targets = [
+    ...PAY_CUSTOMER.orders.map(o => ({ kind: "order", o, debt: o.debt, date: o.created_at })),
+    ...(PAY_CUSTOMER.manual || []).map(m => ({ kind: "manual", m, debt: m.debt, date: m.debt_date }))
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  for (const t of targets) {
     if (remaining <= 0) break;
-    const applyToOrder = Math.min(o.debt, remaining);
-    if (applyToOrder <= 0) continue;
+    const applyToItem = Math.min(t.debt, remaining);
+    if (applyToItem <= 0) continue;
 
-    const newPaid = Number(o.paid_amount) + applyToOrder;
-    await sb.from("orders").update({ paid_amount: newPaid }).eq("id", o.id);
-
-    let applyCash = Math.min(cashLeft, applyToOrder);
-    let applyTransfer = applyToOrder - applyCash;
+    const applyCash = Math.min(cashLeft, applyToItem);
+    const applyTransfer = applyToItem - applyCash;
     cashLeft -= applyCash;
     transferLeft -= applyTransfer;
 
-    if (applyCash > 0) {
-      await sb.from("customer_payments").insert({
-        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyCash,
-        method: "cash", note: note || null, created_by: CURRENT_PROFILE.id
-      });
-    }
-    if (applyTransfer > 0) {
-      await sb.from("customer_payments").insert({
-        customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyTransfer,
-        method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id
-      });
+    if (t.kind === "order") {
+      const o = t.o;
+      await sb.from("orders").update({ paid_amount: Number(o.paid_amount) + applyToItem }).eq("id", o.id);
+      if (applyCash > 0) {
+        await sb.from("customer_payments").insert({
+          customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyCash,
+          method: "cash", note: note || null, created_by: CURRENT_PROFILE.id
+        });
+      }
+      if (applyTransfer > 0) {
+        await sb.from("customer_payments").insert({
+          customer_id: PAY_CUSTOMER.customer.id, order_id: o.id, amount: applyTransfer,
+          method: "transfer", note: note || null, created_by: CURRENT_PROFILE.id
+        });
+      }
+      fundCash += applyCash; fundTransfer += applyTransfer;
+    } else {
+      const m = t.m;
+      await sb.from("customer_debts").update({ paid_amount: Number(m.paid_amount || 0) + applyToItem }).eq("id", m.id);
+      if (m.to_fund !== false) { fundCash += applyCash; fundTransfer += applyTransfer; }
     }
 
-    remaining -= applyToOrder;
+    remaining -= applyToItem;
   }
 
-  const totalCashCollected = cash - cashLeft;
-  const totalTransferCollected = transfer - transferLeft;
+  const totalCashCollected = fundCash;
+  const totalTransferCollected = fundTransfer;
   if (totalCashCollected > 0) {
     await sb.from("cash_transactions").insert({
       type: "income", method: "cash", category: "Thu nợ khách", amount: totalCashCollected,
@@ -893,6 +967,66 @@ async function submitPayment() {
   closePayModal();
   await loadDebts();
   alert("Đã ghi nhận thanh toán thành công!");
+}
+
+/* ================= NỢ THỦ CÔNG ================= */
+function openDebtModal(id) {
+  EDIT_DEBT_ID = id || null;
+  const m = id ? MANUAL_DEBT_ROWS.find(x => x.id === id) : null;
+  document.getElementById("debtModalTitle").textContent = m ? "Sửa nợ thủ công" : "Thêm nợ thủ công";
+  const dl = document.getElementById("md_customer_list");
+  dl.innerHTML = DEBT_CUSTOMERS.map(c => `<option value="${dEsc(c.name + (c.phone ? " · " + c.phone : ""))}"></option>`).join("");
+  const custInput = document.getElementById("md_customer");
+  if (m) {
+    const c = DEBT_CUSTOMERS.find(x => x.id === m.customer_id);
+    custInput.value = c ? c.name + (c.phone ? " · " + c.phone : "") : "";
+    custInput.disabled = true;
+  } else { custInput.value = ""; custInput.disabled = false; }
+  document.getElementById("md_amount").value = m ? Number(m.amount) : 0;
+  document.getElementById("md_date").value = m ? m.debt_date : new Date().toISOString().slice(0, 10);
+  document.getElementById("md_note").value = m ? (m.note || "") : "";
+  document.getElementById("md_to_fund").checked = m ? m.to_fund !== false : true;
+  document.getElementById("debtModal").classList.add("open");
+}
+function closeDebtModal() { document.getElementById("debtModal").classList.remove("open"); }
+
+async function saveDebt() {
+  const amount = Number(document.getElementById("md_amount").value || 0);
+  const date = document.getElementById("md_date").value;
+  const note = document.getElementById("md_note").value.trim();
+  const toFund = document.getElementById("md_to_fund").checked;
+  if (amount <= 0) { alert("Nhập số tiền nợ lớn hơn 0."); return; }
+  if (!date) { alert("Chọn ngày nợ."); return; }
+
+  const btn = document.getElementById("debtSaveBtn");
+  let error;
+  if (EDIT_DEBT_ID) {
+    const m = MANUAL_DEBT_ROWS.find(x => x.id === EDIT_DEBT_ID);
+    if (m && amount < Number(m.paid_amount || 0)) { alert(`Số nợ không được nhỏ hơn số khách đã trả (${formatVND(m.paid_amount)}).`); return; }
+    btn.disabled = true;
+    ({ error } = await sb.from("customer_debts").update({ amount, debt_date: date, note: note || null, to_fund: toFund }).eq("id", EDIT_DEBT_ID));
+  } else {
+    const v = document.getElementById("md_customer").value.trim();
+    const cust = DEBT_CUSTOMERS.find(c => (c.name + (c.phone ? " · " + c.phone : "")) === v)
+      || DEBT_CUSTOMERS.filter(c => phoneOrNameMatches(c.name, c.phone, v)).length === 1 && DEBT_CUSTOMERS.find(c => phoneOrNameMatches(c.name, c.phone, v));
+    if (!cust) { alert("Chưa chọn được khách. Gõ tên hoặc SĐT rồi chọn đúng khách trong danh sách gợi ý."); return; }
+    btn.disabled = true;
+    ({ error } = await sb.from("customer_debts").insert({ customer_id: cust.id, amount, debt_date: date, note: note || null, to_fund: toFund, created_by: CURRENT_PROFILE.id }));
+  }
+  btn.disabled = false;
+  if (error) { alert("Lỗi khi lưu nợ: " + error.message + "\nBạn đã chạy migration-31.sql trong Supabase chưa?"); return; }
+  closeDebtModal();
+  await loadDebts();
+}
+
+async function deleteDebt(id) {
+  const m = MANUAL_DEBT_ROWS.find(x => x.id === id);
+  if (!m) return;
+  const paidNote = Number(m.paid_amount || 0) > 0 ? `\nKhoản này khách đã trả ${formatVND(m.paid_amount)}; các khoản thu đã ghi vào Quỹ sẽ KHÔNG bị xóa.` : "";
+  if (!confirm(`Xóa khoản nợ thủ công ${formatVND(m.amount)}?${paidNote}`)) return;
+  const { error } = await sb.from("customer_debts").delete().eq("id", id);
+  if (error) { alert("Lỗi khi xóa: " + error.message); return; }
+  await loadDebts();
 }
 
 /* ================= DÙNG CHUNG: CHI TIẾT ĐƠN HÀNG ================= */
