@@ -206,6 +206,7 @@ const DRAFT_KEY = "2d_pos_order_draft";
             </div>
 
             <div class="summary-row total"><span>Còn nợ</span><span id="sumDebt">0₫</span></div>
+            <div id="oldDebtWarn"></div>
             <button class="btn btn-primary" id="submitOrderBtn" style="width:100%; max-width:420px; justify-content:center; padding:13px; margin-top:14px;">Tạo đơn hàng</button>
           </div>
         </div>
@@ -633,12 +634,15 @@ function customerMatchesQuery(c, f) {
 function renderCustomerPicker() {
   if (CART.length > 0) saveDraft();
   const wrap = document.getElementById("customerPickerWrap");
+  if (!SELECTED_CUSTOMER) { OLD_DEBT = null; const w = document.getElementById("oldDebtWarn"); if (w) w.innerHTML = ""; }
   if (SELECTED_CUSTOMER) {
     wrap.innerHTML = `<div class="selected-customer-tag">
       👤 ${SELECTED_CUSTOMER.name} ${SELECTED_CUSTOMER.phone ? '· ' + SELECTED_CUSTOMER.phone : ''} ${SELECTED_CUSTOMER.address ? '· 📍 ' + SELECTED_CUSTOMER.address : ''}
       <span class="remove-x" id="clearCustomerBtn">Bỏ chọn ✕</span>
     </div>
+    <div id="oldDebtBox" style="margin-top:8px;"></div>
     <div id="custTankBox" style="margin-top:8px;"></div>`;
+    renderOldDebtBox();
     renderCustomerTankBox();
     document.getElementById("clearCustomerBtn").addEventListener("click", () => {
       SELECTED_CUSTOMER = null;
@@ -698,6 +702,50 @@ async function fetchCustomerTanks(customerId) {
   } catch (e) { console.error(e); }
   TANK_BOUGHT_CACHE[customerId] = result;
   return result;
+}
+
+/* ---------- Nợ cũ của khách: nhắc nhân viên khi bán / thanh toán ---------- */
+let OLD_DEBT = null;
+async function fetchOldDebt(cid) {
+  const out = { orders: [], manual: [], total: 0 };
+  try {
+    const { data: os } = await sb.from("orders")
+      .select("order_code, total_amount, paid_amount, created_at")
+      .eq("customer_id", cid).eq("status", "completed").order("created_at", { ascending: true });
+    (os || []).forEach(o => {
+      const d = Number(o.total_amount) - Number(o.paid_amount);
+      if (d > 0) out.orders.push({ code: o.order_code, date: o.created_at, debt: d });
+    });
+  } catch (e) { console.warn(e); }
+  try {   // nợ thủ công (migration-31); bảng chưa có thì bỏ qua
+    const { data: ms, error } = await sb.from("customer_debts").select("amount, paid_amount, note, debt_date").eq("customer_id", cid);
+    if (!error) (ms || []).forEach(m => {
+      const d = Number(m.amount) - Number(m.paid_amount || 0);
+      if (d > 0) out.manual.push({ note: m.note, date: m.debt_date, debt: d });
+    });
+  } catch (e) { console.warn(e); }
+  out.total = out.orders.reduce((s, o) => s + o.debt, 0) + out.manual.reduce((s, m) => s + m.debt, 0);
+  return out;
+}
+
+async function renderOldDebtBox() {
+  const box = document.getElementById("oldDebtBox"), warn = document.getElementById("oldDebtWarn");
+  if (!SELECTED_CUSTOMER) { OLD_DEBT = null; if (warn) warn.innerHTML = ""; return; }
+  const cid = SELECTED_CUSTOMER.id;
+  const d = await fetchOldDebt(cid);
+  if (!SELECTED_CUSTOMER || SELECTED_CUSTOMER.id !== cid) return;   // đã đổi khách trong lúc chờ
+  OLD_DEBT = d;
+  if (d.total <= 0) { if (box) box.innerHTML = ""; if (warn) warn.innerHTML = ""; return; }
+  const rows = [
+    ...d.orders.map(o => ({ label: `${o.code} · ${formatDate(o.date)}`, debt: o.debt })),
+    ...d.manual.map(m => ({ label: `Nợ thủ công · ${formatDate(m.date)}${m.note ? " · " + tkEsc(m.note) : ""}`, debt: m.debt }))
+  ];
+  if (box) box.innerHTML = `<div style="padding:10px 12px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px;">
+      <div style="font-weight:700; color:#b91c1c;">⚠️ Khách đang nợ cũ ${formatVND(d.total)} — nhớ nhắc khách thanh toán</div>
+      <div style="font-size:12.5px; margin-top:6px; color:#7f1d1d;">${rows.slice(0, 5).map(r => `${r.label}: <strong>${formatVND(r.debt)}</strong>`).join("<br>")}${rows.length > 5 ? `<br>… và ${rows.length - 5} khoản khác` : ""}</div>
+    </div>`;
+  if (warn) warn.innerHTML = `<div style="margin-top:12px; padding:10px 12px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; font-weight:700; color:#b91c1c;">
+      ⚠️ Khách còn nợ cũ ${formatVND(d.total)} — nhắc khách thanh toán thêm khoản này</div>`;
 }
 
 async function renderCustomerTankBox(editing) {
