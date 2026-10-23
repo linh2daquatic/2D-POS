@@ -204,6 +204,16 @@ let PAYMENT_BREAKDOWN = {};
     await performCancelOrder(CANCEL_CONTEXT.orderId, CANCEL_CONTEXT.orderCode, rc, rt);
     btn.disabled = false; btn.textContent = "Xác nhận hủy đơn";
   });
+
+  // Mở thẳng một đơn từ liên kết (VD từ Dashboard: ?order=<id>&edit=1 để sửa giá vốn)
+  try {
+    const qp = new URLSearchParams(location.search);
+    const oid = qp.get("order");
+    if (oid) {
+      await showOrderDetail(oid);
+      if (qp.get("edit") === "1" && isOwner) document.getElementById("editPriceBtn")?.click();
+    }
+  } catch (e) { console.warn("Mở đơn từ liên kết:", e); }
 })();
 
 async function loadStaffFilterOptions() {
