@@ -136,6 +136,27 @@ function classifyVariableCostGroup(category) {
   return "Khác";
 }
 
+// Lấy TOÀN BỘ dòng (Supabase chỉ trả tối đa 1000 dòng mỗi lần gọi). Trả về { data, error } như bình thường.
+function showDataWarning() {
+  if (document.getElementById("dataWarnBanner")) return;
+  const d = document.createElement("div");
+  d.id = "dataWarnBanner";
+  d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b91c1c;color:#fff;padding:8px 14px;font-size:13px;text-align:center;";
+  d.textContent = "⚠️ Một số dữ liệu tải chưa đầy đủ nên số liệu trên trang có thể sai. Hãy tải lại trang (F5); nếu vẫn thấy dòng này, báo chủ cửa hàng.";
+  document.body.appendChild(d);
+}
+async function fetchAllRows(buildQuery) {
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().order("id").range(from, from + 999);
+    if (error) { showDataWarning(); return { data: out.length ? out : null, error }; }
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return { data: out, error: null };
+}
+
 async function loadDashboard(isOwner, selectedMonth) {
   const statGrid = document.getElementById("statGrid");
   const todayStart = new Date();
@@ -153,10 +174,10 @@ async function loadDashboard(isOwner, selectedMonth) {
   const ordersToday = (todayOrders || []).length;
 
   // Tổng công nợ khách hàng (toàn bộ, chưa lọc theo ngày)
-  const { data: allOrders } = await sb
+  const { data: allOrders } = await fetchAllRows(() => sb
     .from("orders")
     .select("total_amount, paid_amount")
-    .eq("status", "completed");
+    .eq("status", "completed"));
   const totalCustomerDebt = (allOrders || []).reduce((s, o) => s + (Number(o.total_amount||0) - Number(o.paid_amount||0)), 0);
 
   // Tháng đang xem — mặc định tháng hiện tại nếu không chọn
@@ -226,16 +247,16 @@ async function loadDashboard(isOwner, selectedMonth) {
     const { data: pos } = await sb.from("purchase_orders").select("total_amount, paid_amount").eq("status","completed");
     const supplierDebt = (pos || []).reduce((s,o) => s + (Number(o.total_amount||0)-Number(o.paid_amount||0)), 0);
 
-    const { data: cashTx } = await sb.from("cash_transactions").select("type, amount, method");
+    const { data: cashTx } = await fetchAllRows(() => sb.from("cash_transactions").select("type, amount, method"));
     const cashBalance = (cashTx || []).filter(t => (t.method || "cash") === "cash").reduce((s,t) => s + (t.type === "income" ? Number(t.amount) : -Number(t.amount)), 0);
 
     // Lãi gộp tháng này = doanh thu - giá vốn ĐÃ CHỐT tại thời điểm bán (không đổi dù sau này sửa giá vốn trong Kho hàng)
-    const { data: monthItems } = await sb
+    const { data: monthItems } = await fetchAllRows(() => sb
       .from("order_items")
       .select("quantity, unit_price, cost_price_at_sale, orders!inner(created_at,status)")
       .eq("orders.status", "completed")
       .gte("orders.created_at", monthStart.toISOString())
-      .lte("orders.created_at", monthEnd.toISOString());
+      .lte("orders.created_at", monthEnd.toISOString()));
 
     let monthCost = 0, monthItemRevenue = 0;
     (monthItems || []).forEach(i => {
@@ -249,13 +270,13 @@ async function loadDashboard(isOwner, selectedMonth) {
     // Phần này nằm ngoài Lãi gộp của 2D, là lợi nhuận chia với đối tác góp chung.
     let jointProfit = null, jointQty = 0;
     try {
-      const { data: jointItems, error: jointErr } = await sb
+      const { data: jointItems, error: jointErr } = await fetchAllRows(() => sb
         .from("order_items")
         .select("quantity, cost_price_at_sale, products!inner(cost_price, profit_cost_discount), orders!inner(created_at,status)")
         .eq("orders.status", "completed")
         .not("products.profit_cost_discount", "is", null)
         .gte("orders.created_at", monthStart.toISOString())
-        .lte("orders.created_at", monthEnd.toISOString());
+        .lte("orders.created_at", monthEnd.toISOString()));
       if (!jointErr) {
         jointProfit = 0;
         (jointItems || []).forEach(i => {
@@ -347,7 +368,7 @@ async function loadDashboard(isOwner, selectedMonth) {
     // phân bổ phần giảm giá của đơn theo đúng tỷ lệ sinh vật/còn lại trong đơn đó.
     const { data: staffOrders } = await sb
       .from("orders")
-      .select("id, total_amount, created_by")
+      .select("id, order_code, total_amount, created_by, created_at")
       .eq("status", "completed")
       .gte("created_at", monthStart.toISOString())
       .lte("created_at", monthEnd.toISOString());
@@ -362,7 +383,7 @@ async function loadDashboard(isOwner, selectedMonth) {
       for (;;) {
         const { data, error } = await sb
           .from("order_items")
-          .select("order_id, quantity, unit_price, cost_price_at_sale, products(category)")
+          .select("order_id, quantity, unit_price, cost_price_at_sale, products(name, category)")
           .in("order_id", chunk)
           .order("id")
           .range(from, from + 999);
@@ -379,6 +400,12 @@ async function loadDashboard(isOwner, selectedMonth) {
     };
 
     // Gộp giá trị gốc (trước giảm giá) theo từng đơn, tách sinh vật / còn lại
+    const orderMeta = {};
+    (staffOrders || []).forEach(o => { orderMeta[o.id] = o; });
+    const staffNames = {};
+    (allProfiles || []).forEach(pr => { staffNames[pr.id] = pr.full_name || "Không tên"; });
+    window.__STAFF_NAMES__ = staffNames;
+    window.__MISSING_COST__ = [];   // các dòng hàng chưa có giá vốn trong tháng (để bấm xem và sửa)
     const orderBreakdown = {}; // order_id -> { subtotal, livestockSubtotal, livestockCost, otherCost, missing }
     staffItems.forEach(i => {
       if (!orderBreakdown[i.order_id]) orderBreakdown[i.order_id] = { subtotal: 0, livestockSubtotal: 0, livestockCost: 0, otherCost: 0, missing: 0 };
@@ -386,7 +413,12 @@ async function loadDashboard(isOwner, selectedMonth) {
       const lineTotal = Number(i.quantity) * Number(i.unit_price);
       const lineCost = Number(i.quantity) * Number(i.cost_price_at_sale || 0);
       bd.subtotal += lineTotal;
-      if (Number(i.cost_price_at_sale || 0) <= 0 && Number(i.unit_price) > 0) bd.missing += 1;
+      if (Number(i.cost_price_at_sale || 0) <= 0 && Number(i.unit_price) > 0) {
+        bd.missing += 1;
+        const om = orderMeta[i.order_id] || {};
+        window.__MISSING_COST__.push({ orderId: i.order_id, code: om.order_code, date: om.created_at, uid: om.created_by || "unknown",
+          name: i.products?.name || "—", qty: Number(i.quantity), price: Number(i.unit_price) });
+      }
       if (isLivestockCategory(i.products?.category)) {
         bd.livestockSubtotal += lineTotal;
         bd.livestockCost += lineCost;
@@ -423,6 +455,7 @@ async function loadDashboard(isOwner, selectedMonth) {
     window.__STAFF_STATS__ = Object.keys(byStaff).map(uid => {
       const profile = (allProfiles || []).find(p => p.id === uid);
       return {
+        uid,
         name: profile?.full_name || "Không rõ",
         role: profile?.role || "staff",
         orderCount: byStaff[uid].orderCount,
@@ -449,6 +482,7 @@ async function loadDashboard(isOwner, selectedMonth) {
         <div class="label">Lãi gộp ${monthLabel}</div>
         <div class="value">${formatVND(profitMonth)}</div>
         <div class="delta text-mute" style="font-size:11px;">*Tính theo giá vốn tại thời điểm bán</div>
+        ${(window.__MISSING_COST__ || []).length > 0 ? `<div class="delta" style="font-size:11.5px; margin-top:4px;"><a href="#" onclick="showMissingCost(null); return false;" style="color:var(--danger); font-weight:600;">⚠️ ${(window.__MISSING_COST__ || []).length} dòng hàng chưa có giá vốn — bấm để xem & sửa</a></div>` : ""}
       </div>
       ${jointProfit !== null ? `<div class="stat-card ${jointProfit >= 0 ? '' : 'danger-card'}">
         <div class="label">Lợi nhuận chung Maxspect ${monthLabel}</div>
@@ -656,7 +690,7 @@ function renderStaffProfit(monthLabel) {
     ${stats.map(s => {
       const total = s.livestockProfit + s.otherProfit;
       return `<tr>
-        <td>${s.name}${s.missingCost > 0 ? ` <span title="${s.missingCost} dòng hàng chưa có giá vốn nên lợi nhuận có thể cao hơn thực tế" style="cursor:help;">⚠️</span>` : ""}</td>
+        <td>${s.name}${s.missingCost > 0 ? ` <a href="#" onclick="showMissingCost('${s.uid}'); return false;" title="${s.missingCost} dòng hàng chưa có giá vốn — bấm để xem và sửa" style="text-decoration:none;">⚠️ <span style="font-size:12px; color:var(--danger); text-decoration:underline;">${s.missingCost} dòng chưa có giá vốn</span></a>` : ""}</td>
         <td style="color:var(--teal-deep); font-weight:600;">${pf(s.livestockProfit)}</td>
         <td>${pf(s.otherProfit)}</td>
         <td style="font-weight:700;">${pf(total)}</td>
@@ -667,7 +701,34 @@ function renderStaffProfit(monthLabel) {
       <td style="font-weight:700;">${pf(sum("livestockProfit"))}</td><td style="font-weight:700;">${pf(sum("otherProfit"))}</td>
       <td style="font-weight:700;">${pf(sum("livestockProfit") + sum("otherProfit"))}</td><td style="font-weight:700;">${margin(sum("livestockProfit") + sum("otherProfit"), sum("profitBase"))}</td></tr>
   </tbody></table></div>
-  <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Lợi nhuận = tiền khách thực trả (đã trừ giảm giá, phân bổ theo tỷ lệ) − giá vốn đã chốt lúc bán. Không tính đơn 0đ (hao hụt/dùng nội bộ, đã nằm ở mục Chi phí). Có thể thấp hơn "Lãi gộp" ở trên khi đơn có giảm giá toàn đơn.${totalMissing > 0 ? ` ⚠️ Có ${totalMissing} dòng hàng chưa có giá vốn — hãy bổ sung giá vốn để số này chính xác.` : ""}</p>`;
+  <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Lợi nhuận = tiền khách thực trả (đã trừ giảm giá, phân bổ theo tỷ lệ) − giá vốn đã chốt lúc bán. Không tính đơn 0đ (hao hụt/dùng nội bộ, đã nằm ở mục Chi phí). Có thể thấp hơn "Lãi gộp" ở trên khi đơn có giảm giá toàn đơn.${totalMissing > 0 ? ` ⚠️ Có ${totalMissing} dòng hàng chưa có giá vốn — <a href="#" onclick="showMissingCost(null); return false;">bấm để xem danh sách và sửa</a>.` : ""}</p>`;
+}
+
+function showMissingCost(uid) {
+  const all = window.__MISSING_COST__ || [];
+  const rows = (uid ? all.filter(r => r.uid === uid) : all).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  const names = window.__STAFF_NAMES__ || {};
+  const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  let ov = document.getElementById("missingCostOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "missingCostOverlay";
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(10,22,40,.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;";
+    ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div style="background:#fff;border-radius:14px;width:100%;max-width:min(980px,96vw);max-height:88vh;overflow:auto;">
+    <div style="padding:16px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="font-family:var(--font-display);font-size:18px;margin:0;">Dòng hàng chưa có giá vốn${uid ? " — " + esc(names[uid] || "Không rõ") : ""} (${rows.length})</h3>
+      <span style="cursor:pointer;font-size:20px;color:var(--text-mute);" onclick="document.getElementById('missingCostOverlay').remove()">✕</span></div>
+    <div style="padding:14px 22px 20px;">
+      <p class="text-mute" style="font-size:12.5px;margin:0 0 10px;">Bấm "Sửa giá vốn" để mở đơn ở chế độ sửa (chỉ đổi giá vốn của đơn đó, không ảnh hưởng đơn khác). Sửa xong, tải lại Dashboard để cập nhật.</p>
+      ${rows.length === 0 ? '<div class="empty-state">Không còn dòng nào thiếu giá vốn.</div>' :
+      `<div style="overflow-x:auto;"><table><thead><tr><th>Đơn</th><th>Ngày</th><th>Nhân viên</th><th>Sản phẩm</th><th>SL</th><th>Giá bán</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${esc(r.code || "—")}</td><td>${r.date ? formatDate(r.date) : "—"}</td><td>${esc(names[r.uid] || "—")}</td><td>${esc(r.name)}</td><td>${r.qty}</td><td>${formatVND(r.price)}</td>
+        <td><a class="btn btn-secondary btn-mini" target="_blank" href="order-history.html?order=${r.orderId}&edit=1">✎ Sửa giá vốn</a></td></tr>`).join("")}
+      </tbody></table></div>`}
+    </div></div>`;
 }
 </script>
 </body>
