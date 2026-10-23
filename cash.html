@@ -194,6 +194,27 @@ function switchTab(tab) {
 }
 
 /* ---------- Thu chi ---------- */
+// Lấy TOÀN BỘ dòng (Supabase chỉ trả tối đa 1000 dòng mỗi lần gọi). Trả về { data, error } như bình thường.
+function showDataWarning() {
+  if (document.getElementById("dataWarnBanner")) return;
+  const d = document.createElement("div");
+  d.id = "dataWarnBanner";
+  d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b91c1c;color:#fff;padding:8px 14px;font-size:13px;text-align:center;";
+  d.textContent = "⚠️ Một số dữ liệu tải chưa đầy đủ nên số liệu trên trang có thể sai. Hãy tải lại trang (F5); nếu vẫn thấy dòng này, báo chủ cửa hàng.";
+  document.body.appendChild(d);
+}
+async function fetchAllRows(buildQuery) {
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().order("id").range(from, from + 999);
+    if (error) { showDataWarning(); return { data: out.length ? out : null, error }; }
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return { data: out, error: null };
+}
+
 async function loadTx() {
   const { data, error } = await sb.from("cash_transactions").select("*").order("created_at", { ascending: false }).limit(150);
   if (error) { document.getElementById("txListWrap").innerHTML = `<div class="empty-state">Lỗi: ${error.message}</div>`; return; }
@@ -201,7 +222,7 @@ async function loadTx() {
 
   // Số dư quỹ PHẢI tính trên TOÀN BỘ lịch sử, không giới hạn 150 dòng như danh sách hiển thị
   // (nếu chỉ tính trên 150 dòng gần nhất, số dư sẽ sai/nhảy lung tung khi giao dịch tích lũy nhiều)
-  const { data: allTxForBalance, error: balErr } = await sb.from("cash_transactions").select("type, method, amount");
+  const { data: allTxForBalance, error: balErr } = await fetchAllRows(() => sb.from("cash_transactions").select("type, method, amount"));
   if (!balErr) {
     CASH_BALANCE_ACCURATE = (allTxForBalance || [])
       .filter(t => (t.method || "cash") === "cash")
