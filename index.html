@@ -87,6 +87,13 @@
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
     </div>
+    <div class="panel" id="staffProfitPanel">
+      <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <h2 id="staffProfitTitle">Lợi nhuận theo nhân viên (tháng này)</h2>
+        <button type="button" class="btn btn-secondary btn-mini" id="staffProfitToggle">👁 Hiện lợi nhuận</button>
+      </div>
+      <div class="panel-body" id="staffProfitBody"></div>
+    </div>
     <div class="panel" id="expenseDetailPanel" style="display:none;">
       <div class="panel-header"><h2>Chi tiết chi phí</h2></div>
       <div class="panel-body" id="expenseDetailBody"></div>
@@ -347,13 +354,23 @@ async function loadDashboard(isOwner, selectedMonth) {
     const { data: allProfiles } = await sb.from("profiles").select("id, full_name, role");
 
     const orderIds = (staffOrders || []).map(o => o.id);
+    // Lấy theo từng cụm 100 đơn + phân trang để không bị cắt ở 1000 dòng của Supabase
     let staffItems = [];
-    if (orderIds.length > 0) {
-      const { data } = await sb
-        .from("order_items")
-        .select("order_id, quantity, unit_price, products(category)")
-        .in("order_id", orderIds);
-      staffItems = data || [];
+    for (let i = 0; i < orderIds.length; i += 100) {
+      const chunk = orderIds.slice(i, i + 100);
+      let from = 0;
+      for (;;) {
+        const { data, error } = await sb
+          .from("order_items")
+          .select("order_id, quantity, unit_price, cost_price_at_sale, products(category)")
+          .in("order_id", chunk)
+          .order("id")
+          .range(from, from + 999);
+        if (error) { console.warn("Doanh số nhân viên:", error.message); break; }
+        staffItems = staffItems.concat(data || []);
+        if (!data || data.length < 1000) break;
+        from += 1000;
+      }
     }
 
     const isLivestockCategory = (cat) => {
@@ -362,20 +379,26 @@ async function loadDashboard(isOwner, selectedMonth) {
     };
 
     // Gộp giá trị gốc (trước giảm giá) theo từng đơn, tách sinh vật / còn lại
-    const orderBreakdown = {}; // order_id -> { subtotal, livestockSubtotal }
+    const orderBreakdown = {}; // order_id -> { subtotal, livestockSubtotal, livestockCost, otherCost, missing }
     staffItems.forEach(i => {
-      if (!orderBreakdown[i.order_id]) orderBreakdown[i.order_id] = { subtotal: 0, livestockSubtotal: 0 };
+      if (!orderBreakdown[i.order_id]) orderBreakdown[i.order_id] = { subtotal: 0, livestockSubtotal: 0, livestockCost: 0, otherCost: 0, missing: 0 };
+      const bd = orderBreakdown[i.order_id];
       const lineTotal = Number(i.quantity) * Number(i.unit_price);
-      orderBreakdown[i.order_id].subtotal += lineTotal;
+      const lineCost = Number(i.quantity) * Number(i.cost_price_at_sale || 0);
+      bd.subtotal += lineTotal;
+      if (Number(i.cost_price_at_sale || 0) <= 0 && Number(i.unit_price) > 0) bd.missing += 1;
       if (isLivestockCategory(i.products?.category)) {
-        orderBreakdown[i.order_id].livestockSubtotal += lineTotal;
+        bd.livestockSubtotal += lineTotal;
+        bd.livestockCost += lineCost;
+      } else {
+        bd.otherCost += lineCost;
       }
     });
 
     const byStaff = {};
     (staffOrders || []).forEach(o => {
       const key = o.created_by || "unknown";
-      if (!byStaff[key]) byStaff[key] = { orderCount: 0, revenue: 0, livestockRevenue: 0, otherRevenue: 0 };
+      if (!byStaff[key]) byStaff[key] = { orderCount: 0, revenue: 0, livestockRevenue: 0, otherRevenue: 0, livestockProfit: 0, otherProfit: 0, profitBase: 0, missingCost: 0 };
       byStaff[key].orderCount += 1;
       byStaff[key].revenue += Number(o.total_amount || 0);
 
@@ -385,6 +408,16 @@ async function loadDashboard(isOwner, selectedMonth) {
       if (bd && bd.subtotal > 0) livestockShare = bd.livestockSubtotal / bd.subtotal;
       byStaff[key].livestockRevenue += actualTotal * livestockShare;
       byStaff[key].otherRevenue += actualTotal * (1 - livestockShare);
+
+      // Lợi nhuận = tiền khách thực trả (đã trừ giảm giá, chia theo tỷ lệ) - giá vốn đã chốt lúc bán.
+      // Bỏ qua đơn 0đ (dùng nội bộ / hao hụt) vì đã tính ở mục Chi phí.
+      if (actualTotal > 0 && bd && bd.subtotal > 0) {
+        const r = actualTotal / bd.subtotal;
+        byStaff[key].livestockProfit += bd.livestockSubtotal * r - bd.livestockCost;
+        byStaff[key].otherProfit += (bd.subtotal - bd.livestockSubtotal) * r - bd.otherCost;
+        byStaff[key].profitBase += actualTotal;
+        byStaff[key].missingCost += bd.missing;
+      }
     });
 
     window.__STAFF_STATS__ = Object.keys(byStaff).map(uid => {
@@ -395,7 +428,11 @@ async function loadDashboard(isOwner, selectedMonth) {
         orderCount: byStaff[uid].orderCount,
         revenue: byStaff[uid].revenue,
         livestockRevenue: byStaff[uid].livestockRevenue,
-        otherRevenue: byStaff[uid].otherRevenue
+        otherRevenue: byStaff[uid].otherRevenue,
+        livestockProfit: byStaff[uid].livestockProfit,
+        otherProfit: byStaff[uid].otherProfit,
+        profitBase: byStaff[uid].profitBase,
+        missingCost: byStaff[uid].missingCost
       };
     }).sort((a, b) => b.revenue - a.revenue);
 
@@ -517,6 +554,15 @@ async function loadDashboard(isOwner, selectedMonth) {
     }
   }
 
+  if (isOwner) {
+    document.getElementById("staffProfitTitle").textContent = `Lợi nhuận theo nhân viên (${monthLabel})`;
+    document.getElementById("staffProfitToggle").addEventListener("click", () => {
+      window.__SHOW_STAFF_PROFIT__ = !window.__SHOW_STAFF_PROFIT__;
+      renderStaffProfit(monthLabel);
+    });
+    renderStaffProfit(monthLabel);
+  }
+
   // Biểu đồ doanh thu 7 ngày
   const chartBody = document.getElementById("chartBody");
   const maxDay = Math.max(...dayBuckets.map(b => b.total), 1);
@@ -588,6 +634,40 @@ async function loadDashboard(isOwner, selectedMonth) {
     },
     `<div class="empty-state"><div class="icon">🧾</div>Chưa có đơn hàng nào. <br>Hãy tạo đơn hàng đầu tiên ở mục "Đơn hàng".</div>`
   );
+}
+
+function renderStaffProfit(monthLabel) {
+  const body = document.getElementById("staffProfitBody");
+  const btn = document.getElementById("staffProfitToggle");
+  if (!body || !btn) return;
+  const show = !!window.__SHOW_STAFF_PROFIT__;
+  btn.textContent = show ? "🙈 Ẩn lợi nhuận" : "👁 Hiện lợi nhuận";
+  if (!show) {
+    body.innerHTML = `<div class="text-mute" style="font-size:13px;">Lợi nhuận đang ẩn (để chụp màn hình an toàn). Bấm "Hiện lợi nhuận" để xem.</div>`;
+    return;
+  }
+  const stats = window.__STAFF_STATS__ || [];
+  if (stats.length === 0) { body.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`; return; }
+  const pf = v => `<span style="${v < 0 ? "color:var(--danger);" : ""}">${formatVND(Math.round(v))}</span>`;
+  const sum = k => stats.reduce((a, s) => a + (s[k] || 0), 0);
+  const margin = (profit, base) => base > 0 ? (Math.round((profit / base) * 1000) / 10) + "%" : "—";
+  const totalMissing = sum("missingCost");
+  body.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr><th>Nhân viên</th><th>🐠 LN sinh vật</th><th>LN hàng còn lại</th><th>Tổng lợi nhuận</th><th>Biên LN</th></tr></thead><tbody>
+    ${stats.map(s => {
+      const total = s.livestockProfit + s.otherProfit;
+      return `<tr>
+        <td>${s.name}${s.missingCost > 0 ? ` <span title="${s.missingCost} dòng hàng chưa có giá vốn nên lợi nhuận có thể cao hơn thực tế" style="cursor:help;">⚠️</span>` : ""}</td>
+        <td style="color:var(--teal-deep); font-weight:600;">${pf(s.livestockProfit)}</td>
+        <td>${pf(s.otherProfit)}</td>
+        <td style="font-weight:700;">${pf(total)}</td>
+        <td>${margin(total, s.profitBase)}</td>
+      </tr>`;
+    }).join("")}
+    <tr style="border-top:2px solid var(--border);"><td style="font-weight:700;">Cộng</td>
+      <td style="font-weight:700;">${pf(sum("livestockProfit"))}</td><td style="font-weight:700;">${pf(sum("otherProfit"))}</td>
+      <td style="font-weight:700;">${pf(sum("livestockProfit") + sum("otherProfit"))}</td><td style="font-weight:700;">${margin(sum("livestockProfit") + sum("otherProfit"), sum("profitBase"))}</td></tr>
+  </tbody></table></div>
+  <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Lợi nhuận = tiền khách thực trả (đã trừ giảm giá, phân bổ theo tỷ lệ) − giá vốn đã chốt lúc bán. Không tính đơn 0đ (hao hụt/dùng nội bộ, đã nằm ở mục Chi phí). Có thể thấp hơn "Lãi gộp" ở trên khi đơn có giảm giá toàn đơn.${totalMissing > 0 ? ` ⚠️ Có ${totalMissing} dòng hàng chưa có giá vốn — hãy bổ sung giá vốn để số này chính xác.` : ""}</p>`;
 }
 </script>
 </body>
