@@ -397,16 +397,37 @@ function setFormType(t) {
 }
 
 /* ================= TAB: KHÁCH HÀNG ================= */
+// Lấy TOÀN BỘ dòng (Supabase chỉ trả tối đa 1000 dòng mỗi lần gọi). Trả về { data, error } như bình thường.
+function showDataWarning() {
+  if (document.getElementById("dataWarnBanner")) return;
+  const d = document.createElement("div");
+  d.id = "dataWarnBanner";
+  d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b91c1c;color:#fff;padding:8px 14px;font-size:13px;text-align:center;";
+  d.textContent = "⚠️ Một số dữ liệu tải chưa đầy đủ nên số liệu trên trang có thể sai. Hãy tải lại trang (F5); nếu vẫn thấy dòng này, báo chủ cửa hàng.";
+  document.body.appendChild(d);
+}
+async function fetchAllRows(buildQuery) {
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().order("id").range(from, from + 999);
+    if (error) { showDataWarning(); return { data: out.length ? out : null, error }; }
+    out = out.concat(data || []);
+    if (!data || data.length < 1000) break;
+    from += 1000;
+  }
+  return { data: out, error: null };
+}
+
 async function loadCustomers() {
   const { data, error } = await sb.from("customers").select("*").order("name");
   if (error) { console.error(error); return; }
   ALL_CUSTOMERS = data || [];
 
-  const { data: orders } = await sb
+  const { data: orders } = await fetchAllRows(() => sb
     .from("orders")
     .select("customer_id, total_amount, created_at")
     .eq("status", "completed")
-    .not("customer_id", "is", null);
+    .not("customer_id", "is", null));
 
   CUSTOMER_STATS = {};
   (orders || []).forEach(o => {
@@ -757,11 +778,11 @@ const dEsc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g
 async function loadDebts() {
   const { data: customers } = await sb.from("customers").select("*");
   DEBT_CUSTOMERS = customers || [];
-  const { data: orders } = await sb.from("orders")
+  const { data: orders } = await fetchAllRows(() => sb.from("orders")
     .select("id, order_code, type, total_amount, paid_amount, created_at, customer_id")
     .eq("status", "completed")
-    .not("customer_id", "is", null)
-    .order("created_at", { ascending: true });
+    .not("customer_id", "is", null));
+  (orders || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
   // Nợ thủ công (migration-31). Nếu bảng chưa có thì bỏ qua để trang vẫn chạy.
   MANUAL_DEBT_ROWS = [];
