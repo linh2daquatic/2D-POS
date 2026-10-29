@@ -15,20 +15,32 @@ const NAV_ITEMS = [
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
 ];
 
+// Nhóm menu: mỗi nhóm xổ ra các mục con. Muốn thêm trang mới: thêm vào NAV_ITEMS rồi bỏ key vào nhóm phù hợp.
+const NAV_GROUPS = [
+  { label: "Bán hàng", icon: "🛒", keys: ["orders", "order-history"] },
+  { label: "Kho & NCC", icon: "📦", keys: ["products", "suppliers"] },
+  { label: "Tiền", icon: "💰", keys: ["cash", "payroll"] },
+  { label: "Khách & Bể", icon: "👥", keys: ["customers", "tanks"] },
+  { key: "dashboard" },   // đứng riêng, bấm vào là mở luôn
+];
+
 function renderLayout({ activePage, profile, title, subtitle }) {
   const isOwner = profile.role === "owner";
 
-  const navHtml = NAV_ITEMS.map(item => {
-    const locked = item.ownerOnly && !isOwner;
-    const activeCls = item.key === activePage ? "active" : "";
-    if (locked) {
-      return `<div class="topnav-item locked" title="Chỉ Chủ cửa hàng mới xem được mục này">
-        <span class="icon">${item.icon}</span> ${item.label} 🔒
-      </div>`;
+  const itemByKey = k => NAV_ITEMS.find(i => i.key === k);
+  const navHtml = NAV_GROUPS.map(g => {
+    if (g.key) {
+      const item = itemByKey(g.key);
+      if (!item) return "";
+      const locked = item.ownerOnly && !isOwner;
+      if (locked) return `<div class="topnav-item locked" title="Chỉ Chủ cửa hàng mới xem được mục này"><span class="icon">${item.icon}</span> ${item.label} 🔒</div>`;
+      return `<a class="topnav-item ${item.key === activePage ? "active" : ""}" href="${item.href}"><span class="icon">${item.icon}</span> ${item.label}</a>`;
     }
-    return `<a class="topnav-item ${activeCls}" href="${item.href}">
-      <span class="icon">${item.icon}</span> ${item.label}
-    </a>`;
+    const items = g.keys.map(itemByKey).filter(Boolean);
+    const isActive = items.some(i => i.key === activePage);
+    const cur = items.find(i => i.key === activePage);
+    const payload = items.map(i => ({ label: i.label, href: i.href, icon: i.icon, locked: i.ownerOnly && !isOwner, active: i.key === activePage }));
+    return `<div class="topnav-item nav-group ${isActive ? "active" : ""}" data-items='${JSON.stringify(payload).replace(/'/g, "&#39;")}'><span class="icon">${g.icon}</span> ${cur ? cur.label : g.label} <span style="font-size:10px; opacity:.7;">▾</span></div>`;
   }).join("");
 
   const shellHtml = `
@@ -55,6 +67,29 @@ function renderLayout({ activePage, profile, title, subtitle }) {
   document.body.insertAdjacentHTML("afterbegin", shellHtml);
 
   document.getElementById("logoutBtn").addEventListener("click", doLogout);
+
+  // Menu xổ xuống của từng nhóm (vẽ cố định theo vị trí nút để không bị cắt bởi vùng cuộn ngang)
+  const navMenu = document.createElement("div");
+  navMenu.id = "navGroupMenu";
+  navMenu.style.cssText = "position:fixed; display:none; z-index:300; background:#fff; border-radius:10px; box-shadow:0 8px 24px rgba(10,22,40,.28); padding:6px; min-width:190px;";
+  document.body.appendChild(navMenu);
+  const closeNavMenu = () => { navMenu.style.display = "none"; navMenu.dataset.owner = ""; };
+  document.querySelectorAll(".nav-group").forEach(btn => btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (navMenu.dataset.owner === btn.dataset.items && navMenu.style.display === "block") { closeNavMenu(); return; }
+    const items = JSON.parse(btn.dataset.items);
+    navMenu.innerHTML = items.map(i => i.locked
+      ? `<div style="padding:9px 12px; border-radius:7px; color:#94a3b8; cursor:not-allowed; font-size:14px;" title="Chỉ Chủ cửa hàng mới xem được mục này">${i.icon} ${i.label} 🔒</div>`
+      : `<a href="${i.href}" style="display:block; padding:9px 12px; border-radius:7px; text-decoration:none; font-size:14px; color:#14213d; ${i.active ? "background:#e8f3ef; font-weight:700;" : ""}" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='${i.active ? "#e8f3ef" : "transparent"}'">${i.icon} ${i.label}</a>`).join("");
+    const r = btn.getBoundingClientRect();
+    navMenu.style.top = (r.bottom + 6) + "px";
+    navMenu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 210)) + "px";
+    navMenu.style.display = "block";
+    navMenu.dataset.owner = btn.dataset.items;
+  }));
+  document.addEventListener("click", closeNavMenu);
+  window.addEventListener("scroll", closeNavMenu, { passive: true });
+  window.addEventListener("resize", closeNavMenu);
 
   setupNotifications(profile, isOwner);
 
