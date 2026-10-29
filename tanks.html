@@ -795,6 +795,7 @@ async function renderTankFinance() {
   await loadTankFinance(tank.id);
   if (!document.getElementById("tankFinPanel") || CURRENT_TANK.id !== tank.id) return;
   if (TANK_FIN_MISSING) {
+    const ov0 = document.getElementById("ovFinPct"); if (ov0) ov0.textContent = "—";
     box.innerHTML = `<div class="panel"><div class="panel-header"><h2>💰 Tài chính bể</h2></div><div class="panel-body text-mute" style="font-size:12.5px;">Chưa bật tính năng này: cần chạy <b>migration-32.sql</b> trong Supabase SQL Editor.</div></div>`;
     return;
   }
@@ -807,6 +808,8 @@ async function renderTankFinance() {
   const qtySold = TANK_FRAG_ROWS.reduce((s, r) => s + Number(r.quantity), 0);
   const pct = cap > 0 ? Math.round(revenue / cap * 100) : 0;
   const net = revenue - cap;
+  const ovPct = document.getElementById("ovFinPct");
+  if (ovPct) ovPct.textContent = cap > 0 ? pct + "% · thu " + formatVND(revenue) : "Chưa nhập vốn";
   const byProd = {}; const byMonth = {};
   TANK_FRAG_ROWS.forEach(r => {
     const nm = r.products?.name || "—";
@@ -876,7 +879,68 @@ async function renderTankFinance() {
   }));
 }
 
+let TANK_TAB = "ov";
+let TANK_SUBTAB = "chart";
+let TANK_TAB_FOR = null;   // bể đang nhớ tab (đổi bể thì quay lại Tổng quan)
+
+function showTankTab(tab) {
+  TANK_TAB = tab;
+  document.querySelectorAll(".tank-pane").forEach(el => { el.style.display = el.dataset.pane === tab ? "block" : "none"; });
+  document.querySelectorAll(".tank-tab").forEach(el => {
+    const on = el.dataset.tab === tab;
+    el.style.fontWeight = on ? 700 : 500;
+    el.style.color = on ? "var(--teal-deep, #0e7490)" : "var(--text-mute)";
+    el.style.borderBottomColor = on ? "var(--teal-deep, #0e7490)" : "transparent";
+  });
+  if (tab === "do" && TANK_SUBTAB === "chart") drawTankChartsIfNeeded();
+  window.scrollTo({ top: 0 });
+}
+function showTankSubtab(sub) {
+  TANK_SUBTAB = sub;
+  document.querySelectorAll(".tank-subpane").forEach(el => { el.style.display = el.dataset.subpane === sub ? "block" : "none"; });
+  document.querySelectorAll(".tank-subtab").forEach(el => {
+    const on = el.dataset.sub === sub;
+    el.style.background = on ? "var(--ink)" : "#e6ebf1";
+    el.style.color = on ? "#fff" : "var(--text-mute)";
+  });
+  if (sub === "chart") drawTankChartsIfNeeded();
+}
+function drawTankChartsIfNeeded() {
+  if (CURRENT_PARAMS.length > 0 && CURRENT_READINGS.length >= 2) renderCharts();
+}
+function renderTankOverviewPane() {
+  const box = document.getElementById("tankOvPane");
+  if (!box) return;
+  const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const fmt = n => String(Math.round(Number(n) * 100) / 100);
+  const last = CURRENT_READINGS[CURRENT_READINGS.length - 1];
+  const age = last ? Math.floor((Date.now() - new Date(last.reading_date).getTime()) / 86400000) : null;
+  const rows = CURRENT_PARAMS.map(p => {
+    const ser = CURRENT_READINGS.map(r => r.values[p.id]).filter(v => v !== undefined).slice(-5).map(Number);
+    return ser.length ? { p, ser } : null;
+  }).filter(Boolean);
+  const dd = CURRENT_DOSING[0];
+  const sched = CURRENT_TANK_SCHEDULE.map(x => DAY_NAMES[x.day_of_week] + " " + (SLOTS.find(z => z.key === x.time_slot)?.label || "")).join(", ");
+  box.innerHTML = `
+    <div class="panel"><div class="panel-body">
+      <div class="flex" style="gap:8px; flex-wrap:wrap;">
+        <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Đo gần nhất</div><div style="font-size:16px; font-weight:700; ${age !== null && age > 7 ? "color:#d97706;" : ""}">${last ? (age === 0 ? "Hôm nay" : age + " ngày trước") : "Chưa có"}${age !== null && age > 7 ? " ⚠" : ""}</div></div>
+        <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Châm gần nhất</div><div style="font-size:16px; font-weight:700;">${dd ? esc(dd.tank_chemicals?.name || "—") : "Chưa có"}</div><div class="text-mute" style="font-size:11px;">${dd ? formatDateTime(dd.dose_date) : ""}</div></div>
+        <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Lịch chăm cố định</div><div style="font-size:14px; font-weight:700;">${sched ? esc(sched) : "Chưa có"}</div></div>
+        <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Hoà vốn</div><div style="font-size:16px; font-weight:700;" id="ovFinPct">…</div></div>
+      </div>
+      <div style="margin-top:14px;"><strong style="font-size:13.5px;">Thông số mới nhất</strong>
+        ${rows.length === 0 ? `<div class="text-mute" style="font-size:12.5px; margin-top:6px;">Chưa có số đo. Vào tab "Đo & Biểu đồ" để ghi nhận.</div>` : `
+        <table style="margin-top:6px;"><thead><tr><th>Chỉ số</th><th>Mới nhất</th><th>Vài lần gần nhất</th></tr></thead><tbody>
+          ${rows.map(({ p, ser }) => { const cur = ser[ser.length - 1], pr = ser.length > 1 ? ser[ser.length - 2] : null; const ar = pr === null || cur === pr ? "" : (cur > pr ? " ↑" : " ↓");
+            return `<tr><td>${esc(p.name)}${p.unit ? ` <span class="text-mute">(${esc(p.unit)})</span>` : ""}</td><td><b>${fmt(cur)}</b>${ar}</td><td class="text-mute">${ser.map(fmt).join(" → ")}</td></tr>`; }).join("")}
+        </tbody></table>`}
+      </div>
+    </div></div>`;
+}
+
 function renderTankDetailView() {
+  if (TANK_TAB_FOR !== CURRENT_TANK.id) { TANK_TAB_FOR = CURRENT_TANK.id; TANK_TAB = "ov"; TANK_SUBTAB = "chart"; }
   const wrap = document.getElementById("tankDetailView");
   wrap.innerHTML = `
     <div class="back-link" id="backToGridBtn">← Quay lại lịch chăm sóc</div>
@@ -888,36 +952,60 @@ function renderTankDetailView() {
       <span class="btn btn-secondary btn-mini" id="editTankBtn">Sửa thông tin bể</span>
     </div>
 
-    <div id="tankFinPanel"></div>
 
-    <div class="panel">
-      <div class="panel-header"><h2>Lịch chăm sóc cố định</h2></div>
-      <div class="panel-body">
-        ${CURRENT_TANK_SCHEDULE.length === 0
-          ? `<div class="empty-state"><div class="icon">🗓️</div>Bể này chưa có lịch cố định.</div>`
-          : `<div id="tankSchedList">${CURRENT_TANK_SCHEDULE.map(s => `
-              <div class="sched-row" data-id="${s.id}">
-                <span>${DAY_NAMES[s.day_of_week]} — ${SLOTS.find(x => x.key === s.time_slot)?.label}</span>
-                <span class="s-remove" data-id="${s.id}">✕</span>
-              </div>`).join("")}</div>`
-        }
-        <div style="margin-top:12px;">
-          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thêm lịch mới cho bể này</label>
-          <div class="flex gap-8" style="flex-wrap:wrap;">
-            <select id="quickAddDay" style="max-width:140px;">${DAY_NAMES.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select>
-            <select id="quickAddSlot" style="max-width:120px;">${SLOTS.map(s => `<option value="${s.key}">${s.label}</option>`).join("")}</select>
-            <button class="btn btn-secondary btn-mini" id="quickAddSchedBtn">+ Thêm</button>
-          </div>
+    <div id="tankTabBar" style="position:sticky; top:58px; z-index:40; background:var(--bg); padding:8px 0 0; margin:0 0 14px; border-bottom:2px solid var(--border); display:flex; gap:2px; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch;">
+      ${[["ov","📋 Tổng quan"],["do","🧪 Đo & Biểu đồ"],["chem","💧 Châm"],["fin","💰 Tài chính"],["sch","🗓 Lịch"]].map(([k, l]) => `<div class="tank-tab" data-tab="${k}" style="padding:9px 14px; cursor:pointer; font-size:13.5px; font-weight:${TANK_TAB === k ? 700 : 500}; color:${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "var(--text-mute)"}; border-bottom:3px solid ${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "transparent"}; margin-bottom:-2px; flex-shrink:0;">${l}</div>`).join("")}
+    </div>
+
+    <div class="tank-pane" data-pane="ov" style="display:${TANK_TAB === "ov" ? "block" : "none"};">
+      <div id="tankOvPane"></div>
+    </div>
+
+    <div class="tank-pane" data-pane="do" style="display:${TANK_TAB === "do" ? "block" : "none"};">
+      <div class="flex" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+        <div style="display:flex; gap:6px;">
+          ${[["chart","📈 Biểu đồ"],["hist","🧾 Lịch sử đo"],["param","⚙️ Chỉ số theo dõi"]].map(([k, l]) => `<span class="tank-subtab" data-sub="${k}" style="padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12.5px; font-weight:600; ${TANK_SUBTAB === k ? "background:var(--ink); color:#fff;" : "background:#e6ebf1; color:var(--text-mute);"}">${l}</span>`).join("")}
         </div>
+        ${CURRENT_PARAMS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addReadingBtn">+ Ghi nhận đo</button>` : ""}
+      </div>
+      <div class="tank-subpane" data-subpane="chart" style="display:${TANK_SUBTAB === "chart" ? "block" : "none"};">
+        ${CURRENT_PARAMS.length > 0 ? `
+    <div class="panel">
+      <div class="panel-header"><h2>Biểu đồ theo thời gian</h2></div>
+      <div class="panel-body">
+        ${CURRENT_READINGS.length < 2
+          ? `<div class="empty-state"><div class="icon">📈</div>Cần ít nhất 2 lần đo để vẽ được biểu đồ. Hiện có ${CURRENT_READINGS.length} lần đo.</div>`
+          : `<div class="chart-grid">${CURRENT_PARAMS.map(p => `
+              <div class="chart-card"><h4>${p.name}${p.unit ? ' (' + p.unit + ')' : ''}</h4><canvas id="chart-${p.id}"></canvas></div>
+            `).join("")}</div>`
+        }
       </div>
     </div>
 
+        ` : `<div class="empty-state"><div class="icon">📊</div>Chưa có chỉ số nào. Vào mục "Chỉ số theo dõi" để thêm (VD: pH, KH, Canxi...).</div>`}
+      </div>
+      <div class="tank-subpane" data-subpane="hist" style="display:${TANK_SUBTAB === "hist" ? "block" : "none"};">
+        ${CURRENT_PARAMS.length > 0 ? `
+    <div class="panel">
+      <div class="panel-header"><h2>Lịch sử đo</h2></div>
+      <div class="panel-body">
+        ${CURRENT_READINGS.length === 0 ? `<div class="empty-state"><div class="icon">🧪</div>Chưa có lần đo nào.</div>` : `
+        <table><thead><tr><th>Ngày</th>${CURRENT_PARAMS.map(p => `<th>${p.name}</th>`).join("")}<th>Ghi chú</th></tr></thead><tbody>
+          ${[...CURRENT_READINGS].reverse().map(r => `<tr>
+            <td>${formatDateTime(r.reading_date)}</td>
+            ${CURRENT_PARAMS.map(p => `<td>${r.values[p.id] !== undefined ? r.values[p.id] : '—'}</td>`).join("")}
+            <td>${r.note || '—'}</td>
+          </tr>`).join("")}
+        </tbody></table>`}
+      </div>
+    </div>        ` : `<div class="empty-state"><div class="icon">📊</div>Chưa có chỉ số nào. Vào mục "Chỉ số theo dõi" để thêm (VD: pH, KH, Canxi...).</div>`}
+      </div>
+      <div class="tank-subpane" data-subpane="param" style="display:${TANK_SUBTAB === "param" ? "block" : "none"};">
     <div class="panel">
       <div class="panel-header flex" style="justify-content:space-between;">
         <h2>Chỉ số theo dõi</h2>
         <div class="flex gap-8">
           <span class="btn btn-secondary btn-mini" id="addParamBtn">+ Thêm chỉ số</span>
-          ${CURRENT_PARAMS.length > 0 ? `<button class="btn btn-primary btn-mini" id="addReadingBtn">+ Ghi nhận đo</button>` : ""}
         </div>
       </div>
       <div class="panel-body">
@@ -932,33 +1020,10 @@ function renderTankDetailView() {
       </div>
     </div>
 
-    ${CURRENT_PARAMS.length > 0 ? `
-    <div class="panel">
-      <div class="panel-header"><h2>Biểu đồ theo thời gian</h2></div>
-      <div class="panel-body">
-        ${CURRENT_READINGS.length < 2
-          ? `<div class="empty-state"><div class="icon">📈</div>Cần ít nhất 2 lần đo để vẽ được biểu đồ. Hiện có ${CURRENT_READINGS.length} lần đo.</div>`
-          : `<div class="chart-grid">${CURRENT_PARAMS.map(p => `
-              <div class="chart-card"><h4>${p.name}${p.unit ? ' (' + p.unit + ')' : ''}</h4><canvas id="chart-${p.id}"></canvas></div>
-            `).join("")}</div>`
-        }
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><h2>Lịch sử đo</h2></div>
-      <div class="panel-body">
-        ${CURRENT_READINGS.length === 0 ? `<div class="empty-state"><div class="icon">🧪</div>Chưa có lần đo nào.</div>` : `
-        <table><thead><tr><th>Ngày</th>${CURRENT_PARAMS.map(p => `<th>${p.name}</th>`).join("")}<th>Ghi chú</th></tr></thead><tbody>
-          ${[...CURRENT_READINGS].reverse().map(r => `<tr>
-            <td>${formatDateTime(r.reading_date)}</td>
-            ${CURRENT_PARAMS.map(p => `<td>${r.values[p.id] !== undefined ? r.values[p.id] : '—'}</td>`).join("")}
-            <td>${r.note || '—'}</td>
-          </tr>`).join("")}
-        </tbody></table>`}
-      </div>
-    </div>` : ""}
-
+    <div class="tank-pane" data-pane="chem" style="display:${TANK_TAB === "chem" ? "block" : "none"};">
     <div class="panel">
       <div class="panel-header flex" style="justify-content:space-between;">
         <h2>Hóa chất châm</h2>
@@ -987,11 +1052,45 @@ function renderTankDetailView() {
         }
       </div>
     </div>
+    </div>
+
+    <div class="tank-pane" data-pane="fin" style="display:${TANK_TAB === "fin" ? "block" : "none"};">
+    <div id="tankFinPanel"></div>
+
+    </div>
+
+    <div class="tank-pane" data-pane="sch" style="display:${TANK_TAB === "sch" ? "block" : "none"};">
+    <div class="panel">
+      <div class="panel-header"><h2>Lịch chăm sóc cố định</h2></div>
+      <div class="panel-body">
+        ${CURRENT_TANK_SCHEDULE.length === 0
+          ? `<div class="empty-state"><div class="icon">🗓️</div>Bể này chưa có lịch cố định.</div>`
+          : `<div id="tankSchedList">${CURRENT_TANK_SCHEDULE.map(s => `
+              <div class="sched-row" data-id="${s.id}">
+                <span>${DAY_NAMES[s.day_of_week]} — ${SLOTS.find(x => x.key === s.time_slot)?.label}</span>
+                <span class="s-remove" data-id="${s.id}">✕</span>
+              </div>`).join("")}</div>`
+        }
+        <div style="margin-top:12px;">
+          <label style="display:block; font-size:12.5px; font-weight:600; color:var(--text-mute); margin-bottom:6px;">Thêm lịch mới cho bể này</label>
+          <div class="flex gap-8" style="flex-wrap:wrap;">
+            <select id="quickAddDay" style="max-width:140px;">${DAY_NAMES.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select>
+            <select id="quickAddSlot" style="max-width:120px;">${SLOTS.map(s => `<option value="${s.key}">${s.label}</option>`).join("")}</select>
+            <button class="btn btn-secondary btn-mini" id="quickAddSchedBtn">+ Thêm</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </div>
   `;
 
   bindDetailEvents();
+  renderTankOverviewPane();
   renderTankFinance();
-  if (CURRENT_PARAMS.length > 0 && CURRENT_READINGS.length >= 2) renderCharts();
+  document.querySelectorAll(".tank-tab").forEach(el => el.addEventListener("click", () => showTankTab(el.dataset.tab)));
+  document.querySelectorAll(".tank-subtab").forEach(el => el.addEventListener("click", () => showTankSubtab(el.dataset.sub)));
+  if (TANK_TAB === "do" && TANK_SUBTAB === "chart") drawTankChartsIfNeeded();
 }
 
 function bindDetailEvents() {
