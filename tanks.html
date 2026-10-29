@@ -372,6 +372,7 @@ async function renderGridView() {
     : (WEEK_OFFSET > 0 ? WEEK_OFFSET + " tuần sau" : Math.abs(WEEK_OFFSET) + " tuần trước");
 
   wrap.innerHTML = `
+    <div id="tankOverview" style="margin-bottom:18px;"></div>
     <div class="week-nav">
       <button class="btn btn-secondary btn-mini" id="weekPrevBtn">← Tuần trước</button>
       <div style="text-align:center;">
@@ -426,6 +427,7 @@ async function renderGridView() {
   `;
 
   await renderTaskList();
+  renderTankOverview();
 
   wrap.querySelectorAll(".name-chip").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
   wrap.querySelectorAll(".task-chip").forEach(el => el.addEventListener("click", () => openTaskDetail(el.dataset.taskId)));
@@ -648,6 +650,98 @@ async function loadTankReadings(tankId) {
 async function loadTankDosing(tankId) {
   const { data } = await sb.from("tank_dosing_log").select("*, tank_chemicals(name, unit)").eq("tank_id", tankId).order("dose_date", { ascending: false }).limit(50);
   CURRENT_DOSING = data || [];
+}
+
+
+/* ============================================================
+   TỔNG QUAN CÁC BỂ — thẻ vuốt ngang: số đo mới nhất + xu hướng vài lần gần nhất
+   ============================================================ */
+async function renderTankOverview() {
+  const box = document.getElementById("tankOverview");
+  if (!box) return;
+  if (!ALL_TANKS.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Đang tải tổng quan các bể...</div>`;
+  try {
+    const KEEP = 5;
+    const [prm, rd, dose, tsk] = await Promise.all([
+      sb.from("tank_parameters").select("id, tank_id, name, unit, display_order, created_at").order("display_order").order("created_at"),
+      sb.from("tank_readings").select("id, tank_id, reading_date").order("reading_date", { ascending: false }).limit(1000),
+      sb.from("tank_dosing_log").select("tank_id, dose_date, tank_chemicals(name)").order("dose_date", { ascending: false }).limit(500),
+      sb.from("tank_tasks").select("tank_id, title, task_date, status").neq("status", "done").gte("task_date", toDateKey(new Date())).order("task_date").limit(300)
+    ]);
+    const params = prm.data || [];
+    const recentByTank = {};   // 5 lần đo gần nhất của từng bể
+    (rd.data || []).forEach(r => { (recentByTank[r.tank_id] = recentByTank[r.tank_id] || []).push(r); });
+    const ids = [];
+    Object.values(recentByTank).forEach(arr => { arr.length = Math.min(arr.length, KEEP); arr.forEach(r => ids.push(r.id)); });
+    const valMap = {};         // reading_id -> {parameter_id: value}
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await sb.from("tank_reading_values").select("reading_id, parameter_id, value").in("reading_id", ids.slice(i, i + 100));
+      (data || []).forEach(v => { (valMap[v.reading_id] = valMap[v.reading_id] || {})[v.parameter_id] = Number(v.value); });
+    }
+    const lastDose = {}; (dose.data || []).forEach(d => { if (!lastDose[d.tank_id]) lastDose[d.tank_id] = d; });
+    const nextTask = {}; (tsk.data || []).forEach(t => { if (t.tank_id && !nextTask[t.tank_id]) nextTask[t.tank_id] = t; });
+
+    const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+    const fmt = n => { const r = Math.round(Number(n) * 100) / 100; return String(r); };
+    const dayDiff = d => Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    const spark = vals => {
+      if (vals.length < 2) return `<span class="text-mute" style="font-size:10.5px;">chưa đủ để vẽ</span>`;
+      const w = 84, h = 24, mn = Math.min(...vals), mx = Math.max(...vals), span = (mx - mn) || 1;
+      const pts = vals.map((v, i) => `${(i * w / (vals.length - 1)).toFixed(1)},${(h - 3 - ((v - mn) / span) * (h - 6)).toFixed(1)}`);
+      const last = pts[pts.length - 1].split(",");
+      return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="flex-shrink:0;"><polyline fill="none" stroke="#0e7490" stroke-width="2" points="${pts.join(" ")}"/><circle cx="${last[0]}" cy="${last[1]}" r="2.8" fill="#0e7490"/></svg>`;
+    };
+
+    // Sắp xếp: bể có lịch chăm / có số đo lên trước
+    const cards = ALL_TANKS.slice().sort((a, b) => {
+      const sa = (ALL_CARE_SCHEDULE.some(x => x.tank_id === a.id) ? 0 : 1) + (recentByTank[a.id] ? 0 : 1);
+      const sb2 = (ALL_CARE_SCHEDULE.some(x => x.tank_id === b.id) ? 0 : 1) + (recentByTank[b.id] ? 0 : 1);
+      return sa - sb2 || (a.name || "").localeCompare(b.name || "", "vi");
+    }).map(t => {
+      const sched = ALL_CARE_SCHEDULE.filter(x => x.tank_id === t.id);
+      const days = [...new Set(sched.map(x => DAY_NAMES[x.day_of_week]))].join(", ");
+      const slotKey = sched[0]?.time_slot;
+      const slotLabel = (SLOTS.find(x => x.key === slotKey) || {}).label || "";
+      const rds = (recentByTank[t.id] || []).slice().reverse(); // cũ → mới
+      const last = rds[rds.length - 1];
+      const age = last ? dayDiff(last.reading_date) : null;
+      const stale = age === null || age > 7;
+      const myParams = params.filter(p => p.tank_id === t.id);
+      const rows = myParams.map(p => {
+        const series = rds.map(r => (valMap[r.id] || {})[p.id]).filter(v => v !== undefined);
+        return { p, series };
+      }).filter(x => x.series.length > 0).slice(0, 5);
+      const dd = lastDose[t.id], nt = nextTask[t.id];
+      return `<div class="tov-card" data-tank-id="${t.id}" style="flex:0 0 250px; scroll-snap-align:start; background:#fff; border-radius:12px; padding:12px 13px; box-shadow:0 2px 8px rgba(0,0,0,.09); border-top:4px solid ${stale && last ? '#d97706' : '#0e7490'}; cursor:pointer;">
+        <div style="font-weight:700; font-size:14.5px;">🪸 ${esc(t.name)}</div>
+        <div class="text-mute" style="font-size:11.5px; margin-top:2px;">${t.customers?.name ? "👤 " + esc(t.customers.name) + " · " : ""}${days ? esc(days) + (slotLabel ? " · " + esc(slotLabel) : "") : "Chưa có lịch cố định"}</div>
+        <div style="font-size:11.5px; margin:6px 0 4px; ${stale ? "color:#d97706; font-weight:600;" : "color:var(--text-mute);"}">${last ? (age === 0 ? "Đo hôm nay" : "Đo gần nhất: " + age + " ngày trước") + (stale ? " ⚠" : "") : "Chưa có số đo"}</div>
+        ${rows.map(({ p, series }) => {
+          const cur = series[series.length - 1], prev = series.length > 1 ? series[series.length - 2] : null;
+          const arrow = prev === null || cur === prev ? "" : (cur > prev ? " ↑" : " ↓");
+          return `<div style="display:flex; align-items:center; justify-content:space-between; gap:6px; padding:4px 0; border-top:1px solid #eef2f6;">
+            <div style="min-width:0;"><div style="font-size:11px; color:var(--text-mute);">${esc(p.name)}${p.unit ? " (" + esc(p.unit) + ")" : ""}</div>
+              <div style="font-size:15px; font-weight:700;">${fmt(cur)}<span style="font-size:12px; color:${arrow.includes("↑") ? "#c0392b" : "#0e7490"};">${arrow}</span></div>
+              <div style="font-size:10.5px; color:var(--text-mute);">${series.map(fmt).join(" → ")}</div></div>
+            ${spark(series)}</div>`;
+        }).join("")}
+        <div style="font-size:11px; color:var(--text-mute); margin-top:6px;">${dd ? "💧 Châm: " + esc(dd.tank_chemicals?.name || "—") + " · " + (dayDiff(dd.dose_date) === 0 ? "hôm nay" : dayDiff(dd.dose_date) + " ngày trước") : "Chưa có nhật ký châm"}</div>
+        ${nt ? `<div style="font-size:11px; color:var(--text-mute); margin-top:2px;">📌 ${esc(nt.title)} · ${formatDate(nt.task_date)}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    box.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+        <strong style="font-size:14px;">Tổng quan các bể đang theo dõi</strong>
+        <span class="text-mute" style="font-size:11.5px;">Vuốt ngang để xem tiếp · bấm thẻ để mở chi tiết</span>
+      </div>
+      <div style="display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x proximity; padding:4px 2px 10px; -webkit-overflow-scrolling:touch;">${cards}</div>`;
+    box.querySelectorAll(".tov-card").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
+  } catch (e) {
+    console.warn("Tổng quan bể:", e);
+    box.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Không tải được tổng quan các bể.</div>`;
+  }
 }
 
 function renderTankDetailView() {
