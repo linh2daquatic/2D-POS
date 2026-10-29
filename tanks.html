@@ -679,6 +679,18 @@ async function renderTankOverview() {
       const { data } = await sb.from("tank_reading_values").select("reading_id, parameter_id, value").in("reading_id", ids.slice(i, i + 100));
       (data || []).forEach(v => { (valMap[v.reading_id] = valMap[v.reading_id] || {})[v.parameter_id] = Number(v.value); });
     }
+    // Tóm tắt tài chính từng bể (bỏ qua nếu chưa chạy migration-32)
+    const finCap = {}, finRev = {};
+    let finOk = false;
+    try {
+      const fa = await sb.from("tank_assets").select("tank_id, cost");
+      if (!fa.error) {
+        finOk = true;
+        (fa.data || []).forEach(x => { finCap[x.tank_id] = (finCap[x.tank_id] || 0) + Number(x.cost || 0); });
+        const fr = await fetchPaged(() => sb.from("order_items").select("id, tank_id, quantity, unit_price, orders!inner(status)").not("tank_id", "is", null).eq("orders.status", "completed").order("id"));
+        (fr.data || []).forEach(x => { finRev[x.tank_id] = (finRev[x.tank_id] || 0) + Number(x.quantity) * Number(x.unit_price); });
+      }
+    } catch (e) { console.warn("Tài chính bể:", e); }
     const lastDose = {}; (dose.data || []).forEach(d => { if (!lastDose[d.tank_id]) lastDose[d.tank_id] = d; });
     const nextTask = {}; (tsk.data || []).forEach(t => { if (t.tank_id && !nextTask[t.tank_id]) nextTask[t.tank_id] = t; });
 
@@ -727,6 +739,7 @@ async function renderTankOverview() {
             ${spark(series)}</div>`;
         }).join("")}
         <div style="font-size:11px; color:var(--text-mute); margin-top:6px;">${dd ? "💧 Châm: " + esc(dd.tank_chemicals?.name || "—") + " · " + (dayDiff(dd.dose_date) === 0 ? "hôm nay" : dayDiff(dd.dose_date) + " ngày trước") : "Chưa có nhật ký châm"}</div>
+        ${finOk && (finCap[t.id] > 0 || finRev[t.id] > 0) ? `<div style="font-size:11px; margin-top:6px; padding-top:6px; border-top:1px solid #eef2f6;">💰 Vốn ${formatVND(finCap[t.id] || 0)} · Thu ${formatVND(finRev[t.id] || 0)}${finCap[t.id] > 0 ? ` · <b>Hoà vốn ${Math.round((finRev[t.id] || 0) / finCap[t.id] * 100)}%</b>` : ""}</div>` : ""}
         ${nt ? `<div style="font-size:11px; color:var(--text-mute); margin-top:2px;">📌 ${esc(nt.title)} · ${formatDate(nt.task_date)}</div>` : ""}
       </div>`;
     }).join("");
@@ -744,6 +757,125 @@ async function renderTankOverview() {
   }
 }
 
+
+/* ============================================================
+   TÀI CHÍNH BỂ — phần cứng, sinh vật con mẹ, frag bán ra, % hoà vốn
+   ============================================================ */
+let TANK_ASSETS = [];
+let TANK_FRAG_ROWS = [];
+let TANK_FIN_MISSING = false;
+
+async function fetchPaged(buildQuery) {
+  let all = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await buildQuery().range(from, from + 999);
+    if (error) return { data: null, error };
+    all = all.concat(data || []);
+    if (!data || data.length < 1000) break;
+  }
+  return { data: all, error: null };
+}
+
+async function loadTankFinance(tankId) {
+  TANK_FIN_MISSING = false;
+  const a = await sb.from("tank_assets").select("*").eq("tank_id", tankId).order("kind").order("created_at");
+  if (a.error) { TANK_FIN_MISSING = true; TANK_ASSETS = []; TANK_FRAG_ROWS = []; return; }
+  TANK_ASSETS = a.data || [];
+  const r = await fetchPaged(() => sb.from("order_items")
+    .select("id, quantity, unit_price, products(name), orders!inner(status, created_at)")
+    .eq("tank_id", tankId).eq("orders.status", "completed").order("id"));
+  TANK_FRAG_ROWS = r.data || [];
+}
+
+async function renderTankFinance() {
+  const box = document.getElementById("tankFinPanel");
+  if (!box) return;
+  const tank = CURRENT_TANK;
+  box.innerHTML = `<div class="panel"><div class="panel-body text-mute" style="font-size:12.5px;">Đang tải tài chính bể...</div></div>`;
+  await loadTankFinance(tank.id);
+  if (!document.getElementById("tankFinPanel") || CURRENT_TANK.id !== tank.id) return;
+  if (TANK_FIN_MISSING) {
+    box.innerHTML = `<div class="panel"><div class="panel-header"><h2>💰 Tài chính bể</h2></div><div class="panel-body text-mute" style="font-size:12.5px;">Chưa bật tính năng này: cần chạy <b>migration-32.sql</b> trong Supabase SQL Editor.</div></div>`;
+    return;
+  }
+  const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const hw = TANK_ASSETS.filter(x => x.kind === "hardware");
+  const lv = TANK_ASSETS.filter(x => x.kind === "livestock");
+  const sum = arr => arr.reduce((s, x) => s + Number(x.cost || 0), 0);
+  const capHw = sum(hw), capLv = sum(lv), cap = capHw + capLv;
+  const revenue = TANK_FRAG_ROWS.reduce((s, r) => s + Number(r.quantity) * Number(r.unit_price), 0);
+  const qtySold = TANK_FRAG_ROWS.reduce((s, r) => s + Number(r.quantity), 0);
+  const pct = cap > 0 ? Math.round(revenue / cap * 100) : 0;
+  const net = revenue - cap;
+  const byProd = {}; const byMonth = {};
+  TANK_FRAG_ROWS.forEach(r => {
+    const nm = r.products?.name || "—";
+    (byProd[nm] = byProd[nm] || { q: 0, v: 0 }); byProd[nm].q += Number(r.quantity); byProd[nm].v += Number(r.quantity) * Number(r.unit_price);
+    const d = new Date(r.orders?.created_at); const k = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    (byMonth[k] = byMonth[k] || { q: 0, v: 0 }); byMonth[k].q += Number(r.quantity); byMonth[k].v += Number(r.quantity) * Number(r.unit_price);
+  });
+  const kpi = (label, val, color) => `<div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 130px;"><div class="text-mute" style="font-size:11px;">${label}</div><div style="font-size:16px; font-weight:700; ${color ? "color:" + color + ";" : ""}">${val}</div></div>`;
+  const assetTable = (arr, kind) => `
+    <table style="margin-top:6px;"><thead><tr><th>${kind === "hardware" ? "Phần cứng" : "Sinh vật (con mẹ, cá...)"}</th><th>SL</th><th>Tổng tiền mua</th><th>Ngày mua</th>${kind === "livestock" ? "<th>Tình trạng</th>" : ""}<th></th></tr></thead>
+    <tbody>${arr.length ? arr.map(x => `<tr>
+      <td>${esc(x.name)}${x.note ? `<div class="text-mute" style="font-size:11px;">${esc(x.note)}</div>` : ""}</td><td>${Number(x.qty)}</td><td>${formatVND(x.cost)}</td><td>${x.bought_at ? formatDate(x.bought_at) : "—"}</td>
+      ${kind === "livestock" ? `<td><select class="asset-status" data-id="${x.id}" style="width:auto;"><option value="active" ${x.status === "active" ? "selected" : ""}>Còn nuôi</option><option value="dead" ${x.status === "dead" ? "selected" : ""}>Đã chết</option><option value="sold" ${x.status === "sold" ? "selected" : ""}>Đã bán</option></select></td>` : ""}
+      <td><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);">✕</span></td></tr>`).join("") : `<tr><td colspan="6" class="text-mute">Chưa có.</td></tr>`}</tbody></table>
+    <div class="flex gap-8" style="margin-top:8px; flex-wrap:wrap; align-items:center;">
+      <input class="asset-name" data-kind="${kind}" placeholder="Tên ${kind === "hardware" ? "(VD: Đèn Maxspect)" : "(VD: Acropora tenuis)"}" style="flex:2 1 160px;">
+      <input class="asset-qty" data-kind="${kind}" type="number" step="any" value="1" title="Số lượng" style="flex:0 1 60px;">
+      <input class="asset-cost" data-kind="${kind}" type="number" step="any" placeholder="Tổng tiền mua" style="flex:1 1 120px;">
+      <input class="asset-date" data-kind="${kind}" type="date" style="flex:1 1 130px;">
+      <span class="btn btn-primary btn-mini asset-add" data-kind="${kind}">+ Thêm</span>
+    </div>`;
+  box.innerHTML = `
+    <div class="panel">
+      <div class="panel-header"><h2>💰 Tài chính bể</h2></div>
+      <div class="panel-body">
+        <div class="flex" style="gap:8px; flex-wrap:wrap;">
+          ${kpi("Vốn phần cứng", formatVND(capHw))}${kpi("Vốn sinh vật", formatVND(capLv))}${kpi("Tổng vốn", formatVND(cap))}
+          ${kpi("Doanh thu frag đã bán", formatVND(revenue), "#16a34a")}${kpi(net >= 0 ? "Lãi hiện tại" : "Còn phải thu hồi", formatVND(Math.abs(net)), net >= 0 ? "#16a34a" : "#c2410c")}
+        </div>
+        <div class="text-mute" style="font-size:12px; margin-top:10px;">Hoà vốn ${pct}% ${cap > 0 ? "" : "(chưa nhập vốn)"}</div>
+        <div style="height:9px; background:#e6ebf1; border-radius:5px; margin-top:4px;"><div style="height:9px; width:${Math.min(pct, 100)}%; background:${pct >= 100 ? "#16a34a" : "#0e7490"}; border-radius:5px;"></div></div>
+
+        <div style="margin-top:16px;">${assetTable(hw, "hardware")}</div>
+        <div style="margin-top:16px;">${assetTable(lv, "livestock")}</div>
+
+        <div style="margin-top:18px;"><strong style="font-size:13.5px;">Frag bán ra từ bể này</strong>
+          <div class="text-mute" style="font-size:11.5px; margin:2px 0 6px;">Tự động tính từ các đơn đã bán (sản phẩm có "Thuộc bể" = bể này). Chưa trừ giảm giá chung của cả đơn.</div>
+          ${TANK_FRAG_ROWS.length === 0 ? `<div class="text-mute" style="font-size:12.5px;">Chưa có frag nào bán ra. Vào Kho, chọn "Thuộc bể" cho sản phẩm frag.</div>` : `
+          <div class="flex" style="gap:8px; flex-wrap:wrap;">${kpi("Số lượng đã bán", qtySold)}${kpi("Doanh thu", formatVND(revenue), "#16a34a")}</div>
+          <table style="margin-top:8px;"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Doanh thu</th></tr></thead><tbody>
+            ${Object.entries(byProd).sort((a, b) => b[1].v - a[1].v).map(([n, v]) => `<tr><td>${esc(n)}</td><td>${v.q}</td><td>${formatVND(v.v)}</td></tr>`).join("")}</tbody></table>
+          <table style="margin-top:8px;"><thead><tr><th>Tháng</th><th>SL</th><th>Doanh thu</th></tr></thead><tbody>
+            ${Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).map(([k, v]) => `<tr><td>${k.slice(5)}/${k.slice(0, 4)}</td><td>${v.q}</td><td>${formatVND(v.v)}</td></tr>`).join("")}</tbody></table>`}
+        </div>
+      </div>
+    </div>`;
+
+  box.querySelectorAll(".asset-add").forEach(btn => btn.addEventListener("click", async () => {
+    const kind = btn.dataset.kind, q = c => box.querySelector(`.asset-${c}[data-kind="${kind}"]`);
+    const name = q("name").value.trim();
+    if (!name) { alert("Nhập tên."); return; }
+    btn.style.pointerEvents = "none";
+    const { error } = await sb.from("tank_assets").insert({
+      tank_id: tank.id, kind, name, qty: Number(q("qty").value || 1), cost: Number(q("cost").value || 0),
+      bought_at: q("date").value || null, created_by: CURRENT_PROFILE.id
+    });
+    if (error) { alert("Lỗi: " + error.message); btn.style.pointerEvents = ""; return; }
+    renderTankFinance();
+  }));
+  box.querySelectorAll(".asset-del").forEach(el => el.addEventListener("click", async () => {
+    if (!confirm("Xoá dòng này?")) return;
+    await sb.from("tank_assets").delete().eq("id", el.dataset.id);
+    renderTankFinance();
+  }));
+  box.querySelectorAll(".asset-status").forEach(el => el.addEventListener("change", async () => {
+    await sb.from("tank_assets").update({ status: el.value }).eq("id", el.dataset.id);
+  }));
+}
+
 function renderTankDetailView() {
   const wrap = document.getElementById("tankDetailView");
   wrap.innerHTML = `
@@ -755,6 +887,8 @@ function renderTankDetailView() {
       </div>
       <span class="btn btn-secondary btn-mini" id="editTankBtn">Sửa thông tin bể</span>
     </div>
+
+    <div id="tankFinPanel"></div>
 
     <div class="panel">
       <div class="panel-header"><h2>Lịch chăm sóc cố định</h2></div>
@@ -856,6 +990,7 @@ function renderTankDetailView() {
   `;
 
   bindDetailEvents();
+  renderTankFinance();
   if (CURRENT_PARAMS.length > 0 && CURRENT_READINGS.length >= 2) renderCharts();
 }
 
