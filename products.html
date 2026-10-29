@@ -759,7 +759,7 @@ async function loadTankOptions() {
   if (TANK_OPTIONS) return;
   const { data } = await sb.from("tanks").select("id, name").order("name");
   TANK_OPTIONS = data || [];
-  const a = await sb.from("tank_assets").select("id, tank_id, name").eq("kind", "livestock").order("name");
+  const a = await sb.from("tank_assets").select("id, tank_id, name").in("kind", ["coral", "livestock"]).order("name");
   ASSET_OPTIONS = a.error ? [] : (a.data || []);
 }
 function fillAssetOptions(selectedId) {
