@@ -829,10 +829,11 @@ async function renderTankFinance() {
   }
   const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const hw = TANK_ASSETS.filter(x => x.kind === "hardware");
-  const lv = TANK_ASSETS.filter(x => x.kind === "livestock");
+  const lv = TANK_ASSETS.filter(x => x.kind === "coral" || x.kind === "livestock");   // san hô (kể cả dòng cũ ghi là "livestock")
+  const fish = TANK_ASSETS.filter(x => x.kind === "fish");
   const cons = TANK_ASSETS.filter(x => x.kind === "consumable");
   const sum = arr => arr.reduce((s, x) => s + Number(x.cost || 0), 0);
-  const capHw = sum(hw), capLv = sum(lv), capCons = sum(cons), cap = capHw + capLv + capCons;
+  const capHw = sum(hw), capLv = sum(lv), capFish = sum(fish), capCons = sum(cons), cap = capHw + capLv + capFish + capCons;
   const revenue = TANK_FRAG_ROWS.reduce((s, r) => s + Number(r.quantity) * Number(r.unit_price), 0);
   const qtySold = TANK_FRAG_ROWS.reduce((s, r) => s + Number(r.quantity), 0);
   const pct = cap > 0 ? Math.round(revenue / cap * 100) : 0;
@@ -858,19 +859,21 @@ async function renderTankFinance() {
   });
   const kpi = (label, val, color, sub) => `<div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 130px;"><div class="text-mute" style="font-size:11px;">${label}</div><div style="font-size:16px; font-weight:700; ${color ? "color:" + color + ";" : ""}">${val}</div>${sub ? `<div class="text-mute" style="font-size:10.5px;">${sub}</div>` : ""}</div>`;
   const KIND_CFG = {
-    livestock: { title: "Sinh vật (con mẹ, cá...)", ph: "VD: Home Wrecker", costLabel: "Tổng tiền mua", dateLabel: "Ngày mua" },
+    coral: { title: "San hô (con mẹ)", ph: "VD: Home Wrecker", costLabel: "Tổng tiền mua", dateLabel: "Ngày mua" },
+    fish: { title: "Cá", ph: "VD: Cá Tang vàng", costLabel: "Tổng tiền mua", dateLabel: "Ngày mua" },
     hardware: { title: "Thiết bị phần cứng", ph: "VD: Đèn Maxspect", costLabel: "Tổng tiền mua", dateLabel: "Ngày mua" },
     consumable: { title: "Hoá chất tiêu hao", ph: "VD: Salt, Alk, Ca, Mg, thức ăn...", costLabel: "Chi phí", dateLabel: "Ngày mua" }
   };
   const assetTable = (arr, kind) => {
     const c = KIND_CFG[kind];
-    const liv = kind === "livestock";
+    const liv = kind === "coral";   // chỉ san hô có thống kê frag
+    const hasStatus = kind === "coral" || kind === "fish";
     return `
-    <div class="table-scroll"><table style="margin-top:6px;"><thead><tr><th>${c.title}</th><th>SL</th><th>${c.costLabel}</th><th>${c.dateLabel}</th>${liv ? "<th>Frag đã bán</th><th>Doanh thu frag</th><th>Lãi / lỗ con này</th><th>Tình trạng</th>" : ""}<th></th></tr></thead>
+    <div class="table-scroll"><table style="margin-top:6px;"><thead><tr><th>${c.title}</th><th>SL</th><th>${c.costLabel}</th><th>${c.dateLabel}</th>${liv ? "<th>Frag đã bán</th><th>Doanh thu frag</th><th>Lãi / lỗ con này</th>" : ""}${hasStatus ? "<th>Tình trạng</th>" : ""}<th></th></tr></thead>
     <tbody>${arr.length ? arr.map(x => `<tr>
       <td>${esc(x.name)}${x.note ? `<div class="text-mute" style="font-size:11px;">${esc(x.note)}</div>` : ""}</td><td>${Number(x.qty)}</td><td>${formatVND(x.cost)}</td><td>${x.bought_at ? formatDate(x.bought_at) : "—"}</td>
       ${liv ? (() => { const st = byAsset[x.id] || { q: 0, v: 0 }; const pf = st.v - Number(x.cost || 0); return `<td>${st.q || "—"}</td><td>${st.v ? formatVND(st.v) : "—"}</td><td style="font-weight:700; color:${pf >= 0 ? "#16a34a" : "#c2410c"};">${(pf >= 0 ? "+" : "−") + formatVND(Math.abs(pf))}</td>`; })() : ""}
-      ${liv ? `<td><select class="asset-status" data-id="${x.id}" style="width:auto;"><option value="active" ${x.status === "active" ? "selected" : ""}>Còn nuôi</option><option value="dead" ${x.status === "dead" ? "selected" : ""}>Đã chết</option><option value="sold" ${x.status === "sold" ? "selected" : ""}>Đã bán</option></select></td>` : ""}
+      ${hasStatus ? `<td><select class="asset-status" data-id="${x.id}" style="width:auto;"><option value="active" ${x.status === "active" ? "selected" : ""}>Còn nuôi</option><option value="dead" ${x.status === "dead" ? "selected" : ""}>Đã chết</option><option value="sold" ${x.status === "sold" ? "selected" : ""}>Đã bán</option></select></td>` : ""}
       <td><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);">✕</span></td></tr>`).join("") : `<tr><td colspan="9" class="text-mute">Chưa có.</td></tr>`}</tbody></table></div>
     ${liv && unassigned > 0 ? `<div class="text-mute" style="font-size:11.5px; margin-top:4px;">Frag bán ra chưa gắn con mẹ: ${formatVND(unassigned)} (vào Kho, chọn "Frag cắt từ con mẹ nào" cho sản phẩm frag).</div>` : ""}
     <div class="flex gap-8" style="margin-top:8px; flex-wrap:wrap; align-items:center;">
@@ -881,14 +884,14 @@ async function renderTankFinance() {
       <span class="btn btn-primary btn-mini asset-add" data-kind="${kind}">+ Thêm</span>
     </div>`;
   };
-  const subs = [["lv", "🪸 Sinh vật"], ["hw", "🔧 Thiết bị phần cứng"], ["cons", "🧴 Hoá chất tiêu hao"]];
+  const subs = [["coral", "🪸 San hô"], ["fish", "🐠 Cá"], ["hw", "🔧 Thiết bị phần cứng"], ["cons", "🧴 Hoá chất tiêu hao"]];
   const sp = (k, inner) => `<div class="tank-subpane" data-g="val" data-subpane="${k}" style="display:${TANK_SUBS.val === k ? "block" : "none"};">${inner}</div>`;
   box.innerHTML = `
     <div class="panel">
       <div class="panel-header"><h2>💎 Giá trị bể</h2></div>
       <div class="panel-body">
         <div class="flex" style="gap:8px; flex-wrap:wrap;">
-          ${kpi("Sinh vật", formatVND(capLv))}${kpi("Thiết bị phần cứng", formatVND(capHw))}${kpi("Hoá chất tiêu hao", formatVND(capCons), null, cons.length ? "TB " + formatVND(Math.round(monthlyCons)) + " / tháng" : "")}
+          ${kpi("San hô", formatVND(capLv))}${kpi("Cá", formatVND(capFish))}${kpi("Thiết bị phần cứng", formatVND(capHw))}${kpi("Hoá chất tiêu hao", formatVND(capCons), null, cons.length ? "TB " + formatVND(Math.round(monthlyCons)) + " / tháng" : "")}
           ${kpi("Tổng chi (vốn + duy trì)", formatVND(cap))}
           ${kpi("Doanh thu frag đã bán", formatVND(revenue), "#16a34a")}${kpi(net >= 0 ? "Lãi hiện tại" : "Còn phải thu hồi", formatVND(Math.abs(net)), net >= 0 ? "#16a34a" : "#c2410c")}
         </div>
@@ -899,7 +902,7 @@ async function renderTankFinance() {
           ${subs.map(([k, l]) => `<span class="tank-subtab" data-g="val" data-sub="${k}" style="padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12.5px; font-weight:600; ${TANK_SUBS.val === k ? "background:var(--ink); color:#fff;" : "background:#e6ebf1; color:var(--text-mute);"}">${l}</span>`).join("")}
         </div>
 
-        ${sp("lv", assetTable(lv, "livestock") + `
+        ${sp("coral", assetTable(lv, "coral") + `
           <div style="margin-top:18px;"><strong style="font-size:13.5px;">Frag bán ra từ bể này</strong>
             <div class="text-mute" style="font-size:11.5px; margin:2px 0 6px;">Tự động tính từ các đơn đã bán. Chưa trừ giảm giá chung của cả đơn.</div>
             ${TANK_FRAG_ROWS.length === 0 ? `<div class="text-mute" style="font-size:12.5px;">Chưa có frag nào bán ra. Vào Kho, chọn "Frag cắt từ con mẹ nào" cho sản phẩm frag.</div>` : `
@@ -909,6 +912,7 @@ async function renderTankFinance() {
             <table style="margin-top:8px;"><thead><tr><th>Tháng</th><th>SL</th><th>Doanh thu</th></tr></thead><tbody>
               ${Object.entries(byMonth).sort((a, b) => b[0].localeCompare(a[0])).map(([k, v]) => `<tr><td>${k.slice(5)}/${k.slice(0, 4)}</td><td>${v.q}</td><td>${formatVND(v.v)}</td></tr>`).join("")}</tbody></table>`}
           </div>`)}
+        ${sp("fish", `<div class="text-mute" style="font-size:12px; margin-bottom:4px;">Cá ít biến động: ghi một lần khi mua, đổi tình trạng nếu chết hoặc bán.</div>` + assetTable(fish, "fish"))}
         ${sp("hw", assetTable(hw, "hardware"))}
         ${sp("cons", `<div class="text-mute" style="font-size:12px; margin-bottom:4px;">Ghi mỗi lần mua hoá chất, muối, thức ăn, vật tư dùng để duy trì bể. Tổng này tính vào chi phí của bể (và trung bình mỗi tháng).</div>` + assetTable(cons, "consumable"))}
       </div>
@@ -938,7 +942,7 @@ async function renderTankFinance() {
 }
 
 let TANK_TAB = "ov";
-let TANK_SUBS = { do: "chart", sch: "sched", val: "lv" };
+let TANK_SUBS = { do: "chart", sch: "sched", val: "coral" };
 let TANK_TAB_FOR = null;   // bể đang nhớ tab (đổi bể thì quay lại tab đầu)
 
 function showTankTab(tab) {
@@ -1001,7 +1005,7 @@ function renderTankOverviewPane() {
 }
 
 function renderTankDetailView() {
-  if (TANK_TAB_FOR !== CURRENT_TANK.id) { TANK_TAB_FOR = CURRENT_TANK.id; TANK_TAB = "ov"; TANK_SUBS = { do: "chart", sch: "sched", val: "lv" }; }
+  if (TANK_TAB_FOR !== CURRENT_TANK.id) { TANK_TAB_FOR = CURRENT_TANK.id; TANK_TAB = "ov"; TANK_SUBS = { do: "chart", sch: "sched", val: "coral" }; }
   const wrap = document.getElementById("tankDetailView");
   wrap.innerHTML = `
     <div class="back-link" id="backToGridBtn">← Quay lại lịch chăm sóc</div>
