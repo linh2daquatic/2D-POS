@@ -294,6 +294,10 @@ let RC_ACTIVE_CATEGORY = "";
               <div class="field"><label>Giá bán lẻ</label><input id="f_retail" type="number" step="any" value="0"></div>
             </div>
             <div class="field"><label>Giá bán buôn</label><input id="f_wholesale" type="number" step="any" value="0"></div>
+            <div class="field" id="f_tank_wrap"><label>Thuộc bể (frag cắt từ bể nào — để trống nếu không phải frag)</label>
+              <select id="f_tank"><option value="">— Không thuộc bể nào —</option></select>
+              <p class="text-mute" style="font-size:11.5px; margin-top:4px;">Chọn một lần ở đây. Bán hàng như bình thường, doanh thu tự được tính cho bể đó trong tab Tài chính của bể.</p>
+            </div>
             <div class="field" id="f_pcd_wrap"><label>Chiết khấu từ giá lẻ để tính giá vốn lãi (%) — để trống nếu dùng giá vốn thực tế</label>
               <input id="f_pcd" type="number" step="any" min="0" max="100" placeholder="VD: 25 cho hàng Maxspect góp chung">
               <p class="text-mute" style="font-size:11.5px; margin-top:4px;">Khi bán, giá vốn tính lãi Dashboard = giá bán lẻ × (1 − %). Giá vốn thực tế ở trên vẫn dùng cho tồn kho / quyết toán.</p>
@@ -749,8 +753,16 @@ async function toggleProductActive(id, active) {
   }
 }
 
-function openModal(id) {
+let TANK_OPTIONS = null;
+async function loadTankOptions() {
+  if (TANK_OPTIONS) return;
+  const { data } = await sb.from("tanks").select("id, name").order("name");
+  TANK_OPTIONS = data || [];
+}
+
+async function openModal(id) {
   EDIT_ID = id || null;
+  await loadTankOptions();
   const p = id ? ALL_PRODUCTS.find(x => x.id === id) : null;
   document.getElementById("modalTitle").textContent = p ? "Sửa sản phẩm" : "Thêm sản phẩm";
   document.getElementById("f_name").value = p?.name || "";
@@ -764,6 +776,8 @@ function openModal(id) {
   document.getElementById("f_retail").value = p?.retail_price ?? 0;
   document.getElementById("f_wholesale").value = p?.wholesale_price ?? 0;
   document.getElementById("f_pcd").value = p?.profit_cost_discount ?? "";
+  document.getElementById("f_tank").innerHTML = `<option value="">— Không thuộc bể nào —</option>` +
+    (TANK_OPTIONS || []).map(t => `<option value="${t.id}" ${t.id === p?.source_tank_id ? "selected" : ""}>${String(t.name).replace(/</g, "&lt;")}</option>`).join("");
   document.getElementById("f_pcd_wrap").style.display = CURRENT_PROFILE.role === "owner" ? "" : "none";
   document.getElementById("modalOverlay").classList.add("open");
 }
@@ -794,6 +808,13 @@ async function saveProduct(e) {
     if (pcdRaw !== "" || (editing && "profit_cost_discount" in editing)) payload.profit_cost_discount = pcdRaw === "" ? null : Number(pcdRaw);
   }
 
+  // Thuộc bể: chỉ ghi khi đã có cột trong DB (migration-32) hoặc có chọn bể
+  {
+    const tankVal = document.getElementById("f_tank").value;
+    const editingP = EDIT_ID ? ALL_PRODUCTS.find(x => x.id === EDIT_ID) : null;
+    if (tankVal !== "" || (editingP && "source_tank_id" in editingP)) payload.source_tank_id = tankVal || null;
+  }
+
   let error;
   if (EDIT_ID) {
     ({ error } = await sb.from("products").update(payload).eq("id", EDIT_ID));
@@ -805,7 +826,7 @@ async function saveProduct(e) {
   saveBtn.textContent = "Lưu sản phẩm";
 
   if (error) {
-    alert("Lỗi khi lưu: " + error.message);
+    alert("Lỗi khi lưu: " + error.message + (String(error.message).includes("source_tank_id") ? "\n\n(Cần chạy migration-32.sql trong Supabase SQL Editor trước.)" : ""));
     return;
   }
   closeModal();
