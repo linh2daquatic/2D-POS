@@ -383,7 +383,7 @@ async function loadDashboard(isOwner, selectedMonth) {
       for (;;) {
         const { data, error } = await sb
           .from("order_items")
-          .select("order_id, quantity, unit_price, cost_price_at_sale, products(name, category)")
+          .select("order_id, quantity, unit_price, cost_price_at_sale, tank_id, products(name, category)")
           .in("order_id", chunk)
           .order("id")
           .range(from, from + 999);
@@ -413,7 +413,8 @@ async function loadDashboard(isOwner, selectedMonth) {
       const lineTotal = Number(i.quantity) * Number(i.unit_price);
       const lineCost = Number(i.quantity) * Number(i.cost_price_at_sale || 0);
       bd.subtotal += lineTotal;
-      if (Number(i.cost_price_at_sale || 0) <= 0 && Number(i.unit_price) > 0) {
+      // Frag thuộc bể (vốn nằm ở con mẹ) cố ý để giá vốn 0 → không báo thiếu giá vốn
+      if (Number(i.cost_price_at_sale || 0) <= 0 && Number(i.unit_price) > 0 && !i.tank_id) {
         bd.missing += 1;
         const om = orderMeta[i.order_id] || {};
         window.__MISSING_COST__.push({ orderId: i.order_id, code: om.order_code, date: om.created_at, uid: om.created_by || "unknown",
