@@ -294,11 +294,9 @@ let RC_ACTIVE_CATEGORY = "";
               <div class="field"><label>Giá bán lẻ</label><input id="f_retail" type="number" step="any" value="0"></div>
             </div>
             <div class="field"><label>Giá bán buôn</label><input id="f_wholesale" type="number" step="any" value="0"></div>
-            <div class="field" id="f_tank_wrap"><label>Thuộc bể (frag cắt từ bể nào — để trống nếu không phải frag)</label>
-              <select id="f_tank"><option value="">— Không thuộc bể nào —</option></select>
-              <label style="margin-top:8px;">Cắt từ con mẹ nào (để thống kê lãi từng con)</label>
-              <select id="f_asset"><option value="">— Chưa gắn con mẹ —</option></select>
-              <p class="text-mute" style="font-size:11.5px; margin-top:4px;">Chọn một lần ở đây. Bán hàng như bình thường, doanh thu tự được tính cho bể đó trong tab Tài chính của bể.</p>
+            <div class="field" id="f_tank_wrap"><label>Frag cắt từ con mẹ nào (để trống nếu không phải frag)</label>
+              <select id="f_asset"><option value="">— Không phải frag —</option></select>
+              <p class="text-mute" style="font-size:11.5px; margin-top:4px;">Chọn một lần ở đây. Bể tự lấy theo con mẹ. Bán hàng như bình thường, doanh thu tự tính cho con mẹ và bể đó trong tab Tài chính của bể.</p>
             </div>
             <div class="field" id="f_pcd_wrap"><label>Chiết khấu từ giá lẻ để tính giá vốn lãi (%) — để trống nếu dùng giá vốn thực tế</label>
               <input id="f_pcd" type="number" step="any" min="0" max="100" placeholder="VD: 25 cho hàng Maxspect góp chung">
@@ -765,10 +763,10 @@ async function loadTankOptions() {
   ASSET_OPTIONS = a.error ? [] : (a.data || []);
 }
 function fillAssetOptions(selectedId) {
-  const tankId = document.getElementById("f_tank").value;
-  const list = ASSET_OPTIONS.filter(a => !tankId || a.tank_id === tankId);
-  document.getElementById("f_asset").innerHTML = `<option value="">— Chưa gắn con mẹ —</option>` +
-    list.map(a => `<option value="${a.id}" ${a.id === selectedId ? "selected" : ""}>${String(a.name).replace(/</g, "&lt;")}</option>`).join("");
+  const tankName = id => (TANK_OPTIONS || []).find(t => t.id === id)?.name || "";
+  const multi = new Set(ASSET_OPTIONS.map(a => a.tank_id)).size > 1;
+  document.getElementById("f_asset").innerHTML = `<option value="">— Không phải frag —</option>` +
+    ASSET_OPTIONS.map(a => `<option value="${a.id}" ${a.id === selectedId ? "selected" : ""}>${String(a.name).replace(/</g, "&lt;")}${multi ? " (" + String(tankName(a.tank_id)).replace(/</g, "&lt;") + ")" : ""}</option>`).join("");
 }
 
 async function openModal(id) {
@@ -787,10 +785,7 @@ async function openModal(id) {
   document.getElementById("f_retail").value = p?.retail_price ?? 0;
   document.getElementById("f_wholesale").value = p?.wholesale_price ?? 0;
   document.getElementById("f_pcd").value = p?.profit_cost_discount ?? "";
-  document.getElementById("f_tank").innerHTML = `<option value="">— Không thuộc bể nào —</option>` +
-    (TANK_OPTIONS || []).map(t => `<option value="${t.id}" ${t.id === p?.source_tank_id ? "selected" : ""}>${String(t.name).replace(/</g, "&lt;")}</option>`).join("");
   fillAssetOptions(p?.source_asset_id);
-  document.getElementById("f_tank").onchange = () => fillAssetOptions("");
   document.getElementById("f_pcd_wrap").style.display = CURRENT_PROFILE.role === "owner" ? "" : "none";
   document.getElementById("modalOverlay").classList.add("open");
 }
@@ -823,10 +818,10 @@ async function saveProduct(e) {
 
   // Thuộc bể: chỉ ghi khi đã có cột trong DB (migration-32) hoặc có chọn bể
   {
-    const tankVal = document.getElementById("f_tank").value;
+    const assetVal = document.getElementById("f_asset").value;
+    const tankVal = assetVal ? (ASSET_OPTIONS.find(a => a.id === assetVal)?.tank_id || "") : "";
     const editingP = EDIT_ID ? ALL_PRODUCTS.find(x => x.id === EDIT_ID) : null;
     if (tankVal !== "" || (editingP && "source_tank_id" in editingP)) payload.source_tank_id = tankVal || null;
-    const assetVal = document.getElementById("f_asset").value;
     if (assetVal !== "" || (editingP && "source_asset_id" in editingP)) payload.source_asset_id = assetVal || null;
   }
 
