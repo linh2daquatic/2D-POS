@@ -683,6 +683,7 @@ async function renderTankOverview() {
     const finCap = {}, finRev = {};
     let finOk = false;
     try {
+      if (CURRENT_PROFILE.role !== "owner") throw new Error("skip");
       const fa = await sb.from("tank_assets").select("tank_id, cost");
       if (!fa.error) {
         finOk = true;
@@ -690,7 +691,7 @@ async function renderTankOverview() {
         const fr = await fetchPaged(() => sb.from("order_items").select("id, tank_id, quantity, unit_price, orders!inner(status)").not("tank_id", "is", null).eq("orders.status", "completed").order("id"));
         (fr.data || []).forEach(x => { finRev[x.tank_id] = (finRev[x.tank_id] || 0) + Number(x.quantity) * Number(x.unit_price); });
       }
-    } catch (e) { console.warn("Tài chính bể:", e); }
+    } catch (e) { if (e.message !== "skip") console.warn("Tài chính bể:", e); }
     const lastDose = {}; (dose.data || []).forEach(d => { if (!lastDose[d.tank_id]) lastDose[d.tank_id] = d; });
     const nextTask = {}; (tsk.data || []).forEach(t => { if (t.tank_id && !nextTask[t.tank_id]) nextTask[t.tank_id] = t; });
 
@@ -789,7 +790,7 @@ async function loadTankFinance(tankId) {
 
 async function renderTankFinance() {
   const box = document.getElementById("tankFinPanel");
-  if (!box) return;
+  if (!box || CURRENT_PROFILE.role !== "owner") return;
   const tank = CURRENT_TANK;
   box.innerHTML = `<div class="panel"><div class="panel-body text-mute" style="font-size:12.5px;">Đang tải giá trị bể...</div></div>`;
   await loadTankFinance(tank.id);
@@ -960,7 +961,7 @@ function renderTankOverviewPane() {
         <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Đo gần nhất</div><div style="font-size:16px; font-weight:700; ${age !== null && age > 7 ? "color:#d97706;" : ""}">${last ? (age === 0 ? "Hôm nay" : age + " ngày trước") : "Chưa có"}${age !== null && age > 7 ? " ⚠" : ""}</div></div>
         <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Châm gần nhất</div><div style="font-size:16px; font-weight:700;">${dd ? esc(dd.tank_chemicals?.name || "—") : "Chưa có"}</div><div class="text-mute" style="font-size:11px;">${dd ? formatDateTime(dd.dose_date) : ""}</div></div>
         <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Lịch chăm cố định</div><div style="font-size:14px; font-weight:700;">${sched ? esc(sched) : "Chưa có"}</div></div>
-        <div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Hoà vốn (tab Giá trị)</div><div style="font-size:16px; font-weight:700;" id="ovFinPct">…</div></div>
+        ${CURRENT_PROFILE.role === "owner" ? `<div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 140px;"><div class="text-mute" style="font-size:11px;">Hoà vốn (tab Giá trị)</div><div style="font-size:16px; font-weight:700;" id="ovFinPct">…</div></div>` : ""}
       </div>
       <div style="margin-top:14px;"><strong style="font-size:13.5px;">Thông số mới nhất</strong>
         ${rows.length === 0 ? `<div class="text-mute" style="font-size:12.5px; margin-top:6px;">Chưa có số đo. Vào tab "Đo & Biểu đồ" để ghi nhận.</div>` : `
@@ -987,7 +988,7 @@ function renderTankDetailView() {
 
 
     <div id="tankTabBar" style="position:sticky; top:58px; z-index:40; background:var(--bg); padding:8px 0 0; margin:0 0 14px; border-bottom:2px solid var(--border); display:flex; gap:2px; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch;">
-      ${[["ov","📋 Tổng quan & Đo"],["sch","🗓 Lịch & Châm"],["val","💎 Giá trị"]].map(([k, l]) => `<div class="tank-tab" data-tab="${k}" style="padding:9px 16px; cursor:pointer; font-size:13.5px; font-weight:${TANK_TAB === k ? 700 : 500}; color:${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "var(--text-mute)"}; border-bottom:3px solid ${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "transparent"}; margin-bottom:-2px; flex-shrink:0;">${l}</div>`).join("")}
+      ${[["ov","📋 Tổng quan & Đo"],["sch","🗓 Lịch & Châm"],["val","💎 Giá trị"]].filter(([k]) => k !== "val" || CURRENT_PROFILE.role === "owner").map(([k, l]) => `<div class="tank-tab" data-tab="${k}" style="padding:9px 16px; cursor:pointer; font-size:13.5px; font-weight:${TANK_TAB === k ? 700 : 500}; color:${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "var(--text-mute)"}; border-bottom:3px solid ${TANK_TAB === k ? "var(--teal-deep, #0e7490)" : "transparent"}; margin-bottom:-2px; flex-shrink:0;">${l}</div>`).join("")}
     </div>
 
     <div class="tank-pane" data-pane="ov" style="display:${TANK_TAB === "ov" ? "block" : "none"};">
