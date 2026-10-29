@@ -782,7 +782,7 @@ async function loadTankFinance(tankId) {
   if (a.error) { TANK_FIN_MISSING = true; TANK_ASSETS = []; TANK_FRAG_ROWS = []; return; }
   TANK_ASSETS = a.data || [];
   const r = await fetchPaged(() => sb.from("order_items")
-    .select("id, quantity, unit_price, products(name), orders!inner(status, created_at)")
+    .select("id, quantity, unit_price, asset_id, products(name), orders!inner(status, created_at)")
     .eq("tank_id", tankId).eq("orders.status", "completed").order("id"));
   TANK_FRAG_ROWS = r.data || [];
 }
@@ -810,6 +810,9 @@ async function renderTankFinance() {
   const net = revenue - cap;
   const ovPct = document.getElementById("ovFinPct");
   if (ovPct) ovPct.textContent = cap > 0 ? pct + "% · thu " + formatVND(revenue) : "Chưa nhập vốn";
+  const byAsset = {};
+  TANK_FRAG_ROWS.forEach(r => { if (r.asset_id) { const o = (byAsset[r.asset_id] = byAsset[r.asset_id] || { q: 0, v: 0 }); o.q += Number(r.quantity); o.v += Number(r.quantity) * Number(r.unit_price); } });
+  const unassigned = TANK_FRAG_ROWS.filter(r => !r.asset_id).reduce((s, r) => s + Number(r.quantity) * Number(r.unit_price), 0);
   const byProd = {}; const byMonth = {};
   TANK_FRAG_ROWS.forEach(r => {
     const nm = r.products?.name || "—";
@@ -819,11 +822,13 @@ async function renderTankFinance() {
   });
   const kpi = (label, val, color) => `<div style="background:#f1f5f9; border-radius:8px; padding:8px 11px; flex:1 1 130px;"><div class="text-mute" style="font-size:11px;">${label}</div><div style="font-size:16px; font-weight:700; ${color ? "color:" + color + ";" : ""}">${val}</div></div>`;
   const assetTable = (arr, kind) => `
-    <table style="margin-top:6px;"><thead><tr><th>${kind === "hardware" ? "Phần cứng" : "Sinh vật (con mẹ, cá...)"}</th><th>SL</th><th>Tổng tiền mua</th><th>Ngày mua</th>${kind === "livestock" ? "<th>Tình trạng</th>" : ""}<th></th></tr></thead>
+    <div class="table-scroll"><table style="margin-top:6px;"><thead><tr><th>${kind === "hardware" ? "Phần cứng" : "Sinh vật (con mẹ, cá...)"}</th><th>SL</th><th>Tổng tiền mua</th><th>Ngày mua</th>${kind === "livestock" ? "<th>Frag đã bán</th><th>Doanh thu frag</th><th>Lãi / lỗ con này</th><th>Tình trạng</th>" : ""}<th></th></tr></thead>
     <tbody>${arr.length ? arr.map(x => `<tr>
       <td>${esc(x.name)}${x.note ? `<div class="text-mute" style="font-size:11px;">${esc(x.note)}</div>` : ""}</td><td>${Number(x.qty)}</td><td>${formatVND(x.cost)}</td><td>${x.bought_at ? formatDate(x.bought_at) : "—"}</td>
+      ${kind === "livestock" ? (() => { const st = byAsset[x.id] || { q: 0, v: 0 }; const pf = st.v - Number(x.cost || 0); return `<td>${st.q || "—"}</td><td>${st.v ? formatVND(st.v) : "—"}</td><td style="font-weight:700; color:${pf >= 0 ? "#16a34a" : "#c2410c"};">${(pf >= 0 ? "+" : "−") + formatVND(Math.abs(pf))}</td>`; })() : ""}
       ${kind === "livestock" ? `<td><select class="asset-status" data-id="${x.id}" style="width:auto;"><option value="active" ${x.status === "active" ? "selected" : ""}>Còn nuôi</option><option value="dead" ${x.status === "dead" ? "selected" : ""}>Đã chết</option><option value="sold" ${x.status === "sold" ? "selected" : ""}>Đã bán</option></select></td>` : ""}
-      <td><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);">✕</span></td></tr>`).join("") : `<tr><td colspan="6" class="text-mute">Chưa có.</td></tr>`}</tbody></table>
+      <td><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);">✕</span></td></tr>`).join("") : `<tr><td colspan="9" class="text-mute">Chưa có.</td></tr>`}</tbody></table></div>
+    ${kind === "livestock" && unassigned > 0 ? `<div class="text-mute" style="font-size:11.5px; margin-top:4px;">Frag bán ra chưa gắn con mẹ: ${formatVND(unassigned)} (vào Kho, chọn "Cắt từ con mẹ nào" cho sản phẩm frag).</div>` : ""}
     <div class="flex gap-8" style="margin-top:8px; flex-wrap:wrap; align-items:center;">
       <input class="asset-name" data-kind="${kind}" placeholder="Tên ${kind === "hardware" ? "(VD: Đèn Maxspect)" : "(VD: Acropora tenuis)"}" style="flex:2 1 160px;">
       <input class="asset-qty" data-kind="${kind}" type="number" step="any" value="1" title="Số lượng" style="flex:0 1 60px;">
