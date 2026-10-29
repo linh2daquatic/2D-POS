@@ -660,7 +660,7 @@ async function renderTankOverview() {
   const box = document.getElementById("tankOverview");
   if (!box) return;
   if (!ALL_TANKS.length) { box.innerHTML = ""; return; }
-  box.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Đang tải tổng quan các bể...</div>`;
+  if (!box.querySelector(".tov-card")) box.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Đang tải tổng quan các bể...</div>`;
   try {
     const KEEP = 5;
     const [prm, rd, dose, tsk] = await Promise.all([
@@ -707,11 +707,17 @@ async function renderTankOverview() {
     };
 
     // Sắp xếp: bể có lịch chăm / có số đo lên trước
-    const cards = ALL_TANKS.slice().sort((a, b) => {
+    const hasOrder = t => t.display_order !== null && t.display_order !== undefined;
+    const ordered = ALL_TANKS.slice().sort((a, b) => {
+      if (hasOrder(a) && hasOrder(b)) return a.display_order - b.display_order;
+      if (hasOrder(a)) return -1;
+      if (hasOrder(b)) return 1;
       const sa = (ALL_CARE_SCHEDULE.some(x => x.tank_id === a.id) ? 0 : 1) + (recentByTank[a.id] ? 0 : 1);
       const sb2 = (ALL_CARE_SCHEDULE.some(x => x.tank_id === b.id) ? 0 : 1) + (recentByTank[b.id] ? 0 : 1);
       return sa - sb2 || (a.name || "").localeCompare(b.name || "", "vi");
-    }).map(t => {
+    });
+    window.__TOV_ORDER__ = ordered.map(t => t.id);
+    const cards = ordered.map((t, idx) => {
       const sched = ALL_CARE_SCHEDULE.filter(x => x.tank_id === t.id);
       const days = [...new Set(sched.map(x => DAY_NAMES[x.day_of_week]))].join(", ");
       const slotKey = sched[0]?.time_slot;
@@ -726,7 +732,11 @@ async function renderTankOverview() {
         return { p, series };
       }).filter(x => x.series.length > 0).slice(0, 5);
       const dd = lastDose[t.id], nt = nextTask[t.id];
-      return `<div class="tov-card" data-tank-id="${t.id}" style="flex:0 0 250px; scroll-snap-align:start; background:#fff; border-radius:12px; padding:12px 13px; box-shadow:0 2px 8px rgba(0,0,0,.09); border-top:4px solid ${stale && last ? '#d97706' : '#0e7490'}; cursor:pointer;">
+      return `<div class="tov-card" data-tank-id="${t.id}" style="flex:0 0 250px; scroll-snap-align:start; background:#fff; border-radius:12px; padding:12px 13px; box-shadow:0 2px 8px rgba(0,0,0,.09); border-top:4px solid ${stale && last ? '#d97706' : '#0e7490'}; cursor:pointer; position:relative;">
+        ${window.__TOV_SORT__ ? `<div style="display:flex; justify-content:space-between; margin:-4px 0 6px;">
+          <span class="tov-move" data-id="${t.id}" data-dir="-1" style="padding:3px 12px; border-radius:6px; background:${idx === 0 ? "#f1f5f9" : "#e6ebf1"}; font-weight:700; ${idx === 0 ? "opacity:.35; pointer-events:none;" : ""}">◀</span>
+          <span class="text-mute" style="font-size:11px; align-self:center;">${idx + 1}</span>
+          <span class="tov-move" data-id="${t.id}" data-dir="1" style="padding:3px 12px; border-radius:6px; background:${idx === ordered.length - 1 ? "#f1f5f9" : "#e6ebf1"}; font-weight:700; ${idx === ordered.length - 1 ? "opacity:.35; pointer-events:none;" : ""}">▶</span></div>` : ""}
         <div style="font-weight:700; font-size:14.5px;">🪸 ${esc(t.name)}</div>
         <div class="text-mute" style="font-size:11.5px; margin-top:2px;">${t.customers?.name ? "👤 " + esc(t.customers.name) + " · " : ""}${days ? esc(days) + (slotLabel ? " · " + esc(slotLabel) : "") : "Chưa có lịch cố định"}</div>
         <div style="font-size:11.5px; margin:6px 0 4px; ${stale ? "color:#d97706; font-weight:600;" : "color:var(--text-mute);"}">${last ? (age === 0 ? "Đo hôm nay" : "Đo gần nhất: " + age + " ngày trước") + (stale ? " ⚠" : "") : "Chưa có số đo"}</div>
@@ -748,10 +758,27 @@ async function renderTankOverview() {
     box.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
         <strong style="font-size:14px;">Tổng quan các bể đang theo dõi</strong>
-        <span class="text-mute" style="font-size:11.5px;">Vuốt ngang để xem tiếp · bấm thẻ để mở chi tiết</span>
+        <span style="display:flex; gap:10px; align-items:center;"><span class="text-mute" style="font-size:11.5px;">${window.__TOV_SORT__ ? "Bấm ◀ ▶ để đổi chỗ, xong thì bấm Xong" : "Vuốt ngang để xem tiếp · bấm thẻ để mở chi tiết"}</span>
+          <span class="btn btn-secondary btn-mini" id="tovSortBtn">${window.__TOV_SORT__ ? "✔ Xong" : "↕ Sắp xếp"}</span></span>
       </div>
       <div style="display:flex; gap:12px; overflow-x:auto; scroll-snap-type:x proximity; padding:4px 2px 10px; -webkit-overflow-scrolling:touch;">${cards}</div>`;
-    box.querySelectorAll(".tov-card").forEach(el => el.addEventListener("click", () => openTankDetail(el.dataset.tankId)));
+    box.querySelectorAll(".tov-card").forEach(el => el.addEventListener("click", () => { if (!window.__TOV_SORT__) openTankDetail(el.dataset.tankId); }));
+    document.getElementById("tovSortBtn").addEventListener("click", () => { window.__TOV_SORT__ = !window.__TOV_SORT__; renderTankOverview(); });
+    box.querySelectorAll(".tov-move").forEach(el => el.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const order = window.__TOV_ORDER__.slice();
+      const i = order.indexOf(el.dataset.id), j = i + Number(el.dataset.dir);
+      if (i < 0 || j < 0 || j >= order.length) return;
+      [order[i], order[j]] = [order[j], order[i]];
+      window.__TOV_ORDER__ = order;
+      // Cập nhật ngay trên màn hình, rồi lưu thứ tự cho mọi thiết bị
+      order.forEach((id, n) => { const t = ALL_TANKS.find(x => x.id === id); if (t) t.display_order = n; });
+      renderTankOverview();
+      for (let n = 0; n < order.length; n++) {
+        const { error } = await sb.from("tanks").update({ display_order: n }).eq("id", order[n]);
+        if (error) { alert("Không lưu được thứ tự: " + error.message + "\n(Cần chạy migration-34.sql trong Supabase SQL Editor.)"); break; }
+      }
+    }));
   } catch (e) {
     console.warn("Tổng quan bể:", e);
     box.innerHTML = `<div class="text-mute" style="font-size:12.5px;">Không tải được tổng quan các bể.</div>`;
