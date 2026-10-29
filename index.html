@@ -82,17 +82,13 @@
     </div>
     ${isOwner ? `
     <div class="panel">
-      <div class="panel-header"><h2 id="staffStatsTitle">Doanh số theo nhân viên (tháng này)</h2></div>
+      <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <h2 id="staffStatsTitle">Doanh số theo nhân viên (tháng này)</h2>
+        <button type="button" class="btn btn-secondary btn-mini" id="staffProfitToggle">👁 Hiện lợi nhuận</button>
+      </div>
       <div class="panel-body" id="staffStatsBody">
         <div class="empty-state"><div class="icon">⏳</div>Đang tải...</div>
       </div>
-    </div>
-    <div class="panel" id="staffProfitPanel">
-      <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-        <h2 id="staffProfitTitle">Lợi nhuận theo nhân viên (tháng này)</h2>
-        <button type="button" class="btn btn-secondary btn-mini" id="staffProfitToggle">👁 Hiện lợi nhuận</button>
-      </div>
-      <div class="panel-body" id="staffProfitBody"></div>
     </div>
     <div class="panel" id="expenseDetailPanel" style="display:none;">
       <div class="panel-header"><h2>Chi tiết chi phí</h2></div>
@@ -569,33 +565,11 @@ async function loadDashboard(isOwner, selectedMonth) {
 
   if (isOwner) {
     document.getElementById("staffStatsTitle").textContent = `Doanh số theo nhân viên (${monthLabel})`;
-    const staffBody = document.getElementById("staffStatsBody");
-    const stats = window.__STAFF_STATS__ || [];
-    if (stats.length === 0) {
-      staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`;
-    } else {
-      const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
-      staffBody.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th><th>DT còn lại</th><th>Tổng doanh thu</th></tr></thead><tbody>
-        ${stats.map(s => `<tr>
-          <td>${s.name}${s.revenue === maxRevenue && s.revenue > 0 ? ' <span class="vip-tag" style="font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600;">🏆 Top</span>' : ''}</td>
-          <td>${s.role === 'owner' ? 'Chủ' : 'Nhân viên'}</td>
-          <td>${s.orderCount}</td>
-          <td style="color:var(--teal-deep); font-weight:600;">${formatVND(s.livestockRevenue)}</td>
-          <td>${formatVND(s.otherRevenue)}</td>
-          <td style="font-weight:600;">${formatVND(s.revenue)}</td>
-        </tr>`).join("")}
-      </tbody></table></div>
-      <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.</p>`;
-    }
-  }
-
-  if (isOwner) {
-    document.getElementById("staffProfitTitle").textContent = `Lợi nhuận theo nhân viên (${monthLabel})`;
-    document.getElementById("staffProfitToggle").addEventListener("click", () => {
+    document.getElementById("staffProfitToggle").onclick = () => {
       window.__SHOW_STAFF_PROFIT__ = !window.__SHOW_STAFF_PROFIT__;
-      renderStaffProfit(monthLabel);
-    });
-    renderStaffProfit(monthLabel);
+      renderStaffStats(monthLabel);
+    };
+    renderStaffStats(monthLabel);
   }
 
   // Biểu đồ doanh thu 7 ngày
@@ -671,38 +645,46 @@ async function loadDashboard(isOwner, selectedMonth) {
   );
 }
 
-function renderStaffProfit(monthLabel) {
-  const body = document.getElementById("staffProfitBody");
+function renderStaffStats(monthLabel) {
+  const staffBody = document.getElementById("staffStatsBody");
   const btn = document.getElementById("staffProfitToggle");
-  if (!body || !btn) return;
+  if (!staffBody) return;
   const show = !!window.__SHOW_STAFF_PROFIT__;
-  btn.textContent = show ? "🙈 Ẩn lợi nhuận" : "👁 Hiện lợi nhuận";
-  if (!show) {
-    body.innerHTML = `<div class="text-mute" style="font-size:13px;">Lợi nhuận đang ẩn (để chụp màn hình an toàn). Bấm "Hiện lợi nhuận" để xem.</div>`;
+  if (btn) btn.textContent = show ? "🙈 Ẩn lợi nhuận" : "👁 Hiện lợi nhuận";
+  const stats = window.__STAFF_STATS__ || [];
+  if (stats.length === 0) {
+    staffBody.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`;
     return;
   }
-  const stats = window.__STAFF_STATS__ || [];
-  if (stats.length === 0) { body.innerHTML = `<div class="empty-state"><div class="icon">👤</div>Chưa có đơn hàng nào trong ${monthLabel}.</div>`; return; }
+  const maxRevenue = Math.max(...stats.map(s => s.revenue), 1);
   const pf = v => `<span style="${v < 0 ? "color:var(--danger);" : ""}">${formatVND(Math.round(v))}</span>`;
   const sum = k => stats.reduce((a, s) => a + (s[k] || 0), 0);
   const margin = (profit, base) => base > 0 ? (Math.round((profit / base) * 1000) / 10) + "%" : "—";
   const totalMissing = sum("missingCost");
-  body.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr><th>Nhân viên</th><th>🐠 LN sinh vật</th><th>LN hàng còn lại</th><th>Tổng lợi nhuận</th><th>Biên LN</th></tr></thead><tbody>
+  const lpCell = v => `<td style="background:#f0fdf9; color:var(--teal-deep); font-weight:600;">${pf(v)}</td>`;
+  const pCell = (v, bold) => `<td style="background:#f0fdf9; ${bold ? "font-weight:700;" : ""}">${pf(v)}</td>`;
+  const th = t => `<th style="background:#f0fdf9;">${t}</th>`;
+  staffBody.innerHTML = `<div style="overflow-x:auto;"><table><thead><tr><th>Nhân viên</th><th>Vai trò</th><th>Số đơn</th><th>🐠 DT sinh vật (Cá/San hô)</th>${show ? th("🐠 LN sinh vật") : ""}<th>DT còn lại</th>${show ? th("LN hàng còn lại") : ""}<th>Tổng doanh thu</th>${show ? th("Tổng lợi nhuận") + th("Biên LN") : ""}</tr></thead><tbody>
     ${stats.map(s => {
       const total = s.livestockProfit + s.otherProfit;
       return `<tr>
-        <td>${s.name}${s.missingCost > 0 ? ` <a href="#" onclick="showMissingCost('${s.uid}'); return false;" title="${s.missingCost} dòng hàng chưa có giá vốn — bấm để xem và sửa" style="text-decoration:none;">⚠️ <span style="font-size:12px; color:var(--danger); text-decoration:underline;">${s.missingCost} dòng chưa có giá vốn</span></a>` : ""}</td>
-        <td style="color:var(--teal-deep); font-weight:600;">${pf(s.livestockProfit)}</td>
-        <td>${pf(s.otherProfit)}</td>
-        <td style="font-weight:700;">${pf(total)}</td>
-        <td>${margin(total, s.profitBase)}</td>
+        <td>${s.name}${s.revenue === maxRevenue && s.revenue > 0 ? ' <span class="vip-tag" style="font-size:11px; background:#fff7ed; color:#c2410c; padding:2px 8px; border-radius:10px; margin-left:6px; font-weight:600;">🏆 Top</span>' : ''}${show && s.missingCost > 0 ? ` <a href="#" onclick="showMissingCost('${s.uid}'); return false;" title="${s.missingCost} dòng hàng chưa có giá vốn — bấm để xem và sửa" style="text-decoration:none;">⚠️ <span style="font-size:12px; color:var(--danger); text-decoration:underline;">${s.missingCost} dòng chưa có giá vốn</span></a>` : ""}</td>
+        <td>${s.role === 'owner' ? 'Chủ' : 'Nhân viên'}</td>
+        <td>${s.orderCount}</td>
+        <td style="color:var(--teal-deep); font-weight:600;">${formatVND(s.livestockRevenue)}</td>
+        ${show ? lpCell(s.livestockProfit) : ""}
+        <td>${formatVND(s.otherRevenue)}</td>
+        ${show ? pCell(s.otherProfit) : ""}
+        <td style="font-weight:600;">${formatVND(s.revenue)}</td>
+        ${show ? pCell(total, true) + `<td style="background:#f0fdf9;">${margin(total, s.profitBase)}</td>` : ""}
       </tr>`;
     }).join("")}
-    <tr style="border-top:2px solid var(--border);"><td style="font-weight:700;">Cộng</td>
-      <td style="font-weight:700;">${pf(sum("livestockProfit"))}</td><td style="font-weight:700;">${pf(sum("otherProfit"))}</td>
-      <td style="font-weight:700;">${pf(sum("livestockProfit") + sum("otherProfit"))}</td><td style="font-weight:700;">${margin(sum("livestockProfit") + sum("otherProfit"), sum("profitBase"))}</td></tr>
+    ${show ? `<tr style="border-top:2px solid var(--border); font-weight:700;"><td>Cộng</td><td></td><td>${sum("orderCount")}</td>
+      <td>${formatVND(sum("livestockRevenue"))}</td>${pCell(sum("livestockProfit"), true)}
+      <td>${formatVND(sum("otherRevenue"))}</td>${pCell(sum("otherProfit"), true)}
+      <td>${formatVND(sum("revenue"))}</td>${pCell(sum("livestockProfit") + sum("otherProfit"), true)}<td style="background:#f0fdf9;">${margin(sum("livestockProfit") + sum("otherProfit"), sum("profitBase"))}</td></tr>` : ""}
   </tbody></table></div>
-  <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Lợi nhuận = tiền khách thực trả (đã trừ giảm giá, phân bổ theo tỷ lệ) − giá vốn đã chốt lúc bán. Không tính đơn 0đ (hao hụt/dùng nội bộ, đã nằm ở mục Chi phí). Có thể thấp hơn "Lãi gộp" ở trên khi đơn có giảm giá toàn đơn.${totalMissing > 0 ? ` ⚠️ Có ${totalMissing} dòng hàng chưa có giá vốn — <a href="#" onclick="showMissingCost(null); return false;">bấm để xem danh sách và sửa</a>.` : ""}</p>`;
+  <p class="text-mute" style="font-size:11.5px; margin-top:10px;">*Doanh thu sinh vật/còn lại tính theo giá trị THỰC TẾ khách thanh toán (đã trừ giảm giá, theo giá bán đã sửa nếu có), phân bổ giảm giá theo đúng tỷ lệ trong từng đơn.${show ? ` Lợi nhuận = doanh thu đó − giá vốn đã chốt lúc bán; không tính đơn 0đ (hao hụt/dùng nội bộ, đã nằm ở mục Chi phí); có thể thấp hơn "Lãi gộp" ở trên khi đơn có giảm giá toàn đơn.${totalMissing > 0 ? ` ⚠️ Có ${totalMissing} dòng hàng chưa có giá vốn — <a href="#" onclick="showMissingCost(null); return false;">bấm để xem danh sách và sửa</a>.` : ""}` : " Lợi nhuận đang ẩn (an toàn khi chụp màn hình), bấm \"Hiện lợi nhuận\" để xem."}</p>`;
 }
 
 function showMissingCost(uid) {
