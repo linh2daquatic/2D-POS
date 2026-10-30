@@ -280,11 +280,19 @@ function openModal(id, presetSeg) {
   document.getElementById("f_disp").value = a && a.disposed_at ? String(a.disposed_at).slice(0, 10) : "";
   document.getElementById("f_note").value = a ? (a.note || "") : "";
   document.getElementById("delBtn").style.display = a ? "" : "none";
+  // Đang đứng trong một mảng cụ thể (lọc Maxspect / 2D / Chung, hoặc tab Maxspect) thì thêm mới là vào thẳng mảng đó, không hỏi lại
+  LOCK_SEG = !a && (presetSeg || SEG_FILTER !== "all") ? document.getElementById("f_seg").value : null;
+  document.getElementById("mTitle").textContent = a ? "Sửa hạng mục" : (LOCK_SEG ? "Thêm hạng mục · " + SEG_LABEL[LOCK_SEG] : "Thêm hạng mục");
   syncModal();
   document.getElementById("modal").classList.add("open");
 }
+let LOCK_SEG = null;
 function syncModal() {
   const t = document.getElementById("f_type").value;
+  document.getElementById("segWrap").style.display = LOCK_SEG ? "none" : "";
+  // "Ai chi" chỉ cần cho mảng Maxspect (chi trước giữa Linh và anh Hiếu)
+  document.getElementById("payerWrap").style.display = document.getElementById("f_seg").value === "maxspect" ? "" : "none";
+  if (document.getElementById("f_seg").value !== "maxspect" && !EDIT_ID) document.getElementById("f_payer").value = "shop";
   document.getElementById("lifeWrap").style.display = t === "oneoff" ? "none" : "";
   document.getElementById("dispWrap").style.display = document.getElementById("f_status").value === "disposed" ? "" : "none";
   const life = Number(document.getElementById("f_life").value || 0), cost = Number(document.getElementById("f_cost").value || 0), sv = Number(document.getElementById("f_salvage").value || 0);
@@ -341,8 +349,8 @@ async function deleteAsset() {
           <div class="field"><label>Loại</label><select id="f_type"><option value="fixed">Tài sản cố định (khấu hao)</option><option value="prepaid">Chi phí trả trước (phân bổ dần)</option><option value="oneoff">Chi một lần (tính hết)</option></select></div>
         </div>
         <div class="row-2">
-          <div class="field"><label>Mảng</label><select id="f_seg"><option value="2d">2D Aquatic</option><option value="maxspect">Maxspect</option><option value="common">Chung</option></select></div>
-          <div class="field"><label>Ai chi</label><select id="f_payer"><option value="shop">Shop</option><option value="linh">Linh trả trước</option><option value="hieu">Anh Hiếu</option></select></div>
+          <div class="field" id="segWrap"><label>Mảng</label><select id="f_seg"><option value="2d">2D Aquatic</option><option value="maxspect">Maxspect</option><option value="common">Chung</option></select></div>
+          <div class="field" id="payerWrap"><label>Ai chi</label><select id="f_payer"><option value="shop">Shop</option><option value="linh">Linh trả trước</option><option value="hieu">Anh Hiếu</option></select></div>
         </div>
         <div class="row-2">
           <div class="field"><label>Ngày bắt đầu dùng</label><input id="f_start" type="date"></div>
@@ -367,6 +375,7 @@ async function deleteAsset() {
   ["mClose", "cancelBtn"].forEach(i => document.getElementById(i).addEventListener("click", () => document.getElementById("modal").classList.remove("open")));
   document.getElementById("saveBtn").addEventListener("click", saveAsset);
   document.getElementById("delBtn").addEventListener("click", deleteAsset);
+  document.getElementById("f_seg").addEventListener("change", syncModal);
   ["f_type", "f_status", "f_life", "f_cost", "f_salvage"].forEach(i => document.getElementById(i).addEventListener("input", syncModal));
   document.getElementById("f_type").addEventListener("change", syncModal);
   document.getElementById("f_status").addEventListener("change", syncModal);
