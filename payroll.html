@@ -111,6 +111,30 @@ async function fetchAll(buildQuery) {
 }
 
 // Lợi nhuận thuần của 1 tháng — cùng công thức với Dashboard
+// Khấu hao tài sản (chỉ khi đã bật công tắc ở trang "Tài sản & Đầu tư"). Trả về các dòng chi phí của tháng (y, m: 0-11)
+async function loadDepRows(y, m) {
+  try {
+    const st = await sb.from("assets_settings").select("value").eq("key", "dep_in_profit");
+    if (st.error || !st.data || !st.data[0] || st.data[0].value !== "on") return [];
+    const { data, error } = await sb.from("fixed_assets").select("name, asset_type, cost, life_months, salvage, start_date, status, disposed_at").neq("asset_type", "oneoff");
+    if (error) return [];
+    const idx = y * 12 + m;
+    const mi = s => { const [yy, mm] = String(s).slice(0, 10).split("-").map(Number); return yy * 12 + (mm - 1); };
+    const rows = [];
+    (data || []).forEach(a => {
+      const life = Math.max(1, Number(a.life_months) || 1);
+      const si = mi(a.start_date);
+      let last = si + life - 1;
+      if (a.status === "disposed" && a.disposed_at) last = Math.min(last, mi(a.disposed_at));
+      if (idx >= si && idx <= last) {
+        const amt = Math.max(0, (Number(a.cost) - Number(a.salvage || 0)) / life);
+        if (amt > 0) rows.push({ category: "Khấu hao tài sản", amount: Math.round(amt), note: a.name, created_at: new Date(y, m, 1).toISOString() });
+      }
+    });
+    return rows;
+  } catch (e) { console.warn("Khấu hao:", e); return []; }
+}
+
 async function netProfitOf(ym) {
   const { start, end } = monthRange(ym);
   const s = start.toISOString(), e = end.toISOString();
@@ -121,7 +145,10 @@ async function netProfitOf(ym) {
   items.forEach(i => { gross += num(i.quantity) * (num(i.unit_price) - num(i.cost_price_at_sale)); });
   const tx = await fetchAll(() => sb.from("cash_transactions").select("category, amount").eq("type", "expense")
     .gte("created_at", s).lte("created_at", e).order("created_at"));
-  const fixed = tx.filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category)).reduce((a, t) => a + num(t.amount), 0);
+  const [py, pm] = ym.split("-").map(Number);
+  const depRows = await loadDepRows(py, pm - 1);
+  const fixed = tx.filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category)).reduce((a, t) => a + num(t.amount), 0)
+    + depRows.reduce((a, r) => a + num(r.amount), 0);
   const { data: zero } = await sb.from("orders").select("id").eq("status", "completed").eq("total_amount", 0).gte("created_at", s).lte("created_at", e);
   let zeroCost = 0;
   const ids = (zero || []).map(o => o.id);
