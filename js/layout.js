@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { key: "customers", label: "Khách hàng", href: "customers.html", icon: "👤", ownerOnly: false },
   { key: "tanks", label: "Quản lý bể", href: "tanks.html", icon: "🪸", ownerOnly: false },
   { key: "payroll", label: "Lương", href: "payroll.html", icon: "💼", ownerOnly: true },
+  { key: "assets", label: "Tài sản & Đầu tư", href: "assets.html", icon: "🏗️", ownerOnly: true },
   { key: "suppliers", label: "Nhà cung cấp", href: "suppliers.html", icon: "🚚", ownerOnly: true },
 ];
 
@@ -19,7 +20,7 @@ const NAV_ITEMS = [
 const NAV_GROUPS = [
   { label: "Bán hàng", icon: "🛒", keys: ["orders", "order-history"] },
   { label: "Kho & NCC", icon: "📦", keys: ["products", "suppliers"] },
-  { label: "Tiền", icon: "💰", keys: ["cash", "payroll"] },
+  { label: "Tiền", icon: "💰", keys: ["cash", "payroll", "assets"] },
   { label: "Khách & Bể", icon: "👥", keys: ["customers", "tanks"] },
   { key: "dashboard" },   // đứng riêng, bấm vào là mở luôn
 ];
