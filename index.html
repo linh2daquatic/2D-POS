@@ -153,6 +153,30 @@ async function fetchAllRows(buildQuery) {
   return { data: out, error: null };
 }
 
+// Khấu hao tài sản (chỉ khi đã bật công tắc ở trang "Tài sản & Đầu tư"). Trả về các dòng chi phí của tháng (y, m: 0-11)
+async function loadDepRows(y, m) {
+  try {
+    const st = await sb.from("assets_settings").select("value").eq("key", "dep_in_profit");
+    if (st.error || !st.data || !st.data[0] || st.data[0].value !== "on") return [];
+    const { data, error } = await sb.from("fixed_assets").select("name, asset_type, cost, life_months, salvage, start_date, status, disposed_at").neq("asset_type", "oneoff");
+    if (error) return [];
+    const idx = y * 12 + m;
+    const mi = s => { const [yy, mm] = String(s).slice(0, 10).split("-").map(Number); return yy * 12 + (mm - 1); };
+    const rows = [];
+    (data || []).forEach(a => {
+      const life = Math.max(1, Number(a.life_months) || 1);
+      const si = mi(a.start_date);
+      let last = si + life - 1;
+      if (a.status === "disposed" && a.disposed_at) last = Math.min(last, mi(a.disposed_at));
+      if (idx >= si && idx <= last) {
+        const amt = Math.max(0, (Number(a.cost) - Number(a.salvage || 0)) / life);
+        if (amt > 0) rows.push({ category: "Khấu hao tài sản", amount: Math.round(amt), note: a.name, created_at: new Date(y, m, 1).toISOString() });
+      }
+    });
+    return rows;
+  } catch (e) { console.warn("Khấu hao:", e); return []; }
+}
+
 async function loadDashboard(isOwner, selectedMonth) {
   const statGrid = document.getElementById("statGrid");
   const todayStart = new Date();
@@ -298,6 +322,7 @@ async function loadDashboard(isOwner, selectedMonth) {
       .gte("created_at", monthStart.toISOString())
       .lte("created_at", monthEnd.toISOString());
     const fixedExpenses = (expenseTx || []).filter(t => !SYSTEM_EXPENSE_CATEGORIES.includes(t.category));
+    (await loadDepRows(monthStart.getFullYear(), monthStart.getMonth())).forEach(r => fixedExpenses.push(r));
     const fixedCostTotal = fixedExpenses.reduce((s, t) => s + Number(t.amount), 0);
     const fixedByCategory = {};
     fixedExpenses.forEach(t => { fixedByCategory[t.category || "Khác"] = (fixedByCategory[t.category || "Khác"] || 0) + Number(t.amount); });
