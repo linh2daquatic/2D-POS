@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tài sản & Đầu tư — 2D Aquatic POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.5); z-index:100; align-items:center; justify-content:center; padding:20px; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#fff; border-radius:14px; width:100%; max-width:600px; max-height:90vh; overflow-y:auto; }
+.modal-header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.modal-header h3 { font-family:var(--font-display); font-size:18px; }
+.modal-body { padding:20px 22px; }
+.modal-close { cursor:pointer; font-size:20px; color:var(--text-mute); }
+.row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.tabs-bar { display:flex; gap:2px; border-bottom:2px solid var(--border); margin-bottom:16px; overflow-x:auto; white-space:nowrap; }
+.tab-btn { padding:10px 18px; cursor:pointer; font-size:14px; font-weight:500; color:var(--text-mute); border-bottom:3px solid transparent; margin-bottom:-2px; flex-shrink:0; }
+.tab-btn.on { color:var(--teal-deep, #0e7490); font-weight:700; border-bottom-color:var(--teal-deep, #0e7490); }
+.kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:16px; }
+.kpi { border:1px solid var(--border); border-radius:10px; padding:10px 14px; background:#fff; }
+.kpi .l { font-size:11.5px; color:var(--text-mute); text-transform:uppercase; }
+.kpi .v { font-family:var(--font-display); font-weight:700; font-size:20px; margin-top:4px; }
+.kpi .s { font-size:11px; color:var(--text-mute); margin-top:2px; }
+.bar { height:8px; background:#e6ebf1; border-radius:4px; width:90px; display:inline-block; vertical-align:middle; }
+.bar i { display:block; height:8px; background:#0e7490; border-radius:4px; }
+.pill { display:inline-block; border-radius:10px; padding:1px 8px; font-size:11px; background:#e6ebf1; color:#475569; white-space:nowrap; }
+.pill.mx { background:#fde8d8; color:#c2410c; }
+.pill.done { background:#dcfce7; color:#15803d; font-weight:600; }
+.chip { display:inline-block; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12.5px; font-weight:600; background:#e6ebf1; color:var(--text-mute); margin-right:6px; }
+.chip.on { background:var(--ink); color:#fff; }
+.sw { position:relative; display:inline-block; width:40px; height:22px; background:#cbd5e1; border-radius:12px; cursor:pointer; vertical-align:middle; transition:background .15s; }
+.sw::after { content:""; position:absolute; left:3px; top:3px; width:16px; height:16px; background:#fff; border-radius:50%; transition:left .15s; }
+.sw.on { background:var(--teal-deep, #0e7490); }
+.sw.on::after { left:21px; }
+.hint { font-size:12px; color:var(--text-mute); margin-top:4px; }
+tr.row-click { cursor:pointer; }
+tr.row-click:hover { background:#f8fafc; }
+</style>
+</head>
+<body>
+<script src="js/supabase-client.js"></script>
+<script src="js/layout.js"></script>
+<script>
+let CURRENT_PROFILE = null;
+let ASSETS = [];
+let DEP_ON = false;
+let TAB = "assets";
+let SEG_FILTER = "all";
+let HORIZON = 12;
+let EDIT_ID = null;
+
+const SEG_LABEL = { "2d": "2D Aquatic", maxspect: "Maxspect", common: "Chung" };
+const TYPE_LABEL = { fixed: "Tài sản cố định", prepaid: "Chi phí trả trước", oneoff: "Chi một lần" };
+const TYPE_SHORT = { fixed: "TSCĐ", prepaid: "Trả trước", oneoff: "Chi 1 lần" };
+const PAYER_LABEL = { shop: "Shop", linh: "Linh", hieu: "Anh Hiếu" };
+const num = v => Number(v) || 0;
+const esc = x => String(x == null ? "" : x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const money = v => formatVND(Math.round(v));
+const short = v => {
+  const a = Math.abs(v), sg = v < 0 ? "-" : "";
+  if (a >= 1e9) return sg + (Math.round(a / 1e8) / 10) + " tỷ";
+  if (a >= 1e6) return sg + (Math.round(a / 1e5) / 10) + "tr";
+  return sg + formatVND(Math.round(a));
+};
+
+// ---------- Quy tắc khấu hao (đường thẳng, theo tháng) ----------
+// Tháng M được tính khấu hao nếu: tháng bắt đầu <= M < tháng bắt đầu + số tháng. Tháng bắt đầu tính trọn tháng.
+const midx = d => d.getFullYear() * 12 + d.getMonth();
+const dateOf = s => { const [y, m, d] = String(s).slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d || 1); };
+const NOW_IDX = midx(new Date());
+function monthly(a) { return a.asset_type === "oneoff" ? 0 : Math.max(0, (num(a.cost) - num(a.salvage)) / Math.max(1, num(a.life_months))); }
+function startIdx(a) { return midx(dateOf(a.start_date)); }
+function lastIdx(a) {   // tháng cuối cùng còn khấu hao
+  let last = startIdx(a) + Math.max(1, num(a.life_months)) - 1;
+  if (a.status === "disposed" && a.disposed_at) last = Math.min(last, midx(dateOf(a.disposed_at)));
+  return last;
+}
+function depInMonth(a, idx) {
+  if (a.asset_type === "oneoff") return 0;
+  return idx >= startIdx(a) && idx <= lastIdx(a) ? monthly(a) : 0;
+}
+function elapsed(a) {   // số tháng đã khấu hao tính đến hết tháng hiện tại
+  const life = Math.max(1, num(a.life_months));
+  return Math.max(0, Math.min(life, lastIdx(a) - startIdx(a) + 1, NOW_IDX - startIdx(a) + 1));
+}
+function info(a) {
+  const oneoff = a.asset_type === "oneoff";
+  const life = Math.max(1, num(a.life_months));
+  const el = elapsed(a);
+  const dep = oneoff ? num(a.cost) : Math.min(num(a.cost) - num(a.salvage), monthly(a) * el);
+  const remaining = oneoff ? 0 : Math.max(0, num(a.cost) - dep);
+  const pct = oneoff ? 100 : Math.min(100, Math.round(el / life * 100));
+  const endIdx = startIdx(a) + life - 1;
+  const done = !oneoff && a.status !== "disposed" && NOW_IDX > endIdx;
+  const endLabel = oneoff ? "—" : String((endIdx % 12) + 1).padStart(2, "0") + "/" + Math.floor(endIdx / 12);
+  return { oneoff, el, life, dep, remaining, pct, done, endLabel, endIdx, monthNow: depInMonth(a, NOW_IDX) };
+}
+
+// ---------- Tải dữ liệu ----------
+async function load() {
+  const [a, s] = await Promise.all([
+    sb.from("fixed_assets").select("*").order("start_date", { ascending: false }).order("created_at", { ascending: false }),
+    sb.from("assets_settings").select("*").eq("key", "dep_in_profit")
+  ]);
+  if (a.error) {
+    document.getElementById("pageContent").innerHTML = `<div class="panel"><div class="panel-body" style="color:var(--danger);">Lỗi: ${esc(a.error.message)}<br>Bạn đã chạy <b>migration-35.sql</b> trong Supabase SQL Editor chưa?</div></div>`;
+    return;
+  }
+  ASSETS = a.data || [];
+  DEP_ON = !s.error && s.data && s.data[0] && s.data[0].value === "on";
+  render();
+}
+
+async function setDepOn(on) {
+  DEP_ON = on;
+  render();
+  const { error } = await sb.from("assets_settings").upsert({ key: "dep_in_profit", value: on ? "on" : "off" });
+  if (error) { alert("Không lưu được cài đặt: " + error.message); DEP_ON = !on; render(); }
+}
+
+// ---------- Giao diện ----------
+function kpi(l, v, s, color) { return `<div class="kpi"><div class="l">${l}</div><div class="v" style="${color ? "color:" + color + ";" : ""}">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`; }
+
+function render() {
+  const el = document.getElementById("pageContent");
+  el.innerHTML = `
+    <div class="tabs-bar">
+      ${[["assets", "🏗️ Tài sản"], ["forecast", "📈 Dự phóng"], ["maxspect", "🔧 Maxspect"]].map(([k, l]) => `<div class="tab-btn ${TAB === k ? "on" : ""}" data-tab="${k}">${l}</div>`).join("")}
+    </div>
+    <div id="tabBody"></div>`;
+  el.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => { TAB = b.dataset.tab; render(); }));
+  const body = document.getElementById("tabBody");
+  if (TAB === "assets") renderAssets(body);
+  else if (TAB === "forecast") renderForecast(body);
+  else renderMaxspect(body);
+}
+
+function listForSeg() { return ASSETS.filter(a => SEG_FILTER === "all" || a.segment === SEG_FILTER); }
+
+function renderAssets(body) {
+  const list = listForSeg();
+  const dep = list.filter(a => a.asset_type !== "oneoff");
+  const oneoff = list.filter(a => a.asset_type === "oneoff");
+  const totalCost = dep.reduce((s, a) => s + num(a.cost), 0);
+  const remaining = dep.reduce((s, a) => s + info(a).remaining, 0);
+  const monthNow = list.reduce((s, a) => s + info(a).monthNow, 0);
+  const doneCount = dep.filter(a => info(a).done).length;
+  const oneoffTotal = oneoff.reduce((s, a) => s + num(a.cost), 0);
+  body.innerHTML = `
+    <div class="kpis">
+      ${kpi("Nguyên giá TSCĐ + trả trước", short(totalCost), dep.length + " hạng mục")}
+      ${kpi("Giá trị còn lại", short(remaining), totalCost > 0 ? Math.round(remaining / totalCost * 100) + "% nguyên giá" : "")}
+      ${kpi("Khấu hao tháng này", short(monthNow), "mỗi tháng hiện tại")}
+      ${kpi("Đã hết khấu hao", doneCount + " mục", "")}
+      ${kpi("Chi một lần", short(oneoffTotal), oneoff.length + " khoản")}
+    </div>
+    <div class="panel" style="margin-bottom:14px;"><div class="panel-body" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="sw ${DEP_ON ? "on" : ""}" id="depSwitch"></span>
+        <div><b style="font-size:13.5px;">Tính khấu hao vào lợi nhuận Dashboard và lương QLBH: ${DEP_ON ? "BẬT" : "Tắt"}</b>
+        <div class="hint" style="margin-top:0;">${DEP_ON ? "Dashboard có thêm dòng \"Khấu hao tài sản\" trong chi phí tháng. Chi một lần không tính vào Dashboard." : "Đang chỉ theo dõi riêng, Dashboard giữ nguyên."}</div></div>
+      </div>
+      <button class="btn btn-primary btn-mini" id="addBtn">＋ Thêm hạng mục</button>
+    </div></div>
+    <div style="margin-bottom:12px;">
+      ${[["all", "Tất cả"], ["2d", "2D Aquatic"], ["maxspect", "Maxspect"], ["common", "Chung"]].map(([k, l]) => `<span class="chip ${SEG_FILTER === k ? "on" : ""}" data-seg="${k}">${l}</span>`).join("")}
+    </div>
+    <div class="panel"><div class="panel-body table-scroll">
+      ${list.length === 0 ? `<div class="empty-state"><div class="icon">🏗️</div>Chưa có hạng mục nào. Bấm "Thêm hạng mục" để bắt đầu.</div>` : `
+      <table><thead><tr><th>Hạng mục</th><th>Loại</th><th>Mảng</th><th>Nguyên giá</th><th>Khấu hao</th><th>Còn lại</th><th>Hết hạn</th></tr></thead><tbody>
+      ${list.map(a => { const i = info(a); return `<tr class="row-click" data-id="${a.id}">
+        <td><b>${esc(a.name)}</b>${a.category ? `<div class="text-mute" style="font-size:11.5px;">${esc(a.category)} · ${formatDate(a.start_date)}</div>` : `<div class="text-mute" style="font-size:11.5px;">${formatDate(a.start_date)}</div>`}</td>
+        <td>${TYPE_SHORT[a.asset_type] || a.asset_type}</td>
+        <td><span class="pill ${a.segment === "maxspect" ? "mx" : ""}">${SEG_LABEL[a.segment] || a.segment}</span></td>
+        <td>${money(num(a.cost))}</td>
+        <td>${i.oneoff ? '<span class="pill">Tính hết</span>' : a.status === "disposed" ? '<span class="pill">Đã thanh lý</span>' : `<span class="bar"><i style="width:${i.pct}%; ${i.done ? "background:#16a34a;" : ""}"></i></span> ${i.done ? '<span class="pill done">Hết KH</span>' : i.pct + "%"}`}</td>
+        <td>${i.oneoff ? "—" : money(i.remaining)}</td>
+        <td>${i.endLabel}</td></tr>`; }).join("")}
+      </tbody></table>`}
+    </div></div>`;
+  document.getElementById("depSwitch").addEventListener("click", () => setDepOn(!DEP_ON));
+  document.getElementById("addBtn").addEventListener("click", () => openModal(null));
+  body.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => { SEG_FILTER = c.dataset.seg; render(); }));
+  body.querySelectorAll("tr.row-click").forEach(r => r.addEventListener("click", () => openModal(r.dataset.id)));
+}
+
+function renderForecast(body) {
+  const dep = ASSETS.filter(a => a.asset_type !== "oneoff" && a.status !== "disposed");
+  const series = [];   // series[k] = khấu hao tháng thứ k kể từ tháng này (k=0 là tháng này)
+  for (let k = 0; k <= HORIZON; k++) series.push(dep.reduce((s, a) => s + depInMonth(a, NOW_IDX + k), 0));
+  const extra = series.slice(1).reduce((s, v) => s + v, 0);
+  const remainingNow = dep.reduce((s, a) => s + info(a).remaining, 0);
+  const label = k => { const idx = NOW_IDX + k; return String((idx % 12) + 1).padStart(2, "0") + "/" + Math.floor(idx / 12); };
+  // Các mốc thay đổi: tháng có tài sản hết khấu hao
+  const events = [];
+  for (let k = 1; k <= HORIZON; k++) {
+    const ended = dep.filter(a => depInMonth(a, NOW_IDX + k - 1) > 0 && depInMonth(a, NOW_IDX + k) === 0);
+    if (ended.length) events.push({ k, ended, value: series[k] });
+  }
+  const maxV = Math.max(...series, 1);
+  const W = 640, H = 120, bw = W / (HORIZON + 1);
+  const bars = series.map((v, k) => `<rect x="${(k * bw + 2).toFixed(1)}" y="${(H - 10 - (v / maxV) * (H - 24)).toFixed(1)}" width="${Math.max(2, bw - 4).toFixed(1)}" height="${((v / maxV) * (H - 24)).toFixed(1)}" fill="${k === 0 ? "#0e7490" : "#7fc4d6"}" rx="2"><title>${label(k)}: ${money(v)}</title></rect>`).join("");
+  body.innerHTML = `
+    <div class="panel" style="margin-bottom:14px;"><div class="panel-body" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <span style="font-size:13px; font-weight:600;">Vận hành thêm:</span>
+      ${[6, 12, 24].map(m => `<span class="chip ${HORIZON === m ? "on" : ""}" data-h="${m}">${m === 12 ? "1 năm" : m === 24 ? "2 năm" : m + " tháng"}</span>`).join("")}
+      <span style="font-size:12.5px; color:var(--text-mute); margin-left:6px;">hoặc</span>
+      <input id="hCustom" type="number" min="1" max="120" placeholder="số tháng" value="${[6, 12, 24].includes(HORIZON) ? "" : HORIZON}" style="width:100px;">
+      <span class="btn btn-secondary btn-mini" id="hApply">Áp dụng</span>
+    </div></div>
+    <div class="kpis">
+      ${kpi("Khấu hao tháng này", short(series[0]), "đang trích mỗi tháng")}
+      ${kpi("Trích thêm trong " + HORIZON + " tháng", short(extra), "tổng khấu hao sắp tới")}
+      ${kpi("Giá trị còn lại sau " + HORIZON + " tháng", short(Math.max(0, remainingNow - extra)), "từ " + short(remainingNow) + " hiện nay")}
+      ${kpi("Khấu hao / tháng cuối kỳ", short(series[HORIZON]), "tháng " + label(HORIZON))}
+    </div>
+    <div class="panel" style="margin-bottom:14px;"><div class="panel-header"><h2>Khấu hao theo tháng</h2></div><div class="panel-body">
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">${bars}</svg>
+      <div class="hint">Cột đậm là tháng này. Cột thấp dần khi có tài sản hết khấu hao. Chi một lần và tài sản đã thanh lý không tính.</div>
+    </div></div>
+    <div class="panel"><div class="panel-header"><h2>Các mốc thay đổi</h2></div><div class="panel-body table-scroll">
+      <table><thead><tr><th>Mốc</th><th>Khấu hao / tháng</th><th>Ghi chú</th></tr></thead><tbody>
+        <tr><td>Hiện tại (${label(0)})</td><td><b>${money(series[0])}</b></td><td class="text-mute">—</td></tr>
+        ${events.map(e => `<tr><td>Sau ${e.k} tháng (${label(e.k)})</td><td><b>${money(e.value)}</b> <span class="text-mute">(${money(e.value - series[e.k - 1])})</span></td><td>Hết khấu hao: ${e.ended.map(a => esc(a.name)).join(", ")}</td></tr>`).join("")}
+        ${events.length === 0 ? `<tr><td colspan="3" class="text-mute">Không có tài sản nào hết khấu hao trong ${HORIZON} tháng tới, khấu hao giữ nguyên ${money(series[0])} / tháng.</td></tr>` : ""}
+      </tbody></table>
+    </div></div>`;
+  body.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => { HORIZON = Number(c.dataset.h); render(); }));
+  document.getElementById("hApply").addEventListener("click", () => {
+    const v = Math.round(Number(document.getElementById("hCustom").value));
+    if (v >= 1 && v <= 120) { HORIZON = v; render(); } else alert("Nhập số tháng từ 1 đến 120.");
+  });
+}
+
+function renderMaxspect(body) {
+  const list = ASSETS.filter(a => a.segment === "maxspect");
+  const total = list.reduce((s, a) => s + num(a.cost), 0);
+  const by = p => list.filter(a => a.paid_by === p).reduce((s, a) => s + num(a.cost), 0);
+  const monthNow = list.reduce((s, a) => s + info(a).monthNow, 0);
+  body.innerHTML = `
+    <div class="kpis">
+      ${kpi("Tổng chi mảng Maxspect", short(total), list.length + " khoản")}
+      ${kpi("Linh chi trước", short(by("linh")), "")}
+      ${kpi("Anh Hiếu chi trước", short(by("hieu")), "")}
+      ${kpi("Shop chi", short(by("shop")), "")}
+      ${kpi("Khấu hao tháng này", short(monthNow), "phần của mảng Maxspect")}
+    </div>
+    <div class="panel"><div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;"><h2>Chi phí ban đầu & chi trước</h2><button class="btn btn-primary btn-mini" id="addMx">＋ Thêm khoản</button></div>
+      <div class="panel-body table-scroll">
+      ${list.length === 0 ? `<div class="empty-state"><div class="icon">🔧</div>Chưa có khoản nào của mảng Maxspect.</div>` : `
+      <table><thead><tr><th>Ngày</th><th>Khoản chi</th><th>Loại</th><th>Ai chi</th><th>Số tiền</th><th>Khấu hao</th></tr></thead><tbody>
+      ${list.map(a => { const i = info(a); return `<tr class="row-click" data-id="${a.id}"><td>${formatDate(a.start_date)}</td><td><b>${esc(a.name)}</b>${a.note ? `<div class="text-mute" style="font-size:11.5px;">${esc(a.note)}</div>` : ""}</td><td>${TYPE_SHORT[a.asset_type] || ""}</td><td>${PAYER_LABEL[a.paid_by] || a.paid_by}</td><td>${money(num(a.cost))}</td><td>${i.oneoff ? '<span class="pill">Tính hết</span>' : i.done ? '<span class="pill done">Hết KH</span>' : i.pct + "%"}</td></tr>`; }).join("")}
+      </tbody></table>`}
+      <p class="hint" style="margin-top:10px;">Phần này chỉ để theo dõi chi phí ban đầu và ai chi trước. Quyết toán góp vốn và chia lãi vẫn làm ở web Maxspect riêng.</p>
+    </div></div>`;
+  document.getElementById("addMx").addEventListener("click", () => openModal(null, "maxspect"));
+  body.querySelectorAll("tr.row-click").forEach(r => r.addEventListener("click", () => openModal(r.dataset.id)));
+}
+
+// ---------- Thêm / sửa ----------
+function openModal(id, presetSeg) {
+  EDIT_ID = id;
+  const a = id ? ASSETS.find(x => x.id === id) : null;
+  document.getElementById("mTitle").textContent = a ? "Sửa hạng mục" : "Thêm hạng mục";
+  document.getElementById("f_name").value = a ? a.name : "";
+  document.getElementById("f_cat").value = a ? (a.category || "") : "";
+  document.getElementById("f_type").value = a ? a.asset_type : "fixed";
+  document.getElementById("f_seg").value = a ? a.segment : (presetSeg || (SEG_FILTER !== "all" ? SEG_FILTER : "2d"));
+  document.getElementById("f_payer").value = a ? a.paid_by : "shop";
+  document.getElementById("f_start").value = a ? String(a.start_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  document.getElementById("f_cost").value = a ? num(a.cost) : "";
+  document.getElementById("f_life").value = a ? num(a.life_months) : 36;
+  document.getElementById("f_salvage").value = a ? num(a.salvage) : 0;
+  document.getElementById("f_status").value = a ? a.status : "active";
+  document.getElementById("f_disp").value = a && a.disposed_at ? String(a.disposed_at).slice(0, 10) : "";
+  document.getElementById("f_note").value = a ? (a.note || "") : "";
+  document.getElementById("delBtn").style.display = a ? "" : "none";
+  syncModal();
+  document.getElementById("modal").classList.add("open");
+}
+function syncModal() {
+  const t = document.getElementById("f_type").value;
+  document.getElementById("lifeWrap").style.display = t === "oneoff" ? "none" : "";
+  document.getElementById("dispWrap").style.display = document.getElementById("f_status").value === "disposed" ? "" : "none";
+  const life = Number(document.getElementById("f_life").value || 0), cost = Number(document.getElementById("f_cost").value || 0), sv = Number(document.getElementById("f_salvage").value || 0);
+  document.getElementById("preview").textContent = t === "oneoff" ? "Chi một lần: tính hết, không chia dần." :
+    (life > 0 && cost > 0 ? `Khấu hao mỗi tháng ≈ ${formatVND(Math.round(Math.max(0, cost - sv) / life))}` : "");
+}
+async function saveAsset() {
+  const name = document.getElementById("f_name").value.trim();
+  if (!name) { alert("Nhập tên hạng mục."); return; }
+  const type = document.getElementById("f_type").value;
+  const payload = {
+    name, category: document.getElementById("f_cat").value.trim() || null, asset_type: type,
+    segment: document.getElementById("f_seg").value, paid_by: document.getElementById("f_payer").value,
+    start_date: document.getElementById("f_start").value || new Date().toISOString().slice(0, 10),
+    cost: Number(document.getElementById("f_cost").value || 0),
+    life_months: type === "oneoff" ? 1 : Math.max(1, Math.round(Number(document.getElementById("f_life").value || 1))),
+    salvage: Number(document.getElementById("f_salvage").value || 0),
+    status: document.getElementById("f_status").value,
+    disposed_at: document.getElementById("f_status").value === "disposed" ? (document.getElementById("f_disp").value || new Date().toISOString().slice(0, 10)) : null,
+    note: document.getElementById("f_note").value.trim() || null
+  };
+  const btn = document.getElementById("saveBtn"); btn.disabled = true;
+  const { error } = EDIT_ID ? await sb.from("fixed_assets").update(payload).eq("id", EDIT_ID) : await sb.from("fixed_assets").insert({ ...payload, created_by: CURRENT_PROFILE.id });
+  btn.disabled = false;
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("modal").classList.remove("open");
+  load();
+}
+async function deleteAsset() {
+  if (!EDIT_ID || !confirm("Xoá hạng mục này?")) return;
+  const { error } = await sb.from("fixed_assets").delete().eq("id", EDIT_ID);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  document.getElementById("modal").classList.remove("open");
+  load();
+}
+
+(async function init() {
+  const auth = await requireAuth();
+  if (!auth) return;
+  CURRENT_PROFILE = auth.profile;
+  renderLayout({ activePage: "assets", profile: CURRENT_PROFILE, title: "Tài sản & Đầu tư", subtitle: "Khấu hao, chi phí ban đầu, mảng Maxspect" });
+  if (CURRENT_PROFILE.role !== "owner") {
+    document.getElementById("pageContent").innerHTML = `<div class="panel"><div class="panel-body empty-state"><div class="icon">🔒</div>Chỉ Chủ cửa hàng mới xem được mục này.</div></div>`;
+    return;
+  }
+  document.getElementById("pageContent").innerHTML = `<div class="panel"><div class="panel-body">Đang tải...</div></div>`;
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-overlay" id="modal"><div class="modal-box">
+      <div class="modal-header"><h3 id="mTitle">Thêm hạng mục</h3><span class="modal-close" id="mClose">✕</span></div>
+      <div class="modal-body">
+        <div class="field"><label>Tên hạng mục</label><input id="f_name" placeholder="VD: Cải tạo mặt bằng, Hệ thống lọc tổng"></div>
+        <div class="row-2">
+          <div class="field"><label>Nhóm</label><input id="f_cat" list="catList" placeholder="VD: Cải tạo, Thiết bị..."><datalist id="catList"><option>Cải tạo / xây dựng</option><option>Thiết bị</option><option>Nội thất / kệ</option><option>Biển hiệu</option><option>Website / phần mềm</option><option>Đặt cọc</option><option>Chi phí ban đầu</option></datalist></div>
+          <div class="field"><label>Loại</label><select id="f_type"><option value="fixed">Tài sản cố định (khấu hao)</option><option value="prepaid">Chi phí trả trước (phân bổ dần)</option><option value="oneoff">Chi một lần (tính hết)</option></select></div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label>Mảng</label><select id="f_seg"><option value="2d">2D Aquatic</option><option value="maxspect">Maxspect</option><option value="common">Chung</option></select></div>
+          <div class="field"><label>Ai chi</label><select id="f_payer"><option value="shop">Shop</option><option value="linh">Linh trả trước</option><option value="hieu">Anh Hiếu</option></select></div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label>Ngày bắt đầu dùng</label><input id="f_start" type="date"></div>
+          <div class="field"><label>Nguyên giá (₫)</label><input id="f_cost" type="number" step="any"></div>
+        </div>
+        <div class="row-2" id="lifeWrap">
+          <div class="field"><label>Số tháng khấu hao</label><input id="f_life" type="number" min="1" step="1"></div>
+          <div class="field"><label>Giá trị thanh lý dự kiến (₫)</label><input id="f_salvage" type="number" step="any"></div>
+        </div>
+        <div class="hint" id="preview" style="margin:-4px 0 10px;"></div>
+        <div class="row-2">
+          <div class="field"><label>Tình trạng</label><select id="f_status"><option value="active">Đang dùng</option><option value="disposed">Đã thanh lý / bỏ</option></select></div>
+          <div class="field" id="dispWrap" style="display:none;"><label>Ngày thanh lý</label><input id="f_disp" type="date"></div>
+        </div>
+        <div class="field"><label>Ghi chú</label><input id="f_note" placeholder="Không bắt buộc"></div>
+        <div class="flex gap-8" style="margin-top:14px; justify-content:space-between;">
+          <button class="btn btn-secondary" id="delBtn" style="color:var(--danger);">Xoá</button>
+          <div class="flex gap-8"><button class="btn btn-secondary" id="cancelBtn">Huỷ</button><button class="btn btn-primary" id="saveBtn">💾 Lưu</button></div>
+        </div>
+      </div>
+    </div></div>`);
+  ["mClose", "cancelBtn"].forEach(i => document.getElementById(i).addEventListener("click", () => document.getElementById("modal").classList.remove("open")));
+  document.getElementById("saveBtn").addEventListener("click", saveAsset);
+  document.getElementById("delBtn").addEventListener("click", deleteAsset);
+  ["f_type", "f_status", "f_life", "f_cost", "f_salvage"].forEach(i => document.getElementById(i).addEventListener("input", syncModal));
+  document.getElementById("f_type").addEventListener("change", syncModal);
+  document.getElementById("f_status").addEventListener("change", syncModal);
+  await load();
+})();
+</script>
+</body>
+</html>
