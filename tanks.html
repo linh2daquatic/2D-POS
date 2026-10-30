@@ -874,7 +874,7 @@ async function renderTankFinance() {
       <td>${esc(x.name)}${x.note ? `<div class="text-mute" style="font-size:11px;">${esc(x.note)}</div>` : ""}</td><td>${Number(x.qty)}</td><td>${formatVND(x.cost)}</td><td>${x.bought_at ? formatDate(x.bought_at) : "—"}</td>
       ${liv ? (() => { const st = byAsset[x.id] || { q: 0, v: 0 }; const pf = st.v - Number(x.cost || 0); return `<td>${st.q || "—"}</td><td>${st.v ? formatVND(st.v) : "—"}</td><td style="font-weight:700; color:${pf >= 0 ? "#16a34a" : "#c2410c"};">${(pf >= 0 ? "+" : "−") + formatVND(Math.abs(pf))}</td>`; })() : ""}
       ${hasStatus ? `<td><select class="asset-status" data-id="${x.id}" style="width:auto;"><option value="active" ${x.status === "active" ? "selected" : ""}>Còn nuôi</option><option value="dead" ${x.status === "dead" ? "selected" : ""}>Đã chết</option><option value="sold" ${x.status === "sold" ? "selected" : ""}>Đã bán</option></select></td>` : ""}
-      <td><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);">✕</span></td></tr>`).join("") : `<tr><td colspan="9" class="text-mute">Chưa có.</td></tr>`}</tbody></table></div>
+      <td style="white-space:nowrap;"><span class="asset-edit" data-id="${x.id}" style="cursor:pointer; margin-right:10px;" title="Sửa">✎</span><span class="asset-del" data-id="${x.id}" style="cursor:pointer; color:var(--danger);" title="Xoá">✕</span></td></tr>`).join("") : `<tr><td colspan="9" class="text-mute">Chưa có.</td></tr>`}</tbody></table></div>
     ${liv && unassigned > 0 ? `<div class="text-mute" style="font-size:11.5px; margin-top:4px;">Frag bán ra chưa gắn con mẹ: ${formatVND(unassigned)} (vào Kho, chọn "Frag cắt từ con mẹ nào" cho sản phẩm frag).</div>` : ""}
     <div class="flex gap-8" style="margin-top:8px; flex-wrap:wrap; align-items:center;">
       <input class="asset-name" data-kind="${kind}" placeholder="${c.ph}" style="flex:2 1 160px;">
@@ -930,6 +930,33 @@ async function renderTankFinance() {
     });
     if (error) { alert("Lỗi: " + error.message); btn.style.pointerEvents = ""; return; }
     renderTankFinance();
+  }));
+  box.querySelectorAll(".asset-edit").forEach(el => el.addEventListener("click", () => {
+    const a = TANK_ASSETS.find(x => x.id === el.dataset.id);
+    if (!a) return;
+    const tr = el.closest("tr");
+    const ncols = tr.children.length;
+    const inp = "width:100%; padding:5px 7px; border:1px solid var(--border); border-radius:6px; font-size:13px;";
+    tr.innerHTML = `<td colspan="${ncols}" style="background:#f8fafc;">
+      <div class="flex gap-8" style="flex-wrap:wrap; align-items:center;">
+        <input class="ed-name" value="${esc(a.name)}" style="${inp} flex:2 1 160px;" placeholder="Tên">
+        <input class="ed-qty" type="number" step="any" value="${Number(a.qty)}" style="${inp} flex:0 1 70px;" title="Số lượng">
+        <input class="ed-cost" type="number" step="any" value="${Number(a.cost || 0)}" style="${inp} flex:1 1 130px;" title="Tổng tiền">
+        <input class="ed-date" type="date" value="${a.bought_at || ""}" style="${inp} flex:1 1 140px;">
+        <span class="btn btn-primary btn-mini ed-save">💾 Lưu</span>
+        <span class="btn btn-secondary btn-mini ed-cancel">Huỷ</span>
+      </div></td>`;
+    tr.querySelector(".ed-cancel").addEventListener("click", () => renderTankFinance());
+    tr.querySelector(".ed-save").addEventListener("click", async () => {
+      const name = tr.querySelector(".ed-name").value.trim();
+      if (!name) { alert("Nhập tên."); return; }
+      const { error } = await sb.from("tank_assets").update({
+        name, qty: Number(tr.querySelector(".ed-qty").value || 1), cost: Number(tr.querySelector(".ed-cost").value || 0),
+        bought_at: tr.querySelector(".ed-date").value || null
+      }).eq("id", a.id);
+      if (error) { alert("Lỗi: " + error.message); return; }
+      renderTankFinance();
+    });
   }));
   box.querySelectorAll(".asset-del").forEach(el => el.addEventListener("click", async () => {
     if (!confirm("Xoá dòng này?")) return;
