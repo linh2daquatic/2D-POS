@@ -56,6 +56,8 @@ let PREV_PROFIT = null; // lợi nhuận thuần tháng trước
 let STATE = {};        // staff_id -> giá trị đang nhập
 let EDIT_STAFF_ID = null;
 let OPEN_CARDS = new Set();
+let BHXH_ROW = null;   // dòng chốt BHXH của tháng đang xem (payroll_bhxh)
+let BHXH_UI = { payDate: "", method: "cash" };
 function toggleCard(id, open) { if (open) OPEN_CARDS.add(id); else OPEN_CARDS.delete(id); }
 const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ", "Rút vốn / Cá nhân"];
 const num = v => Number(v) || 0;
@@ -165,10 +167,13 @@ async function loadMonth() {
   const sheet = document.getElementById("sheet");
   sheet.innerHTML = '<div class="panel"><div class="panel-body">Đang tải...</div></div>';
   const { first } = monthRange(MONTH);
-  const [sr, er] = await Promise.all([
+  const [sr, er, br] = await Promise.all([
     sb.from("payroll_staff").select("*").eq("active", true).order("created_at"),
-    sb.from("payroll_entries").select("*").eq("month", first)
+    sb.from("payroll_entries").select("*").eq("month", first),
+    sb.from("payroll_bhxh").select("*").eq("month", first).maybeSingle()
   ]);
+  BHXH_ROW = br.error ? null : (br.data || null);
+  BHXH_UI = { payDate: BHXH_ROW && BHXH_ROW.paid_date ? BHXH_ROW.paid_date : defaultPayDate(), method: BHXH_ROW && BHXH_ROW.method ? BHXH_ROW.method : "cash" };
   if (sr.error || er.error) {
     sheet.innerHTML = `<div class="panel"><div class="panel-body" style="color:var(--danger);">Lỗi: ${(sr.error || er.error).message}<br>Bạn đã chạy migration-29.sql trong Supabase chưa?</div></div>`;
     return;
@@ -233,20 +238,68 @@ function calc(sid) {
   const emp = Math.round(st.insBase * st.empPct / 100), co = Math.round(st.insBase * st.coPct / 100);
   const insTotal = emp + co;                       // tổng nộp cơ quan BHXH
   const shopAll = st.mode === "shop_all";
-  let net = 0, insCost = 0, txs = [];
+  let net = 0, insCost = 0, personal = 0, txs = [];
   const [y, m] = MONTH.split("-");
   if (owner) {
     insCost = co + (shopAll ? emp : 0);            // phần của chủ (nếu không phải shop chịu) là rút vốn cá nhân
-    if (insCost > 0) txs.push({ category: "Bảo hiểm xã hội", amount: insCost, note: `BHXH T${m}/${y} - ${s.name}` });
-    if (!shopAll && emp > 0) txs.push({ category: "Rút vốn / Cá nhân", amount: emp, note: `BHXH phần người lao động T${m}/${y} - ${s.name}` });
+    personal = shopAll ? 0 : emp;
   } else {
     net = shopAll ? gross : gross - emp;
     insCost = insTotal;
     if (net > 0) txs.push({ category: "Lương nhân viên", amount: net, note: `Lương T${m}/${y} - ${s.name}` });
-    if (insTotal > 0) txs.push({ category: "Bảo hiểm xã hội", amount: insTotal, note: `BHXH T${m}/${y} - ${s.name}` });
   }
-  const cost = net + insCost;                       // chi phí nhân sự tính vào Dashboard
-  return { lines, gross, emp, co, insTotal, net, insCost, cost, total: cost, bonus, txs, owner, shopAll };
+  const cost = net;                                 // BHXH được chốt riêng (dòng BHXH), thẻ từng người chỉ tính lương thực nhận
+  return { lines, gross, emp, co, insTotal, net, insCost, personal, cost, total: net, bonus, txs, owner, shopAll };
+}
+
+
+// Tháng cũ đã chốt theo kiểu cũ (BHXH ghi chung với lương từng người) thì không chốt BHXH lần nữa
+function isLegacyPaid(sid) { const e = ENTRIES[sid]; return !!(e && e.status === "paid" && !e.ins_separate); }
+function bhxhSummary() {
+  const rows = []; let total = 0, personal = 0, legacy = 0;
+  STAFF.forEach(s => {
+    const c = calc(s.id);
+    if (c.insTotal <= 0 && c.insCost <= 0) return;
+    if (isLegacyPaid(s.id)) { legacy += c.insCost; rows.push({ name: s.name, cost: c.insCost, personal: c.personal, legacy: true }); return; }
+    total += c.insCost; personal += c.personal;
+    rows.push({ name: s.name, cost: c.insCost, personal: c.personal, emp: c.emp, co: c.co, shopAll: c.shopAll, owner: c.owner });
+  });
+  return { rows, total, personal, legacy };
+}
+function bhxhBlockHtml() {
+  const b = bhxhSummary(), [y, m] = MONTH.split("-"), paid = BHXH_ROW && BHXH_ROW.status === "paid";
+  const amt = paid ? num(BHXH_ROW.amount) : b.total;
+  const personalAmt = paid ? num(BHXH_ROW.personal_amount) : b.personal;
+  const detail = b.rows.map(r => `<div class="pay-line"><div>${r.name}${r.legacy ? ' <span class="hint">(đã chốt cùng lương theo cách cũ)</span>' : ""}${r.personal ? `<div class="hint">Trong đó ${fmt(r.personal)} là phần cá nhân (Rút vốn), không tính chi phí</div>` : ""}</div><div></div><div></div><div class="amt">${fmt(r.cost + r.personal)}</div></div>`).join("") || '<div class="hint">Chưa có nhân viên nào khai mức lương đóng BHXH.</div>';
+  const pm = BHXH_ROW && BHXH_ROW.method ? BHXH_ROW.method : BHXH_UI.method;
+  return `<details class="staff-card" ${OPEN_CARDS.has("__bhxh") ? "open" : ""} ontoggle="toggleCard('__bhxh', this.open)">
+    <summary><div class="sum-left">🛡 Bảo hiểm xã hội tháng ${m}/${y} <span class="hint" style="font-weight:400;">· tổng ${b.rows.length} người</span></div>
+      <div class="sum-right">${paid ? `<span class="tag-paid">✔ Đã chốt${BHXH_ROW.paid_date ? " " + formatDate(BHXH_ROW.paid_date) : ""}</span>` : (amt > 0 ? '<span class="tag-draft">Chưa chốt</span>' : '<span class="hint">—</span>')}
+      <span class="sum-amt">${fmt(amt)}</span></div></summary>
+    <div class="panel-body">${detail}
+      <div class="pay-total"><span>Chi phí BHXH (tính vào Dashboard)</span><span>${fmt(amt)}</span></div>
+      ${personalAmt > 0 ? `<div class="hint">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
+      <div class="staff-actions">
+        ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${pm === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
+          <button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy chốt BHXH</button>` : `
+          <label class="hint">Ngày chi</label><input type="date" value="${BHXH_UI.payDate}" onchange="BHXH_UI.payDate=this.value" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
+          <select onchange="BHXH_UI.method=this.value" style="padding:7px; border:1px solid var(--border); border-radius:6px;">
+            <option value="cash" ${pm === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${pm === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
+          <button class="btn btn-primary" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt BHXH</button>`}
+      </div>
+      ${paid ? "" : `<div class="hint">Chốt sẽ ghi 1 khoản chi "Bảo hiểm xã hội" vào Quỹ. Ngày chi quyết định tháng nào Dashboard trừ.</div>`}
+    </div></details>`;
+}
+function totalsBlockHtml() {
+  const [y, m] = MONTH.split("-");
+  let net = 0, n = 0;
+  STAFF.forEach(s => { const c = calc(s.id); if (!c.owner) { net += c.net; n++; } });
+  const b = bhxhSummary(), paid = BHXH_ROW && BHXH_ROW.status === "paid";
+  const ins = paid ? num(BHXH_ROW.amount) : b.total;
+  return `<div class="panel"><div class="panel-body">
+    <div class="pay-line"><div>Lương thực nhận (${n} người)</div><div></div><div></div><div class="amt" id="sumNet">${fmt(net)}</div></div>
+    <div class="pay-line"><div>BHXH (${b.rows.length} người)</div><div></div><div></div><div class="amt" id="sumIns">${fmt(ins)}</div></div>
+    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí nhân sự tháng ${m}/${y}</span><span id="grandTotal">${fmt(net + ins)}</span></div></div></div>`;
 }
 
 function bhxhHtml(sid) {
@@ -271,11 +324,9 @@ function bhxhHtml(sid) {
 function renderSheet() {
   const sheet = document.getElementById("sheet");
   if (!STAFF.length) { sheet.innerHTML = '<div class="panel"><div class="panel-body">Chưa có nhân viên. Bấm "+ Thêm nhân viên".</div></div>'; return; }
-  let grand = 0;
   const ROLE = { qlbh: "Quản lý bán hàng", ky_thuat: "Kỹ thuật", chu: "Chủ (chỉ đóng BHXH)" };
-  sheet.innerHTML = STAFF.map(s => {
+  sheet.innerHTML = STAFF.filter(s => s.role_type !== "chu").map(s => {
     const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
-    grand += c.total;
     const dis = paid ? "disabled" : "";
     let rows = "";
     if (!c.owner) {
@@ -307,7 +358,7 @@ function renderSheet() {
       <div class="panel-body"><div style="text-align:right; margin-bottom:6px;"><button class="btn btn-secondary btn-mini" onclick="openStaff('${s.id}')">⚙ Cài đặt nhân viên</button></div>${rows}
         ${modeSel}
         <div id="bh_${s.id}">${bhxhHtml(s.id)}</div>
-        <div class="pay-total"><span>Chi phí nhân sự (tính vào Dashboard)</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
+        <div class="pay-total"><span>Lương thực nhận (tính vào Dashboard)</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
         <div class="staff-actions">
           ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
             <button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy chốt</button>` : `
@@ -317,22 +368,21 @@ function renderSheet() {
             <button class="btn btn-secondary" onclick="saveEntry('${s.id}')">Lưu nháp</button>
             <button class="btn btn-primary" onclick="closePayroll('${s.id}')">✔ Chốt lương</button>`}
         </div>
-        ${paid ? "" : `<div class="hint">Chốt sẽ ghi ${c.txs.length} khoản chi vào Quỹ (lương thực nhận và BHXH tách riêng). Ngày chi quyết định tháng nào Dashboard trừ; muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
+        ${paid ? "" : `<div class="hint">Chốt sẽ ghi khoản chi "Lương nhân viên" (lương thực nhận) vào Quỹ; BHXH chốt riêng ở dòng 🛡 BHXH. Ngày chi quyết định tháng nào Dashboard trừ; muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
       </div></details>`;
-  }).join("") + `<div class="panel"><div class="panel-body"><div class="pay-total" style="padding:0;"><span>Tổng chi phí nhân sự tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</span><span id="grandTotal">${fmt(grand)}</span></div></div></div>`;
+  }).join("") + bhxhBlockHtml() + `<div id="totalsBox">${totalsBlockHtml()}</div>`;
 }
 
 function refreshTotals() {
-  let grand = 0;
   STAFF.forEach(s => {
-    const c = calc(s.id); grand += c.total;
+    const c = calc(s.id);
     const t = document.getElementById("total_" + s.id); if (t) t.textContent = fmt(c.total);
     const sm = document.getElementById("sum_" + s.id); if (sm) sm.textContent = fmt(c.total);
     const b = document.getElementById("bonus_" + s.id); if (b) b.textContent = fmt(c.bonus);
     const bh = document.getElementById("bh_" + s.id); if (bh) bh.innerHTML = bhxhHtml(s.id);
     c.lines.filter(l => l.key).forEach(l => { const a = document.getElementById(`amt_${s.id}_${l.key}`); if (a) a.textContent = fmt(l.amt); });
   });
-  const g = document.getElementById("grandTotal"); if (g) g.textContent = fmt(grand);
+  const tb = document.getElementById("totalsBox"); if (tb) tb.innerHTML = totalsBlockHtml();
 }
 function setMode(sid, v) { STATE[sid].mode = v; refreshTotals(); }
 function setCnt(sid, k, v) { STATE[sid].cnt[k] = num(v); refreshTotals(); }
@@ -344,7 +394,7 @@ function entryPayload(sid, status) {
     staff_id: sid, month: first, base_salary: st.base, insurance: c.insTotal, profit_base: st.profitBase, profit_percent: st.pct, profit_bonus: c.bonus,
     cnt_layout: st.cnt.layout, cnt_promax: st.cnt.promax, cnt_infinity: st.cnt.infinity, cnt_care: st.cnt.care, cnt_far: st.cnt.far,
     rate_layout: st.rate.layout, rate_promax: st.rate.promax, rate_infinity: st.rate.infinity, rate_care: st.rate.care, rate_far: st.rate.far,
-    allowance: st.allowance, adjustment: st.adj, adjustment_note: st.adjNote || null, total: c.cost,
+    allowance: st.allowance, adjustment: st.adj, adjustment_note: st.adjNote || null, total: c.net, ins_separate: true,
     ins_base: st.insBase, ins_emp: c.emp, ins_co: c.co, ins_mode: st.mode, net_salary: c.net, ins_total: c.insCost,
     status, method: st.method, paid_date: status === "paid" ? st.payDate : null
   };
@@ -358,13 +408,14 @@ async function saveEntry(sid) {
 
 async function closePayroll(sid) {
   const s = STAFF.find(x => x.id === sid), st = STATE[sid], c = calc(sid);
-  if (!c.txs.length) { alert("Không có khoản nào để chi, không thể chốt."); return; }
+  if (c.owner) { alert("Chủ cửa hàng chỉ có BHXH, hãy chốt ở dòng 🛡 BHXH."); return; }
+  if (!c.txs.length) { alert("Lương thực nhận bằng 0, không có khoản để chi. Kiểm tra lại số liệu."); return; }
   if (c.net < 0) { alert("Lương thực nhận bị âm (BHXH phần nhân viên lớn hơn tổng thu nhập). Kiểm tra lại."); return; }
   if (!st.payDate) { alert("Chọn ngày chi."); return; }
   const old = ENTRIES[sid];
   if (old && old.status === "paid") { alert("Lương này đã được chốt rồi."); return; }
   const list = c.txs.map(t => `• ${t.category}: ${fmt(t.amount)}`).join("\n");
-  if (!confirm(`Chốt ${s.name}\n${list}\nChi ${st.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(st.payDate)}.\nChi phí nhân sự tính vào Dashboard: ${fmt(c.cost)}. Tiếp tục?`)) return;
+  if (!confirm(`Chốt ${s.name}\n${list}\nChi ${st.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(st.payDate)}.\nBHXH sẽ chốt riêng ở dòng 🛡 BHXH. Tiếp tục?`)) return;
   const createdAt = new Date(st.payDate + "T12:00:00").toISOString();
   const ids = [];
   for (const t of c.txs) {
@@ -389,7 +440,7 @@ async function closePayroll(sid) {
 
 async function undoClose(sid) {
   const e = ENTRIES[sid]; if (!e) return;
-  if (!confirm("Hủy chốt? Các khoản chi lương và BHXH tương ứng trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
+  if (!confirm("Hủy chốt? Khoản chi lương tương ứng trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
   const ids = Array.isArray(e.tx_ids) && e.tx_ids.length ? e.tx_ids : (e.cash_tx_id ? [e.cash_tx_id] : []);
   if (ids.length) {
     const { error } = await sb.from("cash_transactions").delete().in("id", ids);
@@ -400,25 +451,78 @@ async function undoClose(sid) {
   await loadMonth(); loadHistory();
 }
 
+async function closeBhxh() {
+  const b = bhxhSummary(), [y, m] = MONTH.split("-"), { first } = monthRange(MONTH);
+  if (BHXH_ROW && BHXH_ROW.status === "paid") { alert("BHXH tháng này đã chốt rồi."); return; }
+  if (b.total + b.personal <= 0) { alert("Không có khoản BHXH nào để chốt."); return; }
+  if (!BHXH_UI.payDate) { alert("Chọn ngày chi."); return; }
+  const txs = [];
+  if (b.total > 0) txs.push({ category: "Bảo hiểm xã hội", amount: b.total, note: `BHXH T${m}/${y} - ${b.rows.filter(r => !r.legacy).map(r => r.name).join(", ")}` });
+  if (b.personal > 0) txs.push({ category: "Rút vốn / Cá nhân", amount: b.personal, note: `BHXH phần người lao động T${m}/${y} (chủ)` });
+  const list = txs.map(t => `• ${t.category}: ${fmt(t.amount)}`).join("\n");
+  if (!confirm(`Chốt BHXH tháng ${m}/${y}\n${list}\nChi ${BHXH_UI.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(BHXH_UI.payDate)}. Tiếp tục?`)) return;
+  const createdAt = new Date(BHXH_UI.payDate + "T12:00:00").toISOString();
+  const ids = [];
+  for (const t of txs) {
+    const { data: tx, error: txErr } = await sb.from("cash_transactions").insert({
+      type: "expense", method: BHXH_UI.method, category: t.category, amount: t.amount,
+      note: t.note, created_by: CURRENT_PROFILE.id, created_at: createdAt
+    }).select("id").single();
+    if (txErr) {
+      if (ids.length) await sb.from("cash_transactions").delete().in("id", ids);
+      alert("Lỗi khi ghi chi (đã hoàn tác): " + txErr.message); return;
+    }
+    ids.push(tx.id);
+  }
+  const { error } = await sb.from("payroll_bhxh").upsert({ month: first, amount: b.total, personal_amount: b.personal, status: "paid", method: BHXH_UI.method, paid_date: BHXH_UI.payDate, tx_ids: ids }, { onConflict: "month" });
+  if (error) {
+    await sb.from("cash_transactions").delete().in("id", ids);
+    alert("Lỗi khi chốt BHXH (đã hoàn tác): " + error.message + "\nBạn đã chạy migration-36.sql chưa?"); return;
+  }
+  await loadMonth(); loadHistory();
+}
+
+async function undoBhxh() {
+  if (!BHXH_ROW) return;
+  if (!confirm("Hủy chốt BHXH? Khoản chi BHXH trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
+  const ids = Array.isArray(BHXH_ROW.tx_ids) ? BHXH_ROW.tx_ids : [];
+  if (ids.length) {
+    const { error } = await sb.from("cash_transactions").delete().in("id", ids);
+    if (error) { alert("Lỗi khi xóa khoản chi: " + error.message); return; }
+  }
+  const { error } = await sb.from("payroll_bhxh").delete().eq("id", BHXH_ROW.id);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  await loadMonth(); loadHistory();
+}
+
 async function loadHistory() {
   const box = document.getElementById("history");
-  const [er, sr] = await Promise.all([
-    sb.from("payroll_entries").select("staff_id, month, total, ins_total, status").order("month", { ascending: false }),
-    sb.from("payroll_staff").select("id, name")
+  const [er, sr, br] = await Promise.all([
+    sb.from("payroll_entries").select("staff_id, month, total, ins_total, ins_separate, status").order("month", { ascending: false }),
+    sb.from("payroll_staff").select("id, name, role_type"),
+    sb.from("payroll_bhxh").select("month, amount, personal_amount, status")
   ]);
   if (er.error) { box.innerHTML = ""; return; }
-  const names = {}; (sr.data || []).forEach(s => names[s.id] = s.name);
+  const names = {}; (sr.data || []).forEach(s => { if (s.role_type !== "chu") names[s.id] = s.name; });
+  const bhxhRows = {}; (br.error ? [] : (br.data || [])).forEach(x => bhxhRows[x.month] = x);
   const byMonth = {};
   (er.data || []).forEach(x => {
-    const m = byMonth[x.month] = byMonth[x.month] || { paid: 0, draft: 0, ins: 0, per: {} };
-    if (x.status === "paid") m.paid += num(x.total); else m.draft += num(x.total);
-    m.ins += num(x.ins_total);
-    m.per[x.staff_id] = (m.per[x.staff_id] || 0) + num(x.total);
+    const m = byMonth[x.month] = byMonth[x.month] || { paid: 0, draft: 0, ins: 0, insPaid: 0, insDraft: 0, per: {} };
+    const legacy = x.status === "paid" && !x.ins_separate;       // kiểu cũ: total = lương + BHXH
+    const net = legacy ? num(x.total) - num(x.ins_total) : num(x.total);
+    if (x.status === "paid") m.paid += net; else m.draft += net;
+    if (names[x.staff_id]) m.per[x.staff_id] = (m.per[x.staff_id] || 0) + net;
+    if (legacy) { m.ins += num(x.ins_total); m.insPaid += num(x.ins_total); }
+    else if (!bhxhRows[x.month]) { m.ins += num(x.ins_total); m.insDraft += num(x.ins_total); }
+  });
+  Object.keys(bhxhRows).forEach(k => {
+    const m = byMonth[k] = byMonth[k] || { paid: 0, draft: 0, ins: 0, insPaid: 0, insDraft: 0, per: {} };
+    if (bhxhRows[k].status === "paid") { m.ins += num(bhxhRows[k].amount); m.insPaid += num(bhxhRows[k].amount); }
   });
   const keys = Object.keys(byMonth).sort().reverse();
   if (!keys.length) { box.innerHTML = '<div class="hint">Chưa có tháng nào được lưu.</div>'; return; }
   const ids = Object.keys(names);
-  const tot = k => byMonth[k].paid + byMonth[k].draft;
+  const tot = k => byMonth[k].paid + byMonth[k].draft + byMonth[k].ins;
   const thisYear = String(new Date().getFullYear());
   const yearTotal = keys.filter(k => k.startsWith(thisYear)).reduce((a, k) => a + tot(k), 0);
   const allTotal = keys.reduce((a, k) => a + tot(k), 0);
@@ -429,7 +533,7 @@ async function loadHistory() {
       <div class="stat-mini"><div class="l">Tổng mọi tháng</div><div class="v">${fmt(allTotal)}</div></div>
     </div>
     <table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Lương thực nhận</th><th style="text-align:right;">BHXH</th><th style="text-align:right;">Tổng chi phí nhân sự</th><th style="text-align:right;">Trong đó đã chốt</th></tr></thead><tbody>` +
-    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right;">${fmt(tot(k) - byMonth[k].ins)}</td><td style="text-align:right;">${fmt(byMonth[k].ins)}</td><td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid)}${byMonth[k].draft ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
+    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right;">${fmt(byMonth[k].paid + byMonth[k].draft)}</td><td style="text-align:right;">${fmt(byMonth[k].ins)}</td><td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid + byMonth[k].insPaid)}${(byMonth[k].draft + byMonth[k].insDraft) ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft + byMonth[k].insDraft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
     `<tr><td style="font-weight:700;">Cộng</td>${ids.map(i => `<td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + num(byMonth[k].per[i]), 0))}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(allTotal - keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(allTotal)}</td><td></td></tr></tbody></table>`;
 }
 
