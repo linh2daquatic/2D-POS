@@ -57,6 +57,13 @@ let STATE = {};        // staff_id -> giá trị đang nhập
 let EDIT_STAFF_ID = null;
 let OPEN_CARDS = new Set();
 let BHXH_ROW = null;   // dòng chốt BHXH của tháng đang xem (payroll_bhxh)
+let FIXED = {};        // kind -> dòng payroll_fixed của tháng đang xem
+let FIXED_UI = {};     // kind -> { amount, payDate, method } đang nhập
+const FIXED_KINDS = [
+  { kind: "rent", icon: "🏠", label: "Mặt bằng", category: "Tiền thuê mặt bằng" },
+  { kind: "electric", icon: "💡", label: "Tiền điện", category: "Tiền điện" },
+  { kind: "water", icon: "🚰", label: "Tiền nước", category: "Tiền nước" }
+];
 let BHXH_UI = { payDate: "", method: "cash" };
 function toggleCard(id, open) { if (open) OPEN_CARDS.add(id); else OPEN_CARDS.delete(id); }
 const SYSTEM_EXPENSE_CATEGORIES = ["Hủy đơn hàng", "Nhập hàng", "Trả nợ NCC", "Điều chỉnh kiểm quỹ", "Rút vốn / Cá nhân"];
@@ -68,7 +75,7 @@ const fmt = v => formatVND(Math.round(num(v)));
   if (!auth) return;
   CURRENT_PROFILE = auth.profile;
   if (CURRENT_PROFILE.role !== "owner") { alert("Chỉ Chủ cửa hàng mới xem được bảng lương."); location.href = "index.html"; return; }
-  renderLayout({ activePage: "payroll", profile: CURRENT_PROFILE, title: "Bảng lương", subtitle: "Tính lương, chốt lương và theo dõi qua các tháng" });
+  renderLayout({ activePage: "payroll", profile: CURRENT_PROFILE, title: "Lương & Chi phí cố định", subtitle: "Tính lương, chốt lương và theo dõi qua các tháng" });
   const now = new Date();
   MONTH = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
   document.getElementById("pageContent").innerHTML = `
@@ -172,6 +179,19 @@ async function loadMonth() {
     sb.from("payroll_entries").select("*").eq("month", first),
     sb.from("payroll_bhxh").select("*").eq("month", first).maybeSingle()
   ]);
+  FIXED = {}; FIXED_UI = {};
+  try {
+    const fr = await sb.from("payroll_fixed").select("*").order("month", { ascending: false }).limit(60);
+    const all = fr.error ? [] : (fr.data || []);
+    all.filter(x => x.month === first).forEach(x => FIXED[x.kind] = x);
+    FIXED_KINDS.forEach(k => {
+      const cur = FIXED[k.kind], last = all.find(x => x.kind === k.kind && x.month < first);
+      FIXED_UI[k.kind] = {
+        amount: cur ? num(cur.amount) : (k.kind === "rent" && last ? num(last.amount) : 0),
+        payDate: cur && cur.paid_date ? cur.paid_date : defaultPayDate(), method: cur && cur.method ? cur.method : (last && last.method) || "cash"
+      };
+    });
+  } catch (e) { console.warn(e); }
   BHXH_ROW = br.error ? null : (br.data || null);
   BHXH_UI = { payDate: BHXH_ROW && BHXH_ROW.paid_date ? BHXH_ROW.paid_date : defaultPayDate(), method: BHXH_ROW && BHXH_ROW.method ? BHXH_ROW.method : "cash" };
   if (sr.error || er.error) {
@@ -290,6 +310,45 @@ function bhxhBlockHtml() {
       ${paid ? "" : `<div class="hint">Chốt sẽ ghi 1 khoản chi "Bảo hiểm xã hội" vào Quỹ. Ngày chi quyết định tháng nào Dashboard trừ.</div>`}
     </div></details>`;
 }
+function fixedRowHtml(k) {
+  const cur = FIXED[k.kind], paid = cur && cur.status === "paid", u = FIXED_UI[k.kind] || { amount: 0, payDate: defaultPayDate(), method: "cash" };
+  const inp = "padding:6px 8px; border:1px solid var(--border); border-radius:6px;";
+  return `<div class="panel"><div class="panel-body"><div class="flex" style="justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+    <div style="font-weight:600;">${k.icon} ${k.label} tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</div>
+    ${paid ? `<div class="flex" style="gap:8px; align-items:center;"><span class="tag-paid">✔ Đã chốt${cur.paid_date ? " " + formatDate(cur.paid_date) : ""}</span><b>${fmt(cur.amount)}</b>
+        <button class="btn btn-secondary btn-mini" onclick="undoFixed('${k.kind}')">↩ Hủy chốt</button></div>`
+    : `<div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="number" min="0" placeholder="Số tiền" value="${u.amount || ""}" oninput="FIXED_UI['${k.kind}'].amount=Number(this.value)||0; refreshTotals()" style="${inp} width:130px; text-align:right;">
+        <input type="date" value="${u.payDate}" onchange="FIXED_UI['${k.kind}'].payDate=this.value" style="${inp}">
+        <select onchange="FIXED_UI['${k.kind}'].method=this.value" style="${inp}"><option value="cash" ${u.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${u.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
+        <button class="btn btn-primary" onclick="closeFixed('${k.kind}')">✔ Chốt</button></div>`}
+  </div></div></div>`;
+}
+function fixedTotal() { return FIXED_KINDS.reduce((a, k) => a + (FIXED[k.kind] && FIXED[k.kind].status === "paid" ? num(FIXED[k.kind].amount) : num((FIXED_UI[k.kind] || {}).amount)), 0); }
+async function closeFixed(kind) {
+  const k = FIXED_KINDS.find(x => x.kind === kind), u = FIXED_UI[kind], { first } = monthRange(MONTH), [y, m] = MONTH.split("-");
+  if (FIXED[kind] && FIXED[kind].status === "paid") { alert("Khoản này đã chốt rồi."); return; }
+  if (!(u.amount > 0)) { alert("Nhập số tiền trước khi chốt."); return; }
+  if (!u.payDate) { alert("Chọn ngày chi."); return; }
+  if (!confirm(`Chốt ${k.label} tháng ${m}/${y}: ${fmt(u.amount)}\nChi ${u.method === "transfer" ? "chuyển khoản" : "tiền mặt"} ngày ${formatDate(u.payDate)}. Tiếp tục?`)) return;
+  const { data: tx, error: txErr } = await sb.from("cash_transactions").insert({
+    type: "expense", method: u.method, category: k.category, amount: u.amount,
+    note: `${k.label} T${m}/${y}`, created_by: CURRENT_PROFILE.id, created_at: new Date(u.payDate + "T12:00:00").toISOString()
+  }).select("id").single();
+  if (txErr) { alert("Lỗi khi ghi chi: " + txErr.message); return; }
+  const { error } = await sb.from("payroll_fixed").upsert({ month: first, kind, amount: u.amount, status: "paid", method: u.method, paid_date: u.payDate, tx_id: tx.id }, { onConflict: "month,kind" });
+  if (error) { await sb.from("cash_transactions").delete().eq("id", tx.id); alert("Lỗi khi chốt (đã hoàn tác): " + error.message + "\nBạn đã chạy migration-37.sql chưa?"); return; }
+  await loadMonth();
+}
+async function undoFixed(kind) {
+  const cur = FIXED[kind]; if (!cur) return;
+  if (!confirm("Hủy chốt? Khoản chi trong Quỹ sẽ bị xóa và Dashboard cộng lại.")) return;
+  if (cur.tx_id) { const { error } = await sb.from("cash_transactions").delete().eq("id", cur.tx_id); if (error) { alert("Lỗi khi xóa khoản chi: " + error.message); return; } }
+  const { error } = await sb.from("payroll_fixed").delete().eq("id", cur.id);
+  if (error) { alert("Lỗi: " + error.message); return; }
+  await loadMonth();
+}
+
 function totalsBlockHtml() {
   const [y, m] = MONTH.split("-");
   let net = 0, n = 0;
@@ -299,7 +358,9 @@ function totalsBlockHtml() {
   return `<div class="panel"><div class="panel-body">
     <div class="pay-line"><div>Lương thực nhận (${n} người)</div><div></div><div></div><div class="amt" id="sumNet">${fmt(net)}</div></div>
     <div class="pay-line"><div>BHXH (${b.rows.length} người)</div><div></div><div></div><div class="amt" id="sumIns">${fmt(ins)}</div></div>
-    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí nhân sự tháng ${m}/${y}</span><span id="grandTotal">${fmt(net + ins)}</span></div></div></div>`;
+    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí nhân sự tháng ${m}/${y}</span><span id="grandTotal">${fmt(net + ins)}</span></div>
+    <div class="pay-line" style="margin-top:10px;"><div>Mặt bằng + điện + nước</div><div></div><div></div><div class="amt">${fmt(fixedTotal())}</div></div>
+    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí cố định tháng ${m}/${y}</span><span>${fmt(net + ins + fixedTotal())}</span></div></div></div>`;
 }
 
 function bhxhHtml(sid) {
@@ -370,7 +431,7 @@ function renderSheet() {
         </div>
         ${paid ? "" : `<div class="hint">Chốt sẽ ghi khoản chi "Lương nhân viên" (lương thực nhận) vào Quỹ; BHXH chốt riêng ở dòng 🛡 BHXH. Ngày chi quyết định tháng nào Dashboard trừ; muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
       </div></details>`;
-  }).join("") + bhxhBlockHtml() + `<div id="totalsBox">${totalsBlockHtml()}</div>`;
+  }).join("") + bhxhBlockHtml() + FIXED_KINDS.map(fixedRowHtml).join("") + `<div id="totalsBox">${totalsBlockHtml()}</div>`;
 }
 
 function refreshTotals() {
