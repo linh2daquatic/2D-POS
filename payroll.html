@@ -28,6 +28,20 @@
 .tag-paid { background:#ecfdf5; color:var(--success); padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; }
 .tag-draft { background:#fff7ed; color:#c2410c; padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; }
 .hint { font-size:12px; color:var(--text-mute); margin-top:4px; }
+
+.tiles { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+.tile { background:var(--surface,#fff); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+.tile .l { color:var(--text-mute); font-size:12px; } .tile .v { font-family:var(--font-display); font-size:20px; font-weight:700; margin-top:2px; }
+.bar { height:6px; background:#e3e6ea; border-radius:4px; margin-top:12px; } .bar i { display:block; height:100%; background:var(--success); border-radius:4px; }
+.ledger table { width:100%; border-collapse:collapse; }
+.ledger th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-mute); padding:9px 14px; background:#fafbfc; border-bottom:1px solid var(--border); }
+.ledger td { padding:10px 14px; border-bottom:1px solid #eef0f2; vertical-align:middle; }
+.ledger .r { text-align:right; } .ledger .nowrap { white-space:nowrap; } .ledger .mut { color:var(--text-mute); font-size:12.5px; }
+.ledger tr.sec td { background:#f0f2f4; font-weight:700; font-size:12px; color:#4a5560; padding:7px 14px; }
+.ledger td.det { background:#f8fafc; padding:14px 18px; }
+.ledger tr.foot td { background:#fafbfc; }
+.ledger tr.grand td { background:#1d2733; color:#fff; font-weight:700; font-size:15px; border:0; }
+@media (max-width:760px){ .tiles { grid-template-columns:1fr 1fr; } }
 details.staff-card { background:var(--surface,#fff); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
 details.staff-card > summary { list-style:none; cursor:pointer; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
 details.staff-card > summary::-webkit-details-marker { display:none; }
@@ -286,43 +300,29 @@ function bhxhSummary() {
   });
   return { rows, total, personal, legacy };
 }
-function bhxhBlockHtml() {
+function bhxhRowHtml() {
   const b = bhxhSummary(), [y, m] = MONTH.split("-"), paid = BHXH_ROW && BHXH_ROW.status === "paid";
   const amt = paid ? num(BHXH_ROW.amount) : b.total;
   const personalAmt = paid ? num(BHXH_ROW.personal_amount) : b.personal;
-  const detail = b.rows.map(r => `<div class="pay-line"><div>${r.name}${r.legacy ? ' <span class="hint">(đã chốt cùng lương theo cách cũ)</span>' : ""}${r.personal ? `<div class="hint">Trong đó ${fmt(r.personal)} là phần cá nhân (Rút vốn), không tính chi phí</div>` : ""}</div><div></div><div></div><div class="amt">${fmt(r.cost + r.personal)}</div></div>`).join("") || '<div class="hint">Chưa có nhân viên nào khai mức lương đóng BHXH.</div>';
   const pm = BHXH_ROW && BHXH_ROW.method ? BHXH_ROW.method : BHXH_UI.method;
-  return `<details class="staff-card" ${OPEN_CARDS.has("__bhxh") ? "open" : ""} ontoggle="toggleCard('__bhxh', this.open)">
-    <summary><div class="sum-left">🛡 Bảo hiểm xã hội tháng ${m}/${y} <span class="hint" style="font-weight:400;">· tổng ${b.rows.length} người</span></div>
-      <div class="sum-right">${paid ? `<span class="tag-paid">✔ Đã chốt${BHXH_ROW.paid_date ? " " + formatDate(BHXH_ROW.paid_date) : ""}</span>` : (amt > 0 ? '<span class="tag-draft">Chưa chốt</span>' : '<span class="hint">—</span>')}
-      <span class="sum-amt">${fmt(amt)}</span></div></summary>
-    <div class="panel-body">${detail}
-      <div class="pay-total"><span>Chi phí BHXH (tính vào Dashboard)</span><span>${fmt(amt)}</span></div>
-      ${personalAmt > 0 ? `<div class="hint">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
-      <div class="staff-actions">
-        ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${pm === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
-          <button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy chốt BHXH</button>` : `
-          <label class="hint">Ngày chi</label><input type="date" value="${BHXH_UI.payDate}" onchange="BHXH_UI.payDate=this.value" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
-          <select onchange="BHXH_UI.method=this.value" style="padding:7px; border:1px solid var(--border); border-radius:6px;">
-            <option value="cash" ${pm === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${pm === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
-          <button class="btn btn-primary" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt BHXH</button>`}
-      </div>
-      ${paid ? "" : `<div class="hint">Chốt sẽ ghi 1 khoản chi "Bảo hiểm xã hội" vào Quỹ. Ngày chi quyết định tháng nào Dashboard trừ.</div>`}
-    </div></details>`;
+  const lines = b.rows.map(r => `<div class="pay-line"><div>${r.name}${r.legacy ? ' <span class="hint">(đã chốt cùng lương theo cách cũ)</span>' : ""}${r.personal ? `<div class="hint">Trong đó ${fmt(r.personal)} là phần cá nhân (Rút vốn), không tính chi phí</div>` : ""}</div><div></div><div></div><div class="amt">${fmt(r.cost + r.personal)}</div></div>`).join("") || '<div class="hint">Chưa có nhân viên nào khai mức lương đóng BHXH.</div>';
+  const detail = `${lines}
+    ${personalAmt > 0 ? `<div class="hint" style="margin-top:6px;">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
+    <div class="staff-actions">${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${pm === "transfer" ? "chuyển khoản" : "tiền mặt"}) ngày ${formatDate(BHXH_ROW.paid_date)}.</span>` : `
+      <label class="hint">Ngày chi</label><input type="date" value="${BHXH_UI.payDate}" onchange="BHXH_UI.payDate=this.value" style="${FIELD_CSS}">
+      <select onchange="BHXH_UI.method=this.value" style="${FIELD_CSS}"><option value="cash" ${pm === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${pm === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>`}</div>`;
+  const act = detBtn("__bhxh") + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt</button>`);
+  return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `${b.rows.length} người · tháng ${m}/${y}`, `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
 }
 function fixedRowHtml(k) {
   const cur = FIXED[k.kind], paid = cur && cur.status === "paid", u = FIXED_UI[k.kind] || { amount: 0, payDate: defaultPayDate(), method: "cash" };
-  const inp = "padding:6px 8px; border:1px solid var(--border); border-radius:6px;";
-  return `<div class="panel"><div class="panel-body"><div class="flex" style="justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
-    <div style="font-weight:600;">${k.icon} ${k.label} tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]}</div>
-    ${paid ? `<div class="flex" style="gap:8px; align-items:center;"><span class="tag-paid">✔ Đã chốt${cur.paid_date ? " " + formatDate(cur.paid_date) : ""}</span><b>${fmt(cur.amount)}</b>
-        <button class="btn btn-secondary btn-mini" onclick="undoFixed('${k.kind}')">↩ Hủy chốt</button></div>`
-    : `<div class="flex" style="gap:8px; align-items:center; flex-wrap:wrap;">
-        <input type="number" min="0" placeholder="Số tiền" value="${u.amount || ""}" oninput="FIXED_UI['${k.kind}'].amount=Number(this.value)||0; refreshTotals()" style="${inp} width:130px; text-align:right;">
-        <input type="date" value="${u.payDate}" onchange="FIXED_UI['${k.kind}'].payDate=this.value" style="${inp}">
-        <select onchange="FIXED_UI['${k.kind}'].method=this.value" style="${inp}"><option value="cash" ${u.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${u.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
-        <button class="btn btn-primary" onclick="closeFixed('${k.kind}')">✔ Chốt</button></div>`}
-  </div></div></div>`;
+  const note = { rent: "Tự điền theo tháng trước, sửa được", electric: "Nhập theo hóa đơn", water: "Nhập theo hóa đơn" }[k.kind];
+  if (paid) return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, `${cur.method === "transfer" ? "Chuyển khoản" : "Tiền mặt"} · ${formatDate(cur.paid_date)}`, `<b>${fmt(cur.amount)}</b>`, pill(true, cur.paid_date),
+    `<button class="btn btn-secondary btn-mini" onclick="undoFixed('${k.kind}')">↩ Hủy</button>`);
+  return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`,
+    `<div class="mut" style="margin-bottom:4px;">${note}</div><input type="date" value="${u.payDate}" onchange="FIXED_UI['${k.kind}'].payDate=this.value" style="${FIELD_CSS} width:140px;"> <select onchange="FIXED_UI['${k.kind}'].method=this.value" style="${FIELD_CSS}"><option value="cash" ${u.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${u.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>`,
+    `<input type="number" min="0" placeholder="0" value="${u.amount || ""}" oninput="FIXED_UI['${k.kind}'].amount=Number(this.value)||0; refreshTotals()" style="${FIELD_CSS} width:130px; text-align:right;">`,
+    pill(false), `<button class="btn btn-primary btn-mini" onclick="closeFixed('${k.kind}')">✔ Chốt</button>`);
 }
 function fixedTotal() { return FIXED_KINDS.reduce((a, k) => a + (FIXED[k.kind] && FIXED[k.kind].status === "paid" ? num(FIXED[k.kind].amount) : num((FIXED_UI[k.kind] || {}).amount)), 0); }
 async function closeFixed(kind) {
@@ -349,20 +349,39 @@ async function undoFixed(kind) {
   await loadMonth();
 }
 
-function totalsBlockHtml() {
-  const [y, m] = MONTH.split("-");
-  let net = 0, n = 0;
-  STAFF.forEach(s => { const c = calc(s.id); if (!c.owner) { net += c.net; n++; } });
-  const b = bhxhSummary(), paid = BHXH_ROW && BHXH_ROW.status === "paid";
-  const ins = paid ? num(BHXH_ROW.amount) : b.total;
-  return `<div class="panel"><div class="panel-body">
-    <div class="pay-line"><div>Lương thực nhận (${n} người)</div><div></div><div></div><div class="amt" id="sumNet">${fmt(net)}</div></div>
-    <div class="pay-line"><div>BHXH (${b.rows.length} người)</div><div></div><div></div><div class="amt" id="sumIns">${fmt(ins)}</div></div>
-    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí nhân sự tháng ${m}/${y}</span><span id="grandTotal">${fmt(net + ins)}</span></div>
-    <div class="pay-line" style="margin-top:10px;"><div>Mặt bằng + điện + nước</div><div></div><div></div><div class="amt">${fmt(fixedTotal())}</div></div>
-    <div class="pay-total" style="padding:0; margin-top:8px;"><span>Tổng chi phí cố định tháng ${m}/${y}</span><span>${fmt(net + ins + fixedTotal())}</span></div></div></div>`;
+function monthStats() {
+  let net = 0, netPaid = 0, items = 0, done = 0;
+  STAFF.forEach(st => {
+    const c = calc(st.id); if (c.owner) return;
+    const paid = ENTRIES[st.id] && ENTRIES[st.id].status === "paid";
+    net += c.net; items++; if (paid) { netPaid += c.net; done++; }
+  });
+  const b = bhxhSummary(), bPaid = BHXH_ROW && BHXH_ROW.status === "paid";
+  const ins = bPaid ? num(BHXH_ROW.amount) : b.total;
+  if (ins > 0 || bPaid) { items++; if (bPaid) done++; }
+  let fixed = 0, fixedPaid = 0;
+  FIXED_KINDS.forEach(k => {
+    const f = FIXED[k.kind], p = f && f.status === "paid";
+    const a = p ? num(f.amount) : num((FIXED_UI[k.kind] || {}).amount);
+    fixed += a; if (p) fixedPaid += a; items++; if (p) done++;
+  });
+  const total = net + ins + fixed, paid = netPaid + (bPaid ? ins : 0) + fixedPaid;
+  return { net, ins, fixed, total, paid, left: total - paid, items, done, insCount: b.rows.length };
 }
-
+function tilesHtml() {
+  const t = monthStats(), pct = t.items ? Math.round(t.done / t.items * 100) : 0;
+  return `<div class="tiles">
+    <div class="tile"><div class="l">Tổng chi phí tháng</div><div class="v">${fmt(t.total)}</div></div>
+    <div class="tile"><div class="l">Đã chốt</div><div class="v" style="color:var(--success);">${fmt(t.paid)}</div></div>
+    <div class="tile"><div class="l">Chưa chốt</div><div class="v" style="color:#c2410c;">${fmt(t.left)}</div></div>
+    <div class="tile"><div class="l">Tiến độ: ${t.done} / ${t.items} khoản</div><div class="bar"><i style="width:${pct}%"></i></div></div></div>`;
+}
+function totalsFootHtml() {
+  const t = monthStats(), [y, m] = MONTH.split("-");
+  return `<tr class="foot"><td colspan="2">Nhân sự (lương ${fmt(t.net)} + BHXH ${fmt(t.ins)})</td><td class="r"><b>${fmt(t.net + t.ins)}</b></td><td colspan="2"></td></tr>
+    <tr class="foot"><td colspan="2">Mặt bằng + điện + nước</td><td class="r"><b>${fmt(t.fixed)}</b></td><td colspan="2"></td></tr>
+    <tr class="grand"><td colspan="2">Tổng chi phí tháng ${m}/${y}</td><td class="r">${fmt(t.total)}</td><td colspan="2"></td></tr>`;
+}
 function bhxhHtml(sid) {
   const st = STATE[sid], c = calc(sid), row = (a, b, cls) => `<div class="pay-line"><div>${a}</div><div></div><div></div><div class="amt ${cls || ""}">${b}</div></div>`;
   let h = "";
@@ -382,13 +401,17 @@ function bhxhHtml(sid) {
   return h;
 }
 
-function renderSheet() {
-  const sheet = document.getElementById("sheet");
-  if (!STAFF.length) { sheet.innerHTML = '<div class="panel"><div class="panel-body">Chưa có nhân viên. Bấm "+ Thêm nhân viên".</div></div>'; return; }
-  const ROLE = { qlbh: "Quản lý bán hàng", ky_thuat: "Kỹ thuật", chu: "Chủ (chỉ đóng BHXH)" };
-  sheet.innerHTML = STAFF.filter(s => s.role_type !== "chu").map(s => {
-    const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
-    const dis = paid ? "disabled" : "";
+function pill(paid, date) { return paid ? `<span class="tag-paid">✔ ${date ? formatDate(date).slice(0, 5) : "Đã chốt"}</span>` : '<span class="tag-draft">Chưa chốt</span>'; }
+function toggleRow(id) {
+  const d = document.getElementById("det_" + id); if (!d) return;
+  const open = d.style.display === "none"; d.style.display = open ? "" : "none";
+  if (open) OPEN_CARDS.add(id); else OPEN_CARDS.delete(id);
+}
+const FIELD_CSS = "padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px;";
+
+function staffDetailHtml(s) {
+  const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
+  const dis = paid ? "disabled" : "";
     let rows = "";
     if (!c.owner) {
       rows += `<div class="pay-line head"><div>Khoản</div><div style="text-align:right;">Số lượng</div><div style="text-align:right;">Đơn giá</div><div style="text-align:right;">Thành tiền</div></div>`;
@@ -412,26 +435,44 @@ function renderSheet() {
       <select ${dis} onchange="setMode('${s.id}', this.value)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
         <option value="split" ${st.mode !== "shop_all" ? "selected" : ""}>Theo luật: nhân viên chịu ${+st.empPct.toFixed(2)}% (trừ vào lương), shop ${+st.coPct.toFixed(2)}%</option>
         <option value="shop_all" ${st.mode === "shop_all" ? "selected" : ""}>Shop đóng 100% (không trừ lương nhân viên)</option></select></div>`;
-    return `<details class="staff-card" ${OPEN_CARDS.has(s.id) ? "open" : ""} ontoggle="toggleCard('${s.id}', this.open)">
-      <summary><div class="sum-left">${s.name} <span class="hint" style="font-weight:400;">· ${ROLE[s.role_type] || ""}</span></div>
-        <div class="sum-right">${paid ? `<span class="tag-paid">✔ Đã chốt${e.paid_date ? " " + formatDate(e.paid_date) : ""}</span>` : '<span class="tag-draft">Chưa chốt</span>'}
-        <span class="sum-amt" id="sum_${s.id}">${fmt(c.total)}</span></div></summary>
-      <div class="panel-body"><div style="text-align:right; margin-bottom:6px;"><button class="btn btn-secondary btn-mini" onclick="openStaff('${s.id}')">⚙ Cài đặt nhân viên</button></div>${rows}
-        ${modeSel}
-        <div id="bh_${s.id}">${bhxhHtml(s.id)}</div>
-        <div class="pay-total"><span>Lương thực nhận (tính vào Dashboard)</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
-        <div class="staff-actions">
-          ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) và Dashboard.</span>
-            <button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy chốt</button>` : `
-            <label class="hint">Ngày chi</label><input type="date" value="${st.payDate}" onchange="setField('${s.id}','payDate',this.value,true)" style="padding:6px 8px; border:1px solid var(--border); border-radius:6px;">
-            <select onchange="setField('${s.id}','method',this.value,true)" style="padding:7px; border:1px solid var(--border); border-radius:6px;">
-              <option value="cash" ${st.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${st.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
-            <button class="btn btn-secondary" onclick="saveEntry('${s.id}')">Lưu nháp</button>
-            <button class="btn btn-primary" onclick="closePayroll('${s.id}')">✔ Chốt lương</button>`}
-        </div>
-        ${paid ? "" : `<div class="hint">Chốt sẽ ghi khoản chi "Lương nhân viên" (lương thực nhận) vào Quỹ; BHXH chốt riêng ở dòng 🛡 BHXH. Ngày chi quyết định tháng nào Dashboard trừ; muốn tính vào tháng ${MONTH.split("-")[1]}/${MONTH.split("-")[0]} thì chọn ngày chi trong tháng đó.</div>`}
-      </div></details>`;
-  }).join("") + bhxhBlockHtml() + FIXED_KINDS.map(fixedRowHtml).join("") + `<div id="totalsBox">${totalsBlockHtml()}</div>`;
+    return `<div style="text-align:right; margin-bottom:6px;"><button class="btn btn-secondary btn-mini" onclick="openStaff('${s.id}')">⚙ Cài đặt nhân viên</button></div>${rows}
+      ${modeSel}
+      <div id="bh_${s.id}">${bhxhHtml(s.id)}</div>
+      <div class="pay-total"><span>Lương thực nhận (tính vào Dashboard)</span><span id="total_${s.id}">${fmt(c.total)}</span></div>
+      <div class="staff-actions">
+        ${paid ? `<span class="hint">Đã ghi chi vào Quỹ (${e.method === "transfer" ? "chuyển khoản" : "tiền mặt"}) ngày ${formatDate(e.paid_date)}.</span>` : `
+        <label class="hint">Ngày chi</label><input type="date" value="${st.payDate}" onchange="setField('${s.id}','payDate',this.value,true)" style="${FIELD_CSS}">
+        <select onchange="setField('${s.id}','method',this.value,true)" style="${FIELD_CSS}">
+          <option value="cash" ${st.method === "cash" ? "selected" : ""}>Tiền mặt</option><option value="transfer" ${st.method === "transfer" ? "selected" : ""}>Chuyển khoản</option></select>
+        <button class="btn btn-secondary btn-mini" onclick="saveEntry('${s.id}')">Lưu nháp</button>`}
+      </div>
+      ${paid ? "" : `<div class="hint">Chốt ghi khoản chi "Lương nhân viên" vào Quỹ; BHXH chốt riêng ở dòng 🛡. Ngày chi quyết định tháng nào Dashboard trừ.</div>`}`;
+}
+
+function ledgerRow(id, name, note, amtHtml, status, actions, detail) {
+  const open = OPEN_CARDS.has(id);
+  return `<tr class="lr"><td><b>${name}</b></td><td class="mut">${note || ""}</td><td class="r">${amtHtml}</td><td>${status}</td><td class="r nowrap">${actions}</td></tr>` +
+    (detail ? `<tr id="det_${id}" style="${open ? "" : "display:none;"}"><td colspan="5" class="det">${detail}</td></tr>` : "");
+}
+const detBtn = id => `<button class="btn btn-secondary btn-mini" onclick="toggleRow('${id}')">Chi tiết</button>`;
+
+function renderSheet() {
+  const sheet = document.getElementById("sheet");
+  if (!STAFF.length) { sheet.innerHTML = '<div class="panel"><div class="panel-body">Chưa có nhân viên. Bấm "+ Thêm nhân viên".</div></div>'; return; }
+  const ROLE = { qlbh: "Lương + % lợi nhuận", ky_thuat: "Theo số lượt", chu: "" };
+  const ROLE_NAME = { qlbh: "Quản lý bán hàng", ky_thuat: "Kỹ thuật" };
+  let body = `<tr class="sec"><td colspan="5">👥 NHÂN SỰ</td></tr>`;
+  STAFF.filter(s => s.role_type !== "chu").forEach(s => {
+    const e = ENTRIES[s.id], paid = e && e.status === "paid", c = calc(s.id);
+    body += ledgerRow(s.id, s.name, `${ROLE_NAME[s.role_type] || ""} · ${ROLE[s.role_type] || ""}`, `<b id="sum_${s.id}">${fmt(c.total)}</b>`, pill(paid, e && e.paid_date),
+      detBtn(s.id) + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closePayroll('${s.id}')">✔ Chốt</button>`),
+      staffDetailHtml(s));
+  });
+  body += bhxhRowHtml();
+  body += `<tr class="sec"><td colspan="5">🏢 CHI PHÍ CỐ ĐỊNH</td></tr>` + FIXED_KINDS.map(fixedRowHtml).join("");
+  sheet.innerHTML = `<div id="tilesBox">${tilesHtml()}</div>
+    <div class="panel ledger"><div class="table-scroll"><table><thead><tr><th>Hạng mục</th><th>Ghi chú</th><th class="r">Số tiền</th><th>Trạng thái</th><th class="r"></th></tr></thead>
+    <tbody>${body}</tbody><tfoot id="totalsBox">${totalsFootHtml()}</tfoot></table></div></div>`;
 }
 
 function refreshTotals() {
@@ -443,7 +484,8 @@ function refreshTotals() {
     const bh = document.getElementById("bh_" + s.id); if (bh) bh.innerHTML = bhxhHtml(s.id);
     c.lines.filter(l => l.key).forEach(l => { const a = document.getElementById(`amt_${s.id}_${l.key}`); if (a) a.textContent = fmt(l.amt); });
   });
-  const tb = document.getElementById("totalsBox"); if (tb) tb.innerHTML = totalsBlockHtml();
+  const tb = document.getElementById("totalsBox"); if (tb) tb.innerHTML = totalsFootHtml();
+  const tl = document.getElementById("tilesBox"); if (tl) tl.innerHTML = tilesHtml();
 }
 function setMode(sid, v) { STATE[sid].mode = v; refreshTotals(); }
 function setCnt(sid, k, v) { STATE[sid].cnt[k] = num(v); refreshTotals(); }
