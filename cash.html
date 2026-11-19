@@ -230,7 +230,54 @@ async function loadTx() {
   }
 
   renderStats();
+  await loadListTx();
   renderList();
+}
+
+// ----- Lọc lịch sử theo ngày / từ khóa (đọc toàn bộ trong khoảng, không bị giới hạn 150 dòng) -----
+let TX_FROM = "", TX_TO = "", TX_Q = "", LIST_TX = [], TX_LIMITED = true;
+const txFiltered = () => !!(TX_FROM || TX_TO || TX_Q.trim());
+async function loadListTx() {
+  ensureFilterBar();
+  if (!txFiltered()) { LIST_TX = ALL_TX; TX_LIMITED = true; return; }
+  const { data } = await fetchAllRows(() => {
+    let q = sb.from("cash_transactions").select("*");
+    if (TX_FROM) q = q.gte("created_at", new Date(TX_FROM + "T00:00:00").toISOString());
+    if (TX_TO) q = q.lte("created_at", new Date(TX_TO + "T23:59:59").toISOString());
+    return q;
+  });
+  const kw = TX_Q.trim().toLowerCase();
+  LIST_TX = (data || []).filter(t => !kw || ((t.category || "") + " " + (t.note || "")).toLowerCase().includes(kw))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  TX_LIMITED = false;
+}
+function ensureFilterBar() {
+  if (document.getElementById("txFilterBar")) return;
+  const wrap = document.getElementById("txListWrap");
+  const bar = document.createElement("div"); bar.id = "txFilterBar";
+  bar.style.cssText = "display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px;";
+  const f = "padding:7px 9px; border:1px solid var(--border); border-radius:8px; font-size:13px; width:auto;";
+  bar.innerHTML = `<label class="hint" style="margin:0;">Từ</label><input type="date" id="fFrom" style="${f}">
+    <label class="hint" style="margin:0;">đến</label><input type="date" id="fTo" style="${f}">
+    <input type="text" id="fQ" placeholder="Tìm theo danh mục / ghi chú" style="${f} min-width:200px;">
+    <button class="btn btn-secondary btn-mini" onclick="setTxRange('this')">Tháng này</button>
+    <button class="btn btn-secondary btn-mini" onclick="setTxRange('last')">Tháng trước</button>
+    <button class="btn btn-secondary btn-mini" onclick="setTxRange('clear')">✕ Xóa lọc</button>`;
+  wrap.parentNode.insertBefore(bar, wrap);
+  const apply = async () => { TX_FROM = document.getElementById("fFrom").value; TX_TO = document.getElementById("fTo").value; TX_Q = document.getElementById("fQ").value; await loadListTx(); renderList(); };
+  ["fFrom", "fTo"].forEach(id => document.getElementById(id).addEventListener("change", apply));
+  let tm; document.getElementById("fQ").addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(apply, 350); });
+}
+async function setTxRange(kind) {
+  const d = new Date(), pad = n => String(n).padStart(2, "0"), iso = x => x.getFullYear() + "-" + pad(x.getMonth() + 1) + "-" + pad(x.getDate());
+  if (kind === "clear") { document.getElementById("fFrom").value = ""; document.getElementById("fTo").value = ""; document.getElementById("fQ").value = ""; }
+  else {
+    const first = kind === "this" ? new Date(d.getFullYear(), d.getMonth(), 1) : new Date(d.getFullYear(), d.getMonth() - 1, 1);
+    const last = kind === "this" ? new Date(d.getFullYear(), d.getMonth() + 1, 0) : new Date(d.getFullYear(), d.getMonth(), 0);
+    document.getElementById("fFrom").value = iso(first); document.getElementById("fTo").value = iso(last);
+  }
+  TX_FROM = document.getElementById("fFrom").value; TX_TO = document.getElementById("fTo").value; TX_Q = document.getElementById("fQ").value;
+  await loadListTx(); renderList();
 }
 
 function cashBalance() {
@@ -273,19 +320,19 @@ function setTxFilter(f) { TX_FILTER = (TX_FILTER === f ? "all" : f); renderList(
 function renderList() {
   const wrap = document.getElementById("txListWrap");
   const isOwner = CURRENT_PROFILE.role === "owner";
-  if (ALL_TX.length === 0) {
-    wrap.innerHTML = `<div class="empty-state"><div class="icon">💰</div>Chưa có giao dịch nào. Ghi nhận thu/chi đầu tiên.</div>`;
+  if (LIST_TX.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="icon">💰</div>${txFiltered() ? "Không có giao dịch nào khớp bộ lọc." : "Chưa có giao dịch nào. Ghi nhận thu/chi đầu tiên."}</div>`;
     return;
   }
-  const sumOf = ty => ALL_TX.filter(t => t.type === ty).reduce((a, t) => a + Number(t.amount || 0), 0);
-  const cntOf = ty => ALL_TX.filter(t => t.type === ty).length;
+  const sumOf = ty => LIST_TX.filter(t => t.type === ty).reduce((a, t) => a + Number(t.amount || 0), 0);
+  const cntOf = ty => LIST_TX.filter(t => t.type === ty).length;
   const chip = (f, label, extra, color) => `<button onclick="setTxFilter('${f}')" style="cursor:pointer; padding:8px 16px; border-radius:20px; font-weight:600; font-size:13.5px; border:1px solid ${TX_FILTER === f ? (color || '#1d2733') : 'var(--border)'}; background:${TX_FILTER === f ? (color || '#1d2733') : '#fff'}; color:${TX_FILTER === f ? '#fff' : 'var(--text)'};">${label} <span style="opacity:.75; font-weight:500;">${extra}</span></button>`;
-  const rowsTx = TX_FILTER === "all" ? ALL_TX : ALL_TX.filter(t => t.type === (TX_FILTER === "income" ? "income" : "expense"));
+  const rowsTx = TX_FILTER === "all" ? LIST_TX : LIST_TX.filter(t => t.type === (TX_FILTER === "income" ? "income" : "expense"));
   const showThu = TX_FILTER !== "expense", showChi = TX_FILTER !== "income";
   const filterBar = `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-    ${chip("all", "Tất cả", ALL_TX.length + " dòng gần nhất")}
-    ${chip("income", "Thu", cntOf("income") + " dòng", "#1f8a6e")}
-    ${chip("expense", "Chi", cntOf("expense") + " dòng", "#d14343")}</div>`;
+    ${chip("all", "Tất cả", LIST_TX.length + (TX_LIMITED ? " dòng gần nhất" : " dòng"))}
+    ${chip("income", "Thu", cntOf("income") + " dòng" + (TX_LIMITED ? "" : " · +" + formatVND(sumOf("income"))), "#1f8a6e")}
+    ${chip("expense", "Chi", cntOf("expense") + " dòng" + (TX_LIMITED ? "" : " · −" + formatVND(sumOf("expense"))), "#d14343")}</div>`;
   wrap.innerHTML = filterBar + `<table><thead><tr>
       <th>Ngày</th><th>Hình thức</th><th>Danh mục</th><th>Ghi chú</th>${showThu ? `<th style="text-align:right; cursor:pointer;" onclick="setTxFilter('income')" title="Bấm để chỉ xem các dòng thu">Thu ▾</th>` : ""}${showChi ? `<th style="text-align:right; cursor:pointer;" onclick="setTxFilter('expense')" title="Bấm để chỉ xem các dòng chi">Chi ▾</th>` : ""}
     </tr></thead><tbody>
@@ -335,7 +382,7 @@ function renderCategoryChips(selectedCat) {
 
 function openModal(type, txId) {
   EDIT_TX_ID = txId || null;
-  const t = txId ? ALL_TX.find(x => x.id === txId) : null;
+  const t = txId ? (LIST_TX.find(x => x.id === txId) || ALL_TX.find(x => x.id === txId)) : null;
 
   setFormType(t?.type || type || "income", t?.category);
   setFormMethod(t?.method || "cash");
