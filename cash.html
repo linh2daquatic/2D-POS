@@ -268,6 +268,8 @@ function renderStats() {
   `;
 }
 
+let TX_FILTER = "all";
+function setTxFilter(f) { TX_FILTER = (TX_FILTER === f ? "all" : f); renderList(); }
 function renderList() {
   const wrap = document.getElementById("txListWrap");
   const isOwner = CURRENT_PROFILE.role === "owner";
@@ -275,16 +277,25 @@ function renderList() {
     wrap.innerHTML = `<div class="empty-state"><div class="icon">💰</div>Chưa có giao dịch nào. Ghi nhận thu/chi đầu tiên.</div>`;
     return;
   }
-  wrap.innerHTML = `<table><thead><tr>
-      <th>Ngày</th><th>Hình thức</th><th>Danh mục</th><th>Ghi chú</th><th style="text-align:right;">Thu</th><th style="text-align:right;">Chi</th>
+  const sumOf = ty => ALL_TX.filter(t => t.type === ty).reduce((a, t) => a + Number(t.amount || 0), 0);
+  const cntOf = ty => ALL_TX.filter(t => t.type === ty).length;
+  const chip = (f, label, extra, color) => `<button onclick="setTxFilter('${f}')" style="cursor:pointer; padding:8px 16px; border-radius:20px; font-weight:600; font-size:13.5px; border:1px solid ${TX_FILTER === f ? (color || '#1d2733') : 'var(--border)'}; background:${TX_FILTER === f ? (color || '#1d2733') : '#fff'}; color:${TX_FILTER === f ? '#fff' : 'var(--text)'};">${label} <span style="opacity:.75; font-weight:500;">${extra}</span></button>`;
+  const rowsTx = TX_FILTER === "all" ? ALL_TX : ALL_TX.filter(t => t.type === (TX_FILTER === "income" ? "income" : "expense"));
+  const showThu = TX_FILTER !== "expense", showChi = TX_FILTER !== "income";
+  const filterBar = `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    ${chip("all", "Tất cả", ALL_TX.length + " dòng gần nhất")}
+    ${chip("income", "Thu", cntOf("income") + " dòng", "#1f8a6e")}
+    ${chip("expense", "Chi", cntOf("expense") + " dòng", "#d14343")}</div>`;
+  wrap.innerHTML = filterBar + `<table><thead><tr>
+      <th>Ngày</th><th>Hình thức</th><th>Danh mục</th><th>Ghi chú</th>${showThu ? `<th style="text-align:right; cursor:pointer;" onclick="setTxFilter('income')" title="Bấm để chỉ xem các dòng thu">Thu ▾</th>` : ""}${showChi ? `<th style="text-align:right; cursor:pointer;" onclick="setTxFilter('expense')" title="Bấm để chỉ xem các dòng chi">Chi ▾</th>` : ""}
     </tr></thead><tbody>
-    ${ALL_TX.map(t => `<tr class="${isOwner ? 'order-row-clickable' : ''}" ${isOwner ? `data-id="${t.id}" style="cursor:pointer;"` : ''}>
+    ${rowsTx.map(t => `<tr class="${isOwner ? 'order-row-clickable' : ''}" ${isOwner ? `data-id="${t.id}" style="cursor:pointer;"` : ''}>
       <td>${formatDateTime(t.created_at)}</td>
       <td>${(t.method || 'cash') === 'cash' ? '💵 Tiền mặt' : '🏦 Chuyển khoản'}</td>
       <td>${t.category || '—'}</td>
       <td>${t.note || '—'}</td>
-      <td class="tx-amount income" style="text-align:right; white-space:nowrap;">${t.type === 'income' ? '+' + formatVND(t.amount) : ''}</td>
-      <td class="tx-amount expense" style="text-align:right; white-space:nowrap;">${t.type === 'income' ? '' : '−' + formatVND(t.amount)}</td>
+      ${showThu ? `<td class="tx-amount income" style="text-align:right; white-space:nowrap;">${t.type === 'income' ? '+' + formatVND(t.amount) : ''}</td>` : ""}
+      ${showChi ? `<td class="tx-amount expense" style="text-align:right; white-space:nowrap;">${t.type === 'income' ? '' : '−' + formatVND(t.amount)}</td>` : ""}
     </tr>`).join("")}
   </tbody></table>`;
 
