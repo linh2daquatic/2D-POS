@@ -35,7 +35,7 @@
 .bar { height:6px; background:#e3e6ea; border-radius:4px; margin-top:12px; } .bar i { display:block; height:100%; background:var(--success); border-radius:4px; }
 .ledger table { width:100%; border-collapse:collapse; }
 .ledger th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-mute); padding:9px 14px; background:#fafbfc; border-bottom:1px solid var(--border); }
-.ledger td { padding:10px 14px; border-bottom:1px solid #eef0f2; vertical-align:middle; }
+.ledger td { padding:9px 14px; border-bottom:1px solid #eef0f2; vertical-align:middle; }
 .ledger .r { text-align:right; } .ledger .nowrap { white-space:nowrap; } .ledger .mut { color:var(--text-mute); font-size:12.5px; }
 .ledger tr.sec td { background:#f0f2f4; font-weight:700; font-size:12px; color:#4a5560; padding:7px 14px; }
 .ledger td.det { background:#f8fafc; padding:14px 18px; }
@@ -310,15 +310,15 @@ function bhxhRowHtml() {
     ${personalAmt > 0 ? `<div class="hint" style="margin-top:6px;">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
 `;
   const act = detBtn("__bhxh") + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt</button>`);
-  return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `<div class="mut" style="margin-bottom:4px;">${b.rows.length} người · tháng ${m}/${y}</div>` + (paid ? paidCtl("bhxh", "b", pm, BHXH_ROW.paid_date) : payCtl("setBhxhPay", "", BHXH_UI)), `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
+  return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `${b.rows.length} người · tháng ${m}/${y}`, (paid ? paidCtl("bhxh", "b", pm, BHXH_ROW.paid_date) : payCtl("setBhxhPay", "", BHXH_UI)), `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
 }
 function fixedRowHtml(k) {
   const cur = FIXED[k.kind], paid = cur && cur.status === "paid", u = FIXED_UI[k.kind] || { amount: 0, payDate: defaultPayDate(), method: "transfer" };
-  const note = { rent: "Tự điền theo tháng trước, sửa được", electric: "Nhập theo hóa đơn", water: "Nhập theo hóa đơn" }[k.kind];
-  if (paid) return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, paidCtl("fixed", k.kind, cur.method, cur.paid_date), `<b>${fmt(cur.amount)}</b>`, pill(true, cur.paid_date),
+  const note = { rent: "Tự điền theo tháng trước", electric: "Nhập theo hóa đơn", water: "Nhập theo hóa đơn" }[k.kind];
+  if (paid) return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, "", paidCtl("fixed", k.kind, cur.method, cur.paid_date), `<b>${fmt(cur.amount)}</b>`, pill(true, cur.paid_date),
     `<button class="btn btn-secondary btn-mini" onclick="undoFixed('${k.kind}')">↩ Hủy</button>`);
-  return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`,
-    `<div class="mut" style="margin-bottom:4px;">${note}</div>${payCtl("setFixedPay", `'${k.kind}',`, u)}`,
+  return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, note,
+    payCtl("setFixedPay", `'${k.kind}',`, u),
     `<input type="number" min="0" placeholder="0" value="${u.amount || ""}" oninput="FIXED_UI['${k.kind}'].amount=Number(this.value)||0; refreshTotals()" style="${FIELD_CSS} width:130px; text-align:right;">`,
     pill(false), `<button class="btn btn-primary btn-mini" onclick="closeFixed('${k.kind}')">✔ Chốt</button>`);
 }
@@ -405,7 +405,7 @@ function toggleRow(id) {
   const open = d.style.display === "none"; d.style.display = open ? "" : "none";
   if (open) OPEN_CARDS.add(id); else OPEN_CARDS.delete(id);
 }
-const FIELD_CSS = "padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px;";
+const FIELD_CSS = "width:auto; padding:6px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px;";
 
 function staffDetailHtml(s) {
   const e = ENTRIES[s.id], paid = e && e.status === "paid", st = STATE[s.id], c = calc(s.id);
@@ -444,9 +444,9 @@ function staffDetailHtml(s) {
       ${paid ? "" : `<div class="hint">Chốt ghi khoản chi "Lương nhân viên" vào Quỹ; BHXH chốt riêng ở dòng 🛡. Ngày chi quyết định tháng nào Dashboard trừ.</div>`}`;
 }
 
-function ledgerRow(id, name, note, amtHtml, status, actions, detail) {
+function ledgerRow(id, name, sub, payHtml, amtHtml, status, actions, detail) {
   const open = OPEN_CARDS.has(id);
-  return `<tr class="lr"><td><b>${name}</b></td><td class="mut">${note || ""}</td><td class="r">${amtHtml}</td><td>${status}</td><td class="r nowrap">${actions}</td></tr>` +
+  return `<tr class="lr"><td><b>${name}</b>${sub ? `<div class="mut">${sub}</div>` : ""}</td><td class="nowrap">${payHtml || ""}</td><td class="r">${amtHtml}</td><td>${status}</td><td class="r nowrap">${actions}</td></tr>` +
     (detail ? `<tr id="det_${id}" style="${open ? "" : "display:none;"}"><td colspan="5" class="det">${detail}</td></tr>` : "");
 }
 function payCtl(fn, pre, u) {
@@ -478,14 +478,14 @@ function renderSheet() {
   let body = `<tr class="sec"><td colspan="5">👥 NHÂN SỰ</td></tr>`;
   STAFF.filter(s => s.role_type !== "chu").forEach(s => {
     const e = ENTRIES[s.id], paid = e && e.status === "paid", c = calc(s.id);
-    body += ledgerRow(s.id, s.name, `<div class="mut" style="margin-bottom:4px;">${ROLE_NAME[s.role_type] || ""} · ${ROLE[s.role_type] || ""}</div>` + (paid ? paidCtl("staff", s.id, e.method, e.paid_date) : payCtl("setStaffPay", `'${s.id}',`, STATE[s.id])), `<b id="sum_${s.id}">${fmt(c.total)}</b>`, pill(paid, e && e.paid_date),
+    body += ledgerRow(s.id, s.name, `${ROLE_NAME[s.role_type] || ""} · ${ROLE[s.role_type] || ""}`, (paid ? paidCtl("staff", s.id, e.method, e.paid_date) : payCtl("setStaffPay", `'${s.id}',`, STATE[s.id])), `<b id="sum_${s.id}">${fmt(c.total)}</b>`, pill(paid, e && e.paid_date),
       detBtn(s.id) + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closePayroll('${s.id}')">✔ Chốt</button>`),
       staffDetailHtml(s));
   });
   body += bhxhRowHtml();
   body += `<tr class="sec"><td colspan="5">🏢 CHI PHÍ CỐ ĐỊNH</td></tr>` + FIXED_KINDS.map(fixedRowHtml).join("");
   sheet.innerHTML = `<div id="tilesBox">${tilesHtml()}</div>
-    <div class="panel ledger"><div class="table-scroll"><table><thead><tr><th>Hạng mục</th><th>Ghi chú</th><th class="r">Số tiền</th><th>Trạng thái</th><th class="r"></th></tr></thead>
+    <div class="panel ledger"><div class="table-scroll"><table><thead><tr><th style="width:30%;">Hạng mục</th><th>Hình thức · ngày chi</th><th class="r">Số tiền</th><th>Trạng thái</th><th class="r"></th></tr></thead>
     <tbody>${body}</tbody><tfoot id="totalsBox">${totalsFootHtml()}</tfoot></table></div></div>`;
 }
 
