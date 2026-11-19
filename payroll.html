@@ -309,6 +309,8 @@ function bhxhRowHtml() {
   const detail = `${lines}
     ${personalAmt > 0 ? `<div class="hint" style="margin-top:6px;">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
 `;
+  const allLegacy = !paid && b.total + b.personal <= 0 && b.legacy > 0;   // tháng cũ: BHXH đã chốt cùng lương từng người
+  if (allLegacy) return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `${b.rows.length} người · tháng ${m}/${y}`, '<span class="mut">Đã chốt cùng lương (cách cũ)</span>', `<b>${fmt(b.legacy)}</b>`, '<span class="tag-paid">✔ Đã chốt</span>', detBtn("__bhxh"), detail);
   const act = detBtn("__bhxh") + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt</button>`);
   return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `${b.rows.length} người · tháng ${m}/${y}`, (paid ? paidCtl("bhxh", "b", pm, BHXH_ROW.paid_date) : payCtl("setBhxhPay", "", BHXH_UI)), `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
 }
@@ -355,15 +357,16 @@ function monthStats() {
     net += c.net; items++; if (paid) { netPaid += c.net; done++; }
   });
   const b = bhxhSummary(), bPaid = BHXH_ROW && BHXH_ROW.status === "paid";
-  const ins = bPaid ? num(BHXH_ROW.amount) : b.total;
-  if (ins > 0 || bPaid) { items++; if (bPaid) done++; }
+  const allLegacy = !bPaid && b.total + b.personal <= 0 && b.legacy > 0;
+  const ins = (bPaid ? num(BHXH_ROW.amount) : b.total) + b.legacy;
+  if (ins > 0 || bPaid) { items++; if (bPaid || allLegacy) done++; }
   let fixed = 0, fixedPaid = 0;
   FIXED_KINDS.forEach(k => {
     const f = FIXED[k.kind], p = f && f.status === "paid";
     const a = p ? num(f.amount) : num((FIXED_UI[k.kind] || {}).amount);
     fixed += a; if (p) fixedPaid += a; items++; if (p) done++;
   });
-  const total = net + ins + fixed, paid = netPaid + (bPaid ? ins : 0) + fixedPaid;
+  const total = net + ins + fixed, paid = netPaid + (bPaid ? ins : b.legacy) + fixedPaid;
   return { net, ins, fixed, total, paid, left: total - paid, items, done, insCount: b.rows.length };
 }
 function tilesHtml() {
