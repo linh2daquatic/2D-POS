@@ -104,7 +104,7 @@ const fmt = v => formatVND(Math.round(num(v)));
     </div>
     <div id="sheet"></div>
     <div class="panel" style="margin-top:20px;">
-      <div class="panel-header"><h2>📈 Tổng lương qua các tháng</h2></div>
+      <div class="panel-header"><h2>📈 Tổng chi phí qua các tháng</h2></div>
       <div class="panel-body table-scroll" id="history"></div>
     </div>
     <div class="modal-overlay" id="staffModal"><div class="modal-box">
@@ -614,11 +614,14 @@ async function undoBhxh() {
 
 async function loadHistory() {
   const box = document.getElementById("history");
-  const [er, sr, br] = await Promise.all([
+  const [er, sr, br, fr] = await Promise.all([
     sb.from("payroll_entries").select("staff_id, month, total, ins_total, ins_separate, status").order("month", { ascending: false }),
     sb.from("payroll_staff").select("id, name, role_type"),
-    sb.from("payroll_bhxh").select("month, amount, personal_amount, status")
+    sb.from("payroll_bhxh").select("month, amount, personal_amount, status"),
+    sb.from("payroll_fixed").select("month, kind, amount, status")
   ]);
+  const FX = {};   // month -> { rent, electric, water } (đã chốt)
+  (fr.error ? [] : (fr.data || [])).filter(x => x.status === "paid").forEach(x => { const m = FX[x.month] = FX[x.month] || { rent: 0, electric: 0, water: 0 }; m[x.kind] = (m[x.kind] || 0) + num(x.amount); });
   if (er.error) { box.innerHTML = ""; return; }
   const names = {}; (sr.data || []).forEach(s => { if (s.role_type !== "chu") names[s.id] = s.name; });
   const bhxhRows = {}; (br.error ? [] : (br.data || [])).forEach(x => bhxhRows[x.month] = x);
@@ -636,22 +639,27 @@ async function loadHistory() {
     const m = byMonth[k] = byMonth[k] || { paid: 0, draft: 0, ins: 0, insPaid: 0, insDraft: 0, per: {} };
     if (bhxhRows[k].status === "paid") { m.ins += num(bhxhRows[k].amount); m.insPaid += num(bhxhRows[k].amount); }
   });
+  Object.keys(FX).forEach(k => { byMonth[k] = byMonth[k] || { paid: 0, draft: 0, ins: 0, insPaid: 0, insDraft: 0, per: {} }; });
   const keys = Object.keys(byMonth).sort().reverse();
   if (!keys.length) { box.innerHTML = '<div class="hint">Chưa có tháng nào được lưu.</div>'; return; }
   const ids = Object.keys(names);
-  const tot = k => byMonth[k].paid + byMonth[k].draft + byMonth[k].ins;
+  const fx = (k, kind) => num((FX[k] || {})[kind]);
+  const fxSum = k => fx(k, "rent") + fx(k, "electric") + fx(k, "water");
+  const tot = k => byMonth[k].paid + byMonth[k].draft + byMonth[k].ins + fxSum(k);
   const thisYear = String(new Date().getFullYear());
   const yearTotal = keys.filter(k => k.startsWith(thisYear)).reduce((a, k) => a + tot(k), 0);
   const allTotal = keys.reduce((a, k) => a + tot(k), 0);
   const avg = keys.length ? allTotal / keys.length : 0;
+  const R = (v, bold) => `<td style="text-align:right;${bold ? " font-weight:700;" : ""}">${v ? fmt(v) : "—"}</td>`;
+  const sumK = f => keys.reduce((a, k) => a + num(f(k)), 0);
   box.innerHTML = `<div class="stat-row">
-      <div class="stat-mini"><div class="l">Chi phí nhân sự năm ${thisYear}</div><div class="v">${fmt(yearTotal)}</div></div>
+      <div class="stat-mini"><div class="l">Tổng chi phí năm ${thisYear}</div><div class="v">${fmt(yearTotal)}</div></div>
       <div class="stat-mini"><div class="l">Trung bình / tháng</div><div class="v">${fmt(avg)}</div></div>
       <div class="stat-mini"><div class="l">Tổng mọi tháng</div><div class="v">${fmt(allTotal)}</div></div>
     </div>
-    <table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Lương thực nhận</th><th style="text-align:right;">BHXH</th><th style="text-align:right;">Tổng chi phí nhân sự</th><th style="text-align:right;">Trong đó đã chốt</th></tr></thead><tbody>` +
-    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => `<td style="text-align:right;">${byMonth[k].per[i] ? fmt(byMonth[k].per[i]) : "—"}</td>`).join("")}<td style="text-align:right;">${fmt(byMonth[k].paid + byMonth[k].draft)}</td><td style="text-align:right;">${fmt(byMonth[k].ins)}</td><td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid + byMonth[k].insPaid)}${(byMonth[k].draft + byMonth[k].insDraft) ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft + byMonth[k].insDraft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
-    `<tr><td style="font-weight:700;">Cộng</td>${ids.map(i => `<td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + num(byMonth[k].per[i]), 0))}</td>`).join("")}<td style="text-align:right; font-weight:700;">${fmt(allTotal - keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(keys.reduce((a, k) => a + byMonth[k].ins, 0))}</td><td style="text-align:right; font-weight:700;">${fmt(allTotal)}</td><td></td></tr></tbody></table>`;
+    <table><thead><tr><th>Tháng</th>${ids.map(i => `<th style="text-align:right;">${names[i]}</th>`).join("")}<th style="text-align:right;">Lương thực nhận</th><th style="text-align:right;">BHXH</th><th style="text-align:right;">Mặt bằng</th><th style="text-align:right;">Điện</th><th style="text-align:right;">Nước</th><th style="text-align:right;">Tổng chi phí</th><th style="text-align:right;">Trong đó đã chốt</th></tr></thead><tbody>` +
+    keys.map(k => `<tr><td>${k.slice(5, 7)}/${k.slice(0, 4)}</td>${ids.map(i => R(byMonth[k].per[i])).join("")}${R(byMonth[k].paid + byMonth[k].draft)}${R(byMonth[k].ins)}${R(fx(k, "rent"))}${R(fx(k, "electric"))}${R(fx(k, "water"))}<td style="text-align:right; font-weight:700;">${fmt(tot(k))}</td><td style="text-align:right; color:var(--text-mute);">${fmt(byMonth[k].paid + byMonth[k].insPaid + fxSum(k))}${(byMonth[k].draft + byMonth[k].insDraft) ? ` <span class="tag-draft">còn ${fmt(byMonth[k].draft + byMonth[k].insDraft)} chưa chốt</span>` : ""}</td></tr>`).join("") +
+    `<tr><td style="font-weight:700;">Cộng</td>${ids.map(i => R(sumK(k => byMonth[k].per[i]), true)).join("")}${R(sumK(k => byMonth[k].paid + byMonth[k].draft), true)}${R(sumK(k => byMonth[k].ins), true)}${R(sumK(k => fx(k, "rent")), true)}${R(sumK(k => fx(k, "electric")), true)}${R(sumK(k => fx(k, "water")), true)}<td style="text-align:right; font-weight:700;">${fmt(allTotal)}</td><td></td></tr></tbody></table>`;
 }
 
 // ---------- Cài đặt nhân viên ----------
