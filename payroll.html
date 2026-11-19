@@ -310,12 +310,12 @@ function bhxhRowHtml() {
     ${personalAmt > 0 ? `<div class="hint" style="margin-top:6px;">Cộng thêm ${fmt(personalAmt)} phần cá nhân của chủ ghi là "Rút vốn / Cá nhân" (không vào chi phí).</div>` : ""}
 `;
   const act = detBtn("__bhxh") + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoBhxh()">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closeBhxh()" ${amt + personalAmt > 0 ? "" : "disabled"}>✔ Chốt</button>`);
-  return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `<div class="mut" style="margin-bottom:4px;">${b.rows.length} người · tháng ${m}/${y}</div>` + (paid ? `<span class="mut">${pm === "transfer" ? "Chuyển khoản" : "Tiền mặt"} · ${formatDate(BHXH_ROW.paid_date)}</span>` : payCtl("setBhxhPay", "", BHXH_UI)), `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
+  return ledgerRow("__bhxh", "🛡 Bảo hiểm xã hội", `<div class="mut" style="margin-bottom:4px;">${b.rows.length} người · tháng ${m}/${y}</div>` + (paid ? paidCtl("bhxh", "b", pm, BHXH_ROW.paid_date) : payCtl("setBhxhPay", "", BHXH_UI)), `<b>${fmt(amt)}</b>`, paid ? pill(true, BHXH_ROW.paid_date) : (amt > 0 ? pill(false) : '<span class="mut">—</span>'), act, detail);
 }
 function fixedRowHtml(k) {
   const cur = FIXED[k.kind], paid = cur && cur.status === "paid", u = FIXED_UI[k.kind] || { amount: 0, payDate: defaultPayDate(), method: "transfer" };
   const note = { rent: "Tự điền theo tháng trước, sửa được", electric: "Nhập theo hóa đơn", water: "Nhập theo hóa đơn" }[k.kind];
-  if (paid) return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, `${cur.method === "transfer" ? "Chuyển khoản" : "Tiền mặt"} · ${formatDate(cur.paid_date)}`, `<b>${fmt(cur.amount)}</b>`, pill(true, cur.paid_date),
+  if (paid) return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`, paidCtl("fixed", k.kind, cur.method, cur.paid_date), `<b>${fmt(cur.amount)}</b>`, pill(true, cur.paid_date),
     `<button class="btn btn-secondary btn-mini" onclick="undoFixed('${k.kind}')">↩ Hủy</button>`);
   return ledgerRow("fx_" + k.kind, `${k.icon} ${k.label}`,
     `<div class="mut" style="margin-bottom:4px;">${note}</div>${payCtl("setFixedPay", `'${k.kind}',`, u)}`,
@@ -455,6 +455,19 @@ function payCtl(fn, pre, u) {
 function setStaffPay(sid, k, v) { STATE[sid][k] = v; }
 function setBhxhPay(k, v) { BHXH_UI[k] = v; }
 function setFixedPay(kind, k, v) { FIXED_UI[kind][k] = v; }
+function paidCtl(kind, key, method, date) {
+  return `<select onchange="changePaidMethod('${kind}','${key}',this.value)" title="Đổi hình thức chi (cập nhật cả Quỹ)" style="${FIELD_CSS}"><option value="transfer" ${method === "transfer" ? "selected" : ""}>Chuyển khoản</option><option value="cash" ${method !== "transfer" ? "selected" : ""}>Tiền mặt</option></select> <span class="mut">· ${formatDate(date)}</span>`;
+}
+async function changePaidMethod(kind, key, v) {
+  let ids = [], table, rowId;
+  if (kind === "staff") { const e = ENTRIES[key]; if (!e) return; table = "payroll_entries"; rowId = e.id; ids = Array.isArray(e.tx_ids) && e.tx_ids.length ? e.tx_ids : (e.cash_tx_id ? [e.cash_tx_id] : []); }
+  else if (kind === "bhxh") { if (!BHXH_ROW) return; table = "payroll_bhxh"; rowId = BHXH_ROW.id; ids = BHXH_ROW.tx_ids || []; }
+  else { const f = FIXED[key]; if (!f) return; table = "payroll_fixed"; rowId = f.id; ids = f.tx_id ? [f.tx_id] : []; }
+  if (ids.length) { const { error } = await sb.from("cash_transactions").update({ method: v }).in("id", ids); if (error) { alert("Lỗi khi cập nhật Quỹ: " + error.message); await loadMonth(); return; } }
+  const { error } = await sb.from(table).update({ method: v }).eq("id", rowId);
+  if (error) { alert("Lỗi: " + error.message); }
+  await loadMonth();
+}
 const detBtn = id => `<button class="btn btn-secondary btn-mini" onclick="toggleRow('${id}')">Chi tiết</button>`;
 
 function renderSheet() {
@@ -465,7 +478,7 @@ function renderSheet() {
   let body = `<tr class="sec"><td colspan="5">👥 NHÂN SỰ</td></tr>`;
   STAFF.filter(s => s.role_type !== "chu").forEach(s => {
     const e = ENTRIES[s.id], paid = e && e.status === "paid", c = calc(s.id);
-    body += ledgerRow(s.id, s.name, `<div class="mut" style="margin-bottom:4px;">${ROLE_NAME[s.role_type] || ""} · ${ROLE[s.role_type] || ""}</div>` + (paid ? `<span class="mut">${e.method === "transfer" ? "Chuyển khoản" : "Tiền mặt"} · ${formatDate(e.paid_date)}</span>` : payCtl("setStaffPay", `'${s.id}',`, STATE[s.id])), `<b id="sum_${s.id}">${fmt(c.total)}</b>`, pill(paid, e && e.paid_date),
+    body += ledgerRow(s.id, s.name, `<div class="mut" style="margin-bottom:4px;">${ROLE_NAME[s.role_type] || ""} · ${ROLE[s.role_type] || ""}</div>` + (paid ? paidCtl("staff", s.id, e.method, e.paid_date) : payCtl("setStaffPay", `'${s.id}',`, STATE[s.id])), `<b id="sum_${s.id}">${fmt(c.total)}</b>`, pill(paid, e && e.paid_date),
       detBtn(s.id) + " " + (paid ? `<button class="btn btn-secondary btn-mini" onclick="undoClose('${s.id}')">↩ Hủy</button>` : `<button class="btn btn-primary btn-mini" onclick="closePayroll('${s.id}')">✔ Chốt</button>`),
       staffDetailHtml(s));
   });
